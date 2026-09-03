@@ -60,6 +60,8 @@ Invoke-DotNet publish (Join-Path $solutionRoot 'SteamSentinel.Broker\SteamSentin
 
 Copy-Item -Path (Join-Path $runtimeStage '*') -Destination $packageDir -Recurse
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'README.md') -Destination (Join-Path $packageDir 'README.md')
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'LICENSE') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'NOTICE') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'THIRD-PARTY-NOTICES.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'LICENSE-STATUS.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\THREAT-MODEL.md') -Destination $packageDir

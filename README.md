@@ -71,3 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
 - [发布前清单](docs/RELEASE-CHECKLIST.md)
 - [第三方声明](THIRD-PARTY-NOTICES.md)
 - [许可证状态](LICENSE-STATUS.md)
+
+## 许可证
+
+本项目由 fenglinbei 按 [Apache License 2.0](LICENSE) 授权，SPDX 标识符为 `Apache-2.0`。版权与归属信息见 [NOTICE](NOTICE)，SharpCompress 与其他第三方组件的独立许可证见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
