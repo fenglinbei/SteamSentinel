@@ -5,6 +5,20 @@ namespace SteamSentinel.Core.Utilities;
 
 public static class Hashing
 {
+    public static async Task<string> Sha256FileExclusiveAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        await using FileStream stream = new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 128 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return await Sha256StreamAsync(stream, cancellationToken).ConfigureAwait(false);
+    }
+
     public static async Task<string> Sha256FileAsync(
         string path,
         CancellationToken cancellationToken = default,

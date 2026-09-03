@@ -16,15 +16,17 @@
 
         <TextBlock FontSize="23" FontWeight="SemiBold" Text="请核对每一项处置动作" />
         <Border Grid.Row="1" Margin="0,12,0,12" Background="#FFF4ED" BorderBrush="#FFB088" BorderThickness="1" CornerRadius="6" Padding="12">
-            <TextBlock TextWrapping="Wrap" Text="文件默认移入隔离区并保留回滚记录，不会立即永久删除。管理员处置组件只接受内置白名单动作、精确路径和扫描时哈希。" />
+            <TextBlock TextWrapping="Wrap" Text="启发式发现不会自动预选，但经你核对后仍可隔离。文件与目录会保留回滚记录，不会立即永久删除。管理员组件还会复核计划哈希、精确目标和对象指纹。" />
         </Border>
 
         <DataGrid Grid.Row="2" ItemsSource="{Binding Actions}" AutoGenerateColumns="False" IsReadOnly="True"
                   CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="动作" Binding="{Binding Type}" Width="180" />
-                <DataGridTextColumn Header="说明" Binding="{Binding DisplayName}" Width="230" />
+                <DataGridTextColumn Header="动作" Binding="{Binding Type}" Width="150" />
+                <DataGridTextColumn Header="判定" Binding="{Binding Confidence}" Width="110" />
+                <DataGridTextColumn Header="说明" Binding="{Binding DisplayName}" Width="200" />
                 <DataGridTextColumn Header="精确目标" Binding="{Binding Target}" Width="*" />
+                <DataGridTextColumn Header="SHA-256 / 目录指纹" Binding="{Binding ExpectedIdentity}" Width="220" />
             </DataGrid.Columns>
         </DataGrid>
 

@@ -38,7 +38,7 @@ public sealed partial class SystemScanner
 
         progress?.Report(new ScanProgress("系统扫描", "自启动与任务", 0, null, "检查 Run、任务和服务"));
         ScanRunKeys(report);
-        ScanTaskFiles(report);
+        await ScanTaskFilesAsync(report, cancellationToken);
         ScanServiceRegistry(report);
 
         progress?.Report(new ScanProgress("系统扫描", "安全与网络配置", 0, null, "检查代理、hosts、Defender 和防火墙"));
@@ -231,11 +231,14 @@ public sealed partial class SystemScanner
                             Target = value,
                             Evidence = value,
                             RegistryHive = hiveName.StartsWith("HKCU", StringComparison.Ordinal) ? "HKCU" : "HKLM",
+                            RegistryView = view.ToString(),
                             RegistryKey = keyPath,
                             RegistryValueName = valueName,
                             IsKnownMalware = confirmed,
-                            CanRemediate = true,
-                            SuggestedActions = [SuggestedActionKind.RemoveRegistryValue, SuggestedActionKind.BlockKnownDomains]
+                            CanRemediate = knownName,
+                            SuggestedActions = knownName
+                                ? [SuggestedActionKind.RemoveRegistryValue, SuggestedActionKind.BlockKnownDomains]
+                                : [SuggestedActionKind.ReviewOnly]
                         });
                     }
                 }
@@ -246,7 +249,7 @@ public sealed partial class SystemScanner
             }
     }
 
-    private void ScanTaskFiles(ScanReport report)
+    private async Task ScanTaskFilesAsync(ScanReport report, CancellationToken cancellationToken)
     {
         string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "Tasks");
         if (!Directory.Exists(root)) return;
@@ -256,7 +259,11 @@ public sealed partial class SystemScanner
             {
                 report.Metrics.PersistenceItemsVisited++;
                 string relative = Path.GetRelativePath(root, file);
-                bool knownName = _rules.KnownTaskNames.Any(name => relative.EndsWith(name, StringComparison.OrdinalIgnoreCase));
+                string taskName = "\\" + relative.Replace(Path.DirectorySeparatorChar, '\\');
+                bool normalized = Validation.TryNormalizeScheduledTaskName(taskName, out string normalizedTask);
+                bool knownName = normalized && _rules.KnownTaskNames.Any(name =>
+                    Validation.TryNormalizeScheduledTaskName(name, out string normalizedKnown) &&
+                    normalizedTask.Equals(normalizedKnown, StringComparison.OrdinalIgnoreCase));
                 string text = string.Empty;
                 try
                 {
@@ -265,6 +272,16 @@ public sealed partial class SystemScanner
                 }
                 catch { }
                 if (!knownName && !ContainsKnownIndicator(text)) continue;
+                string? taskSha256 = null;
+                try
+                {
+                    taskSha256 = await Hashing.Sha256FileAsync(file, cancellationToken,
+                        bytes => report.Metrics.BytesHashed += bytes);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // The finding remains visible, but an unbound task is not offered for removal.
+                }
 
                 report.Findings.Add(new Finding
                 {
@@ -274,11 +291,12 @@ public sealed partial class SystemScanner
                     Score = knownName ? 95 : 70,
                     Title = "计划任务包含已知假红信家族指标",
                     Description = knownName ? "任务名称与已确认家族一致，处置前仍应核对任务 XML。" : "任务内容命中指标，但名称未知，首版仅报告。",
-                    Target = "\\" + relative.Replace(Path.DirectorySeparatorChar, '\\'),
+                    Target = taskName,
                     Evidence = file,
+                    Sha256 = taskSha256,
                     IsKnownMalware = knownName,
-                    CanRemediate = knownName,
-                    SuggestedActions = knownName
+                    CanRemediate = knownName && taskSha256 is not null,
+                    SuggestedActions = knownName && taskSha256 is not null
                         ? [SuggestedActionKind.RemoveScheduledTask]
                         : [SuggestedActionKind.ReviewOnly]
                 });

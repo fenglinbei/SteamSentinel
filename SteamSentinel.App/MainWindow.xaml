@@ -22,7 +22,7 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Foreground="White" FontSize="25" FontWeight="SemiBold" Text="SteamSentinel" />
                         <Border Margin="12,2,0,0" Background="#B42318" CornerRadius="10" Padding="9,3" VerticalAlignment="Center">
-                            <TextBlock Foreground="White" FontSize="11" FontWeight="SemiBold" Text="0.1.3 REVIEW" />
+                            <TextBlock Foreground="White" FontSize="11" FontWeight="SemiBold" Text="0.1.4 GROUP PREVIEW" />
                         </Border>
                     </StackPanel>
                     <TextBlock Margin="0,5,0,0" Foreground="#D0D5DD" Text="扫描、隔离并恢复 Steam / Wallpaper Engine 假红信威胁" />
@@ -50,6 +50,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <WrapPanel>
                                 <Button x:Name="QuickScanButton" Style="{StaticResource PrimaryButton}" Content="快速扫描" Click="QuickScan_Click" />
@@ -63,6 +64,8 @@
                                 <CheckBox x:Name="AmsiCheckBox" IsChecked="True" Margin="0,0,22,0" Content="使用本机反恶意软件接口（AMSI）辅助扫描" />
                                 <CheckBox x:Name="DomainBlockCheckBox" IsChecked="True" Content="处置时阻断已知恶意域名" />
                             </WrapPanel>
+                            <TextBlock x:Name="InstallationSecurityText" Grid.Row="2" Margin="0,10,0,0"
+                                       FontWeight="SemiBold" TextWrapping="Wrap" />
                         </Grid>
                     </Border>
 
@@ -157,8 +160,8 @@
                     <StackPanel Grid.Row="2" Orientation="Horizontal">
                         <Button Content="刷新" Click="RefreshQuarantine_Click" />
                         <Button Content="打开隔离目录" Click="OpenQuarantine_Click" />
-                        <Button Content="回滚所选事件" Click="Rollback_Click" />
-                        <Button Background="#B42318" Foreground="White" Content="永久删除所选事件" Click="DeleteIncident_Click" />
+                        <Button x:Name="RollbackButton" IsEnabled="False" Content="回滚所选事件" Click="Rollback_Click" />
+                        <Button x:Name="DeleteIncidentButton" IsEnabled="False" Background="#B42318" Foreground="White" Content="永久删除所选事件" Click="DeleteIncident_Click" />
                     </StackPanel>
                 </Grid>
             </TabItem>
@@ -168,18 +171,18 @@
                     <StackPanel Margin="22" MaxWidth="900" HorizontalAlignment="Left">
                         <TextBlock FontSize="22" FontWeight="SemiBold" Text="本工具能做什么，不能做什么" />
                         <TextBlock Margin="0,14,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="本程序不会运行被扫描的媒体、脚本或可执行文件。压缩内容会在独立工作进程中按资源上限读取，该进程被 Windows Job Object 限制为单进程，并在主程序退出时终止。普通扫描不会请求管理员权限。" />
+                                   Text="本程序不会运行被扫描的媒体、脚本或可执行文件。压缩内容会在 Low Integrity 受限令牌的独立工作进程中读取，进程先加入单进程 Job Object，再接收扫描路径，并在主程序退出时终止。普通扫描不会请求管理员权限。" />
                         <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="只有在动作预览确认后，管理员处置组件（Broker）才会触发 UAC。它仅接受内置规则允许的 Run/RunOnce 启动项、计划任务、域名和带有扫描时 SHA-256 的精确文件，不会执行远程脚本或任意命令。" />
+                                   Text="只有使用 Program Files 受保护安装，且组件完整性校验通过时，动作预览才会触发 UAC。管理员处置组件会再次核对请求者、计划 SHA-256、精确路径、文件哈希或目录指纹，不会执行远程脚本或任意命令。" />
                         <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="本程序不能代替专业安全软件。“完整扫描，未发现已知威胁”不代表电脑绝对安全。加密内容未解开、格式不受支持、缺少分卷或触发资源限制时，报告会标记为“未完整扫描”。" />
+                                   Text="本程序聚焦 Steam、Wallpaper Engine 与已观察到的假红信链路，可完成一次快速扫描、辨别、隔离和 Steam 恢复。“完整扫描，未发现已知威胁”仍不代表电脑绝对安全。加密内容未解开、格式不受支持、缺少分卷或触发资源限制时，报告会标记为“未完整扫描”。" />
                         <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22" FontWeight="SemiBold" Foreground="#B42318"
-                                   Text="本程序不能代替专业安全软件。即使处置显示成功，也只代表本次计划中的高置信目标已处理，不代表整台电脑已经无毒。仍建议使用保持更新的专业杀毒软件进行一次全盘扫描。" />
+                                   Text="启发式发现会继续保留处置能力，但默认不预选。即使处置显示成功，也只代表本次计划中的目标已处理，不代表整台电脑已经无毒。条件允许时，仍建议再用保持更新的专业杀毒软件进行全盘复核。" />
                         <Border Margin="0,18,0,0" Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock FontWeight="SemiBold" Text="发布前仍需完成" />
                                 <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
-                                           Text="代码签名证书、规则包离线签名与更新器、AppContainer 级解析沙箱、更多加密/分卷格式语料、Windows 10/11 多版本兼容测试、第三方安全审计。当前版本供所有者检查，不建议未经复核直接公开分发。" />
+                                           Text="代码签名证书、规则包离线签名与更新器、AppContainer 级解析沙箱、更多加密/分卷格式语料、Windows 10/11 多版本兼容测试、第三方安全审计。当前版本适合群内受控测试，不建议未经复核直接公开分发。" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

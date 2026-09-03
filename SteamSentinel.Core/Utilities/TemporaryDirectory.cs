@@ -7,7 +7,7 @@ public sealed class TemporaryDirectory : IDisposable
 
     public TemporaryDirectory()
     {
-        string root = System.IO.Path.GetFullPath(AppPaths.TemporaryRoot);
+        string root = GetRoot();
         Directory.CreateDirectory(root);
         Path = System.IO.Path.Combine(root, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path);
@@ -30,7 +30,7 @@ public sealed class TemporaryDirectory : IDisposable
         if (_disposed) return;
         try
         {
-            string root = System.IO.Path.GetFullPath(AppPaths.TemporaryRoot);
+            string root = GetRoot();
             string target = System.IO.Path.GetFullPath(Path);
             if (target.StartsWith(root + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
                 Directory.Exists(target) &&
@@ -46,4 +46,9 @@ public sealed class TemporaryDirectory : IDisposable
 
         _disposed = true;
     }
+
+    private static string GetRoot() => System.IO.Path.GetFullPath(
+        ProcessIntegrity.GetCurrent() is ProcessIntegrityLevel.Low or ProcessIntegrityLevel.Untrusted
+            ? AppPaths.WorkerTemporaryRoot
+            : AppPaths.TemporaryRoot);
 }

@@ -1,3 +1,5 @@
+using System.Security.Principal;
+
 namespace SteamSentinel.Core.Models;
 
 public enum RemediationActionType
@@ -22,6 +24,7 @@ public sealed class RemediationPlan
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset ExpiresAtUtc { get; init; } = DateTimeOffset.UtcNow.AddMinutes(15);
     public string RequestedBy { get; init; } = Environment.UserName;
+    public string RequestedBySid { get; init; } = WindowsIdentity.GetCurrent().User?.Value ?? string.Empty;
     public List<RemediationAction> Actions { get; init; } = [];
 }
 
@@ -32,8 +35,12 @@ public sealed class RemediationAction
     public string DisplayName { get; init; } = string.Empty;
     public string Target { get; init; } = string.Empty;
     public string? ExpectedSha256 { get; init; }
+    public string? ExpectedValueData { get; init; }
+    public bool IsKnownMalware { get; init; }
+    public int ConfidenceScore { get; init; }
     public int? ProcessId { get; init; }
     public string? RegistryHive { get; init; }
+    public string? RegistryView { get; init; }
     public string? RegistryKey { get; init; }
     public string? RegistryValueName { get; init; }
     public List<string> Domains { get; init; } = [];
@@ -80,6 +87,7 @@ public sealed class QuarantineRecord
     public string? QuarantinedPath { get; init; }
     public string? Sha256 { get; init; }
     public string? RegistryHive { get; init; }
+    public string? RegistryView { get; init; }
     public string? RegistryKey { get; init; }
     public string? RegistryValueName { get; init; }
     public string? RegistryValueData { get; init; }

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using SteamSentinel.App.Native;
@@ -10,6 +9,10 @@ namespace SteamSentinel.App.Services;
 internal sealed class ArchiveWorkerClient
 {
     private static readonly JsonSerializerOptions CompactJson = new(JsonFile.Options) { WriteIndented = false };
+    private readonly string? _workerPathOverride;
+
+    public ArchiveWorkerClient(string? workerPathOverride = null) =>
+        _workerPathOverride = workerPathOverride;
 
     public async Task<ScanReport> RunAsync(
         ScanOptions options,
@@ -17,80 +20,114 @@ internal sealed class ArchiveWorkerClient
         IProgress<ScanProgress>? progress,
         CancellationToken cancellationToken)
     {
-        string workerPath = Path.Combine(AppContext.BaseDirectory, "SteamSentinel.ArchiveWorker.exe");
+        string workerPath = _workerPathOverride ?? Path.Combine(AppContext.BaseDirectory, "SteamSentinel.ArchiveWorker.exe");
         if (!File.Exists(workerPath)) throw new FileNotFoundException("缺少隔离内容扫描组件。", workerPath);
+        string workerRoot = Path.GetFullPath(AppPaths.WorkerTemporaryRoot);
+        Directory.CreateDirectory(workerRoot);
+        if (Validation.ContainsReparsePoint(workerRoot))
+            throw new UnauthorizedAccessException("工作进程临时目录包含重解析点。");
+        string workingDirectory = Path.Combine(workerRoot, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workingDirectory);
 
-        ProcessStartInfo startInfo = new()
-        {
-            FileName = workerPath,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            StandardInputEncoding = Encoding.UTF8,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8
-        };
-        using Process worker = new() { StartInfo = startInfo };
-        worker.Start();
         using JobObject job = new();
-        job.Assign(worker);
+        using RestrictedProcess worker = RestrictedProcess.Start(workerPath, workingDirectory, job);
 
         using CancellationTokenRegistration registration = cancellationToken.Register(() =>
         {
-            try { if (!worker.HasExited) worker.Kill(entireProcessTree: true); } catch { }
+            try { worker.Kill(); } catch { }
         });
         Task<string> errorTask = worker.StandardError.ReadToEndAsync(cancellationToken);
 
-        await WriteAsync(worker, new WorkerMessage { Type = WorkerMessageTypes.Start, Options = options }, cancellationToken);
-        ScanReport? report = null;
-        string? failure = null;
-
-        while (!worker.HasExited)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            string? line = await worker.StandardOutput.ReadLineAsync(cancellationToken);
-            if (line is null) break;
-            WorkerMessage? message = JsonSerializer.Deserialize<WorkerMessage>(line, JsonFile.Options);
-            if (message is null) continue;
-
-            switch (message.Type)
+            using CancellationTokenSource readyTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            readyTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+            string? readyLine;
+            try
             {
-                case WorkerMessageTypes.Progress when message.Progress is not null:
-                    progress?.Report(message.Progress);
-                    break;
-                case WorkerMessageTypes.PasswordRequest when message.PasswordRequest is not null:
-                    ArchivePasswordResponse response = await passwordCallback(message.PasswordRequest, cancellationToken);
-                    await WriteAsync(worker, new WorkerMessage
-                    {
-                        Type = WorkerMessageTypes.PasswordResponse,
-                        PasswordResponse = response
-                    }, cancellationToken);
-                    break;
-                case WorkerMessageTypes.Completed:
-                    report = message.Report;
-                    break;
-                case WorkerMessageTypes.Failed:
-                    failure = message.Error ?? "内容扫描工作进程失败。";
-                    break;
+                readyLine = await worker.StandardOutput.ReadLineAsync(readyTimeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("受限内容扫描工作进程没有按时完成安全握手。");
+            }
+            WorkerMessage? ready = string.IsNullOrWhiteSpace(readyLine)
+                ? null
+                : JsonSerializer.Deserialize<WorkerMessage>(readyLine, JsonFile.Options);
+            if (ready?.Type != WorkerMessageTypes.Ready ||
+                ready.Containment is not (nameof(ProcessIntegrityLevel.Low) or nameof(ProcessIntegrityLevel.Untrusted)))
+            {
+                throw new UnauthorizedAccessException("内容扫描工作进程未运行在 Low Integrity 隔离级别，已拒绝发送扫描路径。");
             }
 
-            if (report is not null || failure is not null) break;
-        }
+            await WriteAsync(worker, new WorkerMessage { Type = WorkerMessageTypes.Start, Options = options }, cancellationToken);
+            ScanReport? report = null;
+            string? failure = null;
 
-        await worker.WaitForExitAsync(cancellationToken);
-        string error = await errorTask;
-        if (report is null)
-        {
-            throw new InvalidOperationException(failure ?? (string.IsNullOrWhiteSpace(error)
-                ? $"内容扫描工作进程异常退出：{worker.ExitCode}"
-                : error.Trim()));
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string? line = await worker.StandardOutput.ReadLineAsync(cancellationToken);
+                if (line is null) break;
+                WorkerMessage? message = JsonSerializer.Deserialize<WorkerMessage>(line, JsonFile.Options);
+                if (message is null) continue;
+
+                switch (message.Type)
+                {
+                    case WorkerMessageTypes.Progress when message.Progress is not null:
+                        progress?.Report(message.Progress);
+                        break;
+                    case WorkerMessageTypes.PasswordRequest when message.PasswordRequest is not null:
+                        ArchivePasswordResponse response = await passwordCallback(message.PasswordRequest, cancellationToken);
+                        await WriteAsync(worker, new WorkerMessage
+                        {
+                            Type = WorkerMessageTypes.PasswordResponse,
+                            PasswordResponse = response
+                        }, cancellationToken);
+                        break;
+                    case WorkerMessageTypes.Completed:
+                        report = message.Report;
+                        break;
+                    case WorkerMessageTypes.Failed:
+                        failure = message.Error ?? "内容扫描工作进程失败。";
+                        break;
+                }
+
+                if (report is not null || failure is not null) break;
+            }
+
+            await worker.WaitForExitAsync(cancellationToken);
+            string error = await errorTask;
+            if (report is null)
+            {
+                throw new InvalidOperationException(failure ?? (string.IsNullOrWhiteSpace(error)
+                    ? $"内容扫描工作进程异常退出：{worker.ExitCode}"
+                    : error.Trim()));
+            }
+            return report;
         }
-        return report;
+        finally
+        {
+            try
+            {
+                if (!worker.HasExited)
+                {
+                    worker.Kill();
+                    using CancellationTokenSource cleanupTimeout = new(TimeSpan.FromSeconds(3));
+                    await worker.WaitForExitAsync(cleanupTimeout.Token);
+                }
+            }
+            catch { }
+            try
+            {
+                if (Directory.Exists(workingDirectory) && !Validation.ContainsReparsePoint(workingDirectory))
+                    Directory.Delete(workingDirectory, recursive: true);
+            }
+            catch { }
+        }
     }
 
-    private static async Task WriteAsync(Process process, WorkerMessage message, CancellationToken cancellationToken)
+    private static async Task WriteAsync(RestrictedProcess process, WorkerMessage message, CancellationToken cancellationToken)
     {
         string json = JsonSerializer.Serialize(message, CompactJson);
         await process.StandardInput.WriteLineAsync(json.AsMemory(), cancellationToken);

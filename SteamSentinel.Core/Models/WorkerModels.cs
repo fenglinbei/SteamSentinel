@@ -3,6 +3,7 @@ namespace SteamSentinel.Core.Models;
 public static class WorkerMessageTypes
 {
     public const string Start = "start";
+    public const string Ready = "ready";
     public const string Progress = "progress";
     public const string PasswordRequest = "password-request";
     public const string PasswordResponse = "password-response";
@@ -20,6 +21,7 @@ public sealed class WorkerMessage
     public ArchivePasswordResponse? PasswordResponse { get; init; }
     public ScanReport? Report { get; init; }
     public string? Error { get; init; }
+    public string? Containment { get; init; }
 }
 
 public static class ScanReportMerger

@@ -68,6 +68,7 @@ public sealed class Finding
     public string? Sha256 { get; init; }
     public int? ProcessId { get; init; }
     public string? RegistryHive { get; init; }
+    public string? RegistryView { get; init; }
     public string? RegistryKey { get; init; }
     public string? RegistryValueName { get; init; }
     public string? WorkshopId { get; init; }
@@ -169,5 +170,5 @@ public sealed class NullPasswordProvider : IArchivePasswordProvider
 public static class ProductInfo
 {
     public const string Name = "SteamSentinel Steam 红信安全工具";
-    public const string Version = "0.1.3";
+    public const string Version = "0.1.4";
 }

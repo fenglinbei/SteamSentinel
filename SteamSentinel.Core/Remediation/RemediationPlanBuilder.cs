@@ -30,7 +30,9 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                         DisplayName = $"停止进程 PID {finding.ProcessId}",
                         Target = finding.Target,
                         ProcessId = finding.ProcessId,
-                        ExpectedSha256 = finding.Sha256
+                        ExpectedSha256 = finding.Sha256,
+                        IsKnownMalware = finding.IsKnownMalware,
+                        ConfidenceScore = finding.Score
                     },
                     SuggestedActionKind.RemoveRegistryValue when finding.RegistryKey is not null && finding.RegistryValueName is not null => new RemediationAction
                     {
@@ -38,34 +40,41 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                         DisplayName = $"删除启动项 {finding.RegistryValueName}",
                         Target = finding.Target,
                         RegistryHive = finding.RegistryHive,
+                        RegistryView = finding.RegistryView,
                         RegistryKey = finding.RegistryKey,
-                        RegistryValueName = finding.RegistryValueName
+                        RegistryValueName = finding.RegistryValueName,
+                        ExpectedValueData = finding.Target,
+                        IsKnownMalware = finding.IsKnownMalware,
+                        ConfidenceScore = finding.Score
                     },
                     SuggestedActionKind.RemoveScheduledTask => new RemediationAction
                     {
                         Type = RemediationActionType.RemoveScheduledTask,
                         DisplayName = "删除已知恶意计划任务",
                         Target = finding.Target,
-                        TaskName = finding.Target
+                        TaskName = finding.Target,
+                        ExpectedSha256 = finding.Sha256,
+                        IsKnownMalware = finding.IsKnownMalware,
+                        ConfidenceScore = finding.Score
                     },
                     SuggestedActionKind.RemoveDefenderExclusion => new RemediationAction
                     {
                         Type = RemediationActionType.RemoveDefenderExclusion,
                         DisplayName = "移除已知恶意 Defender 排除项",
-                        Target = finding.Target
+                        Target = finding.Target,
+                        IsKnownMalware = finding.IsKnownMalware,
+                        ConfidenceScore = finding.Score
                     },
                     SuggestedActionKind.QuarantineFile when File.Exists(finding.Target) => await CreateFileActionAsync(finding, cancellationToken),
-                    SuggestedActionKind.QuarantineDirectory when Directory.Exists(finding.Target) => new RemediationAction
-                    {
-                        Type = RemediationActionType.QuarantineDirectory,
-                        DisplayName = "隔离目录",
-                        Target = Path.GetFullPath(finding.Target)
-                    },
+                    SuggestedActionKind.QuarantineDirectory when Directory.Exists(finding.Target) =>
+                        await CreateDirectoryActionAsync(finding, cancellationToken),
                     SuggestedActionKind.RestoreSecurityControls => new RemediationAction
                     {
                         Type = RemediationActionType.RestoreSecurityControls,
                         DisplayName = "恢复 Defender 与 Windows 防火墙",
-                        Target = "Windows Security"
+                        Target = "Windows Security",
+                        IsKnownMalware = finding.IsKnownMalware,
+                        ConfidenceScore = finding.Score
                     },
                     _ => null
                 };
@@ -83,7 +92,9 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     Type = RemediationActionType.AddProgramFirewallBlock,
                     DisplayName = "阻断恶意程序出站连接",
                     Target = Path.GetFullPath(finding.Target),
-                    ExpectedSha256 = hash
+                    ExpectedSha256 = hash,
+                    IsKnownMalware = true,
+                    ConfidenceScore = finding.Score
                 };
                 string key = $"{firewall.Type}|{firewall.Target}";
                 if (deduplication.Add(key)) plan.Actions.Add(firewall);
@@ -97,7 +108,9 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                 Type = RemediationActionType.BlockKnownDomains,
                 DisplayName = "在 hosts 中阻断已知 C2 域名",
                 Target = "hosts",
-                Domains = [.. rules.KnownDomains]
+                Domains = [.. rules.KnownDomains],
+                IsKnownMalware = true,
+                ConfidenceScore = 100
             });
         }
 
@@ -140,7 +153,26 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             Type = RemediationActionType.QuarantineFile,
             DisplayName = "隔离文件",
             Target = path,
-            ExpectedSha256 = hash
+            ExpectedSha256 = hash,
+            IsKnownMalware = finding.IsKnownMalware,
+            ConfidenceScore = finding.Score
+        };
+    }
+
+    private static async Task<RemediationAction> CreateDirectoryActionAsync(
+        Finding finding,
+        CancellationToken cancellationToken)
+    {
+        string path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(finding.Target));
+        string fingerprint = await DirectoryFingerprint.ComputeAsync(path, cancellationToken);
+        return new RemediationAction
+        {
+            Type = RemediationActionType.QuarantineDirectory,
+            DisplayName = "隔离目录",
+            Target = path,
+            ExpectedSha256 = fingerprint,
+            IsKnownMalware = finding.IsKnownMalware,
+            ConfidenceScore = finding.Score
         };
     }
 }

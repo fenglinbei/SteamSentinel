@@ -1,6 +1,10 @@
 using System.Diagnostics;
+using System.IO;
 using System.IO.Compression;
 using System.Text;
+using SteamSentinel.App;
+using SteamSentinel.App.Services;
+using SteamSentinel.Broker;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
@@ -32,13 +36,21 @@ internal static class Program
 
             await TestFileTypesAsync(root);
             await TestJsonFileSynchronizationContextAsync(root);
+            await TestWriteNewAndDirectoryFingerprintAsync(root);
+            TestSecurityValidation();
             await TestContentScannerAsync(root, rules);
             await TestDefaultWallpaperSuppressionAsync(root, rules);
             await TestSteamTamperScannerAsync(root, rules);
             await TestEncryptedArchiveAsync(root, rules);
             await TestWorkerProtocolAsync(root);
+            await TestRestrictedWorkerClientAsync(root);
             await TestPlanBuilderAsync(root, rules);
+            await TestBoundBrokerPlanAsync();
+            await TestSecureFileLeaseAsync(root);
             await TestReportExportAsync(root, rules);
+            Check("Steam 进程门禁不误判 SteamSentinel", MainWindow.IsSteamClientProcessName("steam") &&
+                                                     MainWindow.IsSteamClientProcessName("steamwebhelper") &&
+                                                     !MainWindow.IsSteamClientProcessName("SteamSentinel"));
             TestDisplayLabels();
             TestSteamDiscovery();
             await TestSystemScannerReadOnlyAsync(rules);
@@ -137,6 +149,37 @@ internal static class Program
         });
 
         Check("JSON 异步读取不捕获调用方同步上下文", completedWithoutPumping);
+    }
+
+    private static async Task TestWriteNewAndDirectoryFingerprintAsync(string root)
+    {
+        string newOnly = Path.Combine(root, "new-only.json");
+        await JsonFile.WriteNewAsync(newOnly, new JsonProbe { Payload = "first" });
+        bool overwriteRejected = false;
+        try { await JsonFile.WriteNewAsync(newOnly, new JsonProbe { Payload = "second" }); }
+        catch (IOException) { overwriteRejected = true; }
+        JsonProbe retained = await JsonFile.ReadAsync<JsonProbe>(newOnly);
+        Check("受保护结果只新建不覆盖", overwriteRejected && retained.Payload == "first");
+
+        string directory = Path.Combine(root, "fingerprint");
+        Directory.CreateDirectory(directory);
+        string file = Path.Combine(directory, "item.txt");
+        await File.WriteAllTextAsync(file, "first");
+        string before = await DirectoryFingerprint.ComputeAsync(directory);
+        await File.WriteAllTextAsync(file, "second");
+        string after = await DirectoryFingerprint.ComputeAsync(directory);
+        Check("目录指纹绑定内容变化", Validation.IsHexSha256(before) && before != after);
+    }
+
+    private static void TestSecurityValidation()
+    {
+        Check("计划任务名称拒绝后缀冒充与路径穿越",
+            Validation.TryNormalizeScheduledTaskName(@"\ServiceApp360GuardLogon", out string exact) &&
+            exact == @"\ServiceApp360GuardLogon" &&
+            Validation.TryNormalizeScheduledTaskName(@"\Folder\ServiceApp360GuardLogon", out string nested) &&
+            nested != exact &&
+            !Validation.TryNormalizeScheduledTaskName(@"\..\ServiceApp360GuardLogon", out _));
+        Check("开发目录不会误启用管理员处置", !InstallationSecurity.Evaluate().IsProtected);
     }
 
     private static async Task TestContentScannerAsync(string root, RuleSet rules)
@@ -368,6 +411,66 @@ internal static class Program
                                                lastStopIndex >= 0 && quarantineIndex > lastStopIndex);
     }
 
+    private static async Task TestBoundBrokerPlanAsync()
+    {
+        Directory.CreateDirectory(AppPaths.PlansRoot);
+        RemediationPlan plan = new()
+        {
+            Actions =
+            {
+                new RemediationAction
+                {
+                    Type = RemediationActionType.RestoreSecurityControls,
+                    DisplayName = "绑定测试",
+                    Target = "Windows Security"
+                }
+            }
+        };
+        string planPath = Path.Combine(AppPaths.PlansRoot, $"plan-{plan.PlanId:N}.json");
+        try
+        {
+            await JsonFile.WriteAtomicAsync(planPath, plan);
+            string hash = await Hashing.Sha256FileExclusiveAsync(planPath);
+            RemediationPlan loaded = await BrokerRequestReader.ReadAsync(planPath, hash);
+            Check("Broker 计划哈希与请求者 SID 绑定", loaded.PlanId == plan.PlanId);
+
+            await File.AppendAllTextAsync(planPath, " ");
+            bool rejected = false;
+            try { await BrokerRequestReader.ReadAsync(planPath, hash); }
+            catch (InvalidDataException) { rejected = true; }
+            Check("Broker 拒绝 UAC 前后被改写的计划", rejected);
+
+            await File.WriteAllBytesAsync(planPath, new byte[(1024 * 1024) + 1]);
+            string oversizedHash = await Hashing.Sha256FileExclusiveAsync(planPath);
+            bool oversizedRejected = false;
+            try { await BrokerRequestReader.ReadAsync(planPath, oversizedHash); }
+            catch (InvalidDataException) { oversizedRejected = true; }
+            Check("Broker 按锁定句柄拒绝超大计划", oversizedRejected);
+        }
+        finally
+        {
+            try { File.Delete(planPath); } catch { }
+        }
+    }
+
+    private static async Task TestSecureFileLeaseAsync(string root)
+    {
+        string directory = Path.Combine(root, "secure-file-lease");
+        Directory.CreateDirectory(directory);
+        string source = Path.Combine(directory, "source.bin");
+        string destination = Path.Combine(directory, "destination.quarantined");
+        await File.WriteAllTextAsync(source, "harmless handle-bound quarantine test", Encoding.UTF8);
+        string expected = await Hashing.Sha256FileExclusiveAsync(source);
+        await using (SecureFileLease lease = SecureFileLease.Open(source))
+        {
+            string current = await lease.ComputeSha256Async(CancellationToken.None);
+            await lease.CopyToAsync(destination, current, CancellationToken.None);
+            lease.DeleteOnClose();
+        }
+        string copied = await Hashing.Sha256FileExclusiveAsync(destination);
+        Check("句柄绑定隔离复制、复核与删除", !File.Exists(source) && copied == expected);
+    }
+
     private static async Task TestWorkerProtocolAsync(string root)
     {
         string solutionRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
@@ -453,6 +556,50 @@ internal static class Program
         }
         Check("隔离扫描工作进程协议", report is not null && worker.ExitCode == 0);
         if (File.Exists(encrypted)) Check("工作进程密码往返", passwordRequested && report?.Coverage == ScanCoverage.Complete);
+    }
+
+    private static async Task TestRestrictedWorkerClientAsync(string root)
+    {
+        string solutionRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        string workerBin = Path.Combine(solutionRoot, "SteamSentinel.ArchiveWorker", "bin");
+        string? workerPath = Directory.Exists(workerBin)
+            ? Directory.EnumerateFiles(workerBin, "SteamSentinel.ArchiveWorker.exe", SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault()
+            : null;
+        if (workerPath is null)
+        {
+            Skip("Low Integrity + Job Object 工作进程（未找到构建产物）");
+            return;
+        }
+
+        string target = Path.Combine(root, "content", "renamed.mp4");
+        ScanOptions options = new()
+        {
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            InspectArchives = true,
+            UseAmsi = false,
+            HashEveryFile = true,
+            CustomRoots = [target]
+        };
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
+        try
+        {
+            ScanReport report = await new ArchiveWorkerClient(workerPath).RunAsync(
+                options,
+                (request, _) => Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false)),
+                null,
+                timeout.Token);
+            Check("Low Integrity + Job Object 工作进程", report.CompletedAtUtc is not null);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SANDBOX DEBUG: {ex.GetType().Name}: {ex.Message}");
+            Check("Low Integrity + Job Object 工作进程", false);
+        }
     }
 
     private static async Task TestReportExportAsync(string root, RuleSet rules)
@@ -548,10 +695,12 @@ internal static class Program
                 }
             }
         };
-        string planPath = Path.Combine(AppPaths.PlansRoot, $"broker-smoke-plan-{token}.json");
-        string resultPath = Path.Combine(AppPaths.PlansRoot, $"broker-smoke-result-{token}.json");
+        string planPath = Path.Combine(AppPaths.PlansRoot, $"plan-{plan.PlanId:N}.json");
+        string resultPath = Path.Combine(AppPaths.ResultsRoot, $"result-{plan.PlanId:N}.json");
         await JsonFile.WriteAtomicAsync(planPath, plan);
+        string planHash = await Hashing.Sha256FileExclusiveAsync(planPath);
         Console.WriteLine($"PLAN={planPath}");
+        Console.WriteLine($"PLAN_SHA256={planHash}");
         Console.WriteLine($"RESULT={resultPath}");
         Console.WriteLine($"TARGET={target}");
         return 0;
@@ -576,10 +725,12 @@ internal static class Program
                 }
             }
         };
-        string planPath = Path.Combine(AppPaths.PlansRoot, $"broker-rollback-plan-{incident}.json");
-        string resultPath = Path.Combine(AppPaths.PlansRoot, $"broker-rollback-result-{incident}.json");
+        string planPath = Path.Combine(AppPaths.PlansRoot, $"plan-{plan.PlanId:N}.json");
+        string resultPath = Path.Combine(AppPaths.ResultsRoot, $"result-{plan.PlanId:N}.json");
         await JsonFile.WriteAtomicAsync(planPath, plan);
+        string planHash = await Hashing.Sha256FileExclusiveAsync(planPath);
         Console.WriteLine($"PLAN={planPath}");
+        Console.WriteLine($"PLAN_SHA256={planHash}");
         Console.WriteLine($"RESULT={resultPath}");
         Console.WriteLine($"INCIDENT={incident}");
         return 0;
@@ -637,10 +788,12 @@ internal static class Program
                 }
             }
         };
-        string planPath = Path.Combine(AppPaths.PlansRoot, $"broker-delete-plan-{incident}.json");
-        string resultPath = Path.Combine(AppPaths.PlansRoot, $"broker-delete-result-{incident}.json");
+        string planPath = Path.Combine(AppPaths.PlansRoot, $"plan-{plan.PlanId:N}.json");
+        string resultPath = Path.Combine(AppPaths.ResultsRoot, $"result-{plan.PlanId:N}.json");
         await JsonFile.WriteAtomicAsync(planPath, plan);
+        string planHash = await Hashing.Sha256FileExclusiveAsync(planPath);
         Console.WriteLine($"PLAN={planPath}");
+        Console.WriteLine($"PLAN_SHA256={planHash}");
         Console.WriteLine($"RESULT={resultPath}");
         Console.WriteLine($"INCIDENT={incident}");
         return 0;

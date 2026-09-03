@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$OutputRoot,
-    [switch]$ReplaceExisting
+    [switch]$ReplaceExisting,
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,24 +12,28 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $workspaceRoot 'outputs'
 }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
-$packageName = 'SteamSentinel-0.1.3-win-x64'
+$version = '0.1.4'
+$packageName = "SteamSentinel-$version-win-x64"
 $packageDir = Join-Path $OutputRoot $packageName
 $archivePath = Join-Path $OutputRoot ($packageName + '.zip')
-$sourceArchivePath = Join-Path $OutputRoot 'SteamSentinel-0.1.3-source.zip'
-$archiveChecksumPath = Join-Path $OutputRoot 'SteamSentinel-0.1.3-ARCHIVE-SHA256.txt'
+$sourceArchivePath = Join-Path $OutputRoot "SteamSentinel-$version-source.zip"
+$setupPath = Join-Path $OutputRoot "SteamSentinel-$version-setup.exe"
+$archiveChecksumPath = Join-Path $OutputRoot "SteamSentinel-$version-RELEASE-SHA256.txt"
 
 function Assert-ChildPath([string]$Candidate, [string]$Parent) {
     $candidateFull = [IO.Path]::GetFullPath($Candidate)
     $parentFull = [IO.Path]::GetFullPath($Parent).TrimEnd('\')
     if (-not $candidateFull.StartsWith($parentFull + '\', [StringComparison]::OrdinalIgnoreCase)) {
-        throw "拒绝操作预期目录之外的路径：$candidateFull"
+        throw "Refusing to operate outside the expected output root: $candidateFull"
     }
 }
 
-foreach ($target in @($packageDir, $archivePath, $sourceArchivePath, $archiveChecksumPath)) {
+$targets = @($packageDir, $archivePath, $sourceArchivePath, $archiveChecksumPath)
+if (-not $SkipInstaller) { $targets += $setupPath }
+foreach ($target in $targets) {
     Assert-ChildPath $target $OutputRoot
     if (Test-Path -LiteralPath $target) {
-        if (-not $ReplaceExisting) { throw "输出已存在，拒绝覆盖：$target" }
+        if (-not $ReplaceExisting) { throw "Output already exists; refusing to overwrite: $target" }
         Remove-Item -LiteralPath $target -Recurse -Force
     }
 }
@@ -41,7 +46,7 @@ New-Item -ItemType Directory -Path $runtimeStage, $sourceStage, $OutputRoot, $pa
 function Invoke-DotNet {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     & dotnet @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "dotnet 命令失败，退出码 $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "dotnet failed with exit code $LASTEXITCODE" }
 }
 
 $nuget = 'https://api.nuget.org/v3/index.json'
@@ -60,6 +65,7 @@ Invoke-DotNet publish (Join-Path $solutionRoot 'SteamSentinel.Broker\SteamSentin
 
 Copy-Item -Path (Join-Path $runtimeStage '*') -Destination $packageDir -Recurse
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'README.md') -Destination (Join-Path $packageDir 'README.md')
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'CHANGELOG.md') -Destination (Join-Path $packageDir 'CHANGELOG.md')
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'LICENSE') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'NOTICE') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'THIRD-PARTY-NOTICES.md') -Destination $packageDir
@@ -67,6 +73,7 @@ Copy-Item -LiteralPath (Join-Path $solutionRoot 'LICENSE-STATUS.md') -Destinatio
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\THREAT-MODEL.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\TEST-EVIDENCE.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\RELEASE-CHECKLIST.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\GROUP-TEST-GUIDE.md') -Destination $packageDir
 
 $dotnetRoot = Split-Path -Parent (Get-Command dotnet).Source
 $sdkVersion = (& dotnet --version).Trim()
@@ -76,11 +83,11 @@ Copy-Item -LiteralPath (Join-Path $dotnetRoot "sdk\$sdkVersion\Sdks\Microsoft.NE
 
 $versionLines = @(
     'Product=SteamSentinel',
-    'Version=0.1.3',
+    "Version=$version",
     'Rules=2026.09.03.3',
     'Runtime=win-x64 self-contained .NET 10',
     ('BuiltAtUtc=' + [DateTimeOffset]::UtcNow.ToString('O')),
-    'SignatureStatus=UNSIGNED REVIEW BUILD'
+    'SignatureStatus=UNSIGNED GROUP PREVIEW BUILD'
 )
 [IO.File]::WriteAllLines((Join-Path $packageDir 'VERSION.txt'), $versionLines, [Text.UTF8Encoding]::new($false))
 
@@ -107,12 +114,35 @@ Get-ChildItem -LiteralPath $solutionRoot -Recurse -File |
 [IO.Compression.ZipFile]::CreateFromDirectory((Split-Path -Parent $sourceStage), $sourceArchivePath,
     [IO.Compression.CompressionLevel]::Optimal, $false)
 
+if (-not $SkipInstaller) {
+    $isccCandidates = @(
+        (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+        'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+        'C:\Program Files\Inno Setup 6\ISCC.exe'
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) }
+    $iscc = $isccCandidates | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($iscc)) {
+        throw 'Inno Setup 6 compiler was not found. Install it or use -SkipInstaller for development-only builds.'
+    }
+    $installerScript = Join-Path $solutionRoot 'installer\SteamSentinel.iss'
+    & $iscc "/DPayloadDir=$packageDir" "/DOutputDir=$OutputRoot" "/DAppVersion=$version" $installerScript
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $setupPath)) {
+        throw "Installer compilation failed with exit code $LASTEXITCODE"
+    }
+}
+
 $archiveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash
 $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourceArchivePath).Hash
-[IO.File]::WriteAllLines($archiveChecksumPath, @(
+$releaseHashes = @(
     "$archiveHash *$([IO.Path]::GetFileName($archivePath))",
     "$sourceHash *$([IO.Path]::GetFileName($sourceArchivePath))"
-), [Text.UTF8Encoding]::new($false))
+)
+if (-not $SkipInstaller) {
+    $setupHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $setupPath).Hash
+    $releaseHashes += "$setupHash *$([IO.Path]::GetFileName($setupPath))"
+}
+[IO.File]::WriteAllLines($archiveChecksumPath, $releaseHashes, [Text.UTF8Encoding]::new($false))
 
 $workRoot = [IO.Path]::GetFullPath((Join-Path $workspaceRoot 'work'))
 Assert-ChildPath $stageRoot $workRoot
@@ -121,3 +151,4 @@ if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Re
 Write-Host "PACKAGE_DIR=$packageDir"
 Write-Host "BINARY_ZIP=$archivePath"
 Write-Host "SOURCE_ZIP=$sourceArchivePath"
+if (-not $SkipInstaller) { Write-Host "SETUP=$setupPath" }

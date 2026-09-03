@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.Win32;
 using SteamSentinel.App.Dialogs;
 using SteamSentinel.App.Services;
@@ -19,6 +20,7 @@ public partial class MainWindow : Window
     private readonly ScanCoordinator _coordinator = new();
     private readonly ArchiveWorkerClient _workerClient = new();
     private readonly RemediationClient _remediationClient = new();
+    private readonly InstallationSecurityStatus _installationSecurity;
     private CancellationTokenSource? _scanCancellation;
     private ScanReport? _lastReport;
     private bool _busy;
@@ -29,6 +31,7 @@ public partial class MainWindow : Window
         Findings = [];
         QuarantineItems = [];
         DataContext = this;
+        _installationSecurity = InstallationSecurity.Evaluate();
         HeaderDetailText.Text = $"规则 {_coordinator.Rules.Version}";
         Loaded += MainWindow_Loaded;
         Closing += (_, _) => _scanCancellation?.Cancel();
@@ -37,8 +40,11 @@ public partial class MainWindow : Window
     public ObservableCollection<FindingItemViewModel> Findings { get; }
     public ObservableCollection<QuarantineItemViewModel> QuarantineItems { get; }
 
-    private async void MainWindow_Loaded(object sender, RoutedEventArgs e) =>
+    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        ApplyInstallationSecurityStatus();
         await RefreshQuarantineItemsAsync();
+    }
 
     private async void QuickScan_Click(object sender, RoutedEventArgs e) =>
         await StartScanAsync(ScanMode.Quick, []);
@@ -92,7 +98,7 @@ public partial class MainWindow : Window
                     IncludeWorkshop = false,
                     InspectArchives = false,
                     UseAmsi = false,
-                    ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot]
+                    ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot, AppPaths.WorkerTemporaryRoot]
                 };
                 systemReport = await Task.Run(
                     () => _coordinator.RunAsync(systemOptions, null, progress, token), token);
@@ -108,7 +114,7 @@ public partial class MainWindow : Window
                 UseAmsi = AmsiCheckBox.IsChecked == true,
                 HashEveryFile = mode != ScanMode.Quick,
                 CustomRoots = customRoots,
-                ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot, AppContext.BaseDirectory]
+                ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot, AppPaths.WorkerTemporaryRoot, AppContext.BaseDirectory]
             };
 
             ScanReport contentReport = await _workerClient.RunAsync(
@@ -167,7 +173,7 @@ public partial class MainWindow : Window
         foreach (Finding finding in report.Findings) Findings.Add(new FindingItemViewModel(finding));
         FindingCountText.Text = $"{Findings.Count:N0} 项发现";
         ExportButton.IsEnabled = true;
-        RemediateButton.IsEnabled = Findings.Any(item => item.CanSelect);
+        RemediateButton.IsEnabled = _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
         if (Findings.Count > 0) FindingsGrid.SelectedIndex = 0;
     }
 
@@ -221,10 +227,20 @@ public partial class MainWindow : Window
     private async void Remediate_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
+        if (!EnsureRemediationAvailable()) return;
         List<Finding> selected = Findings.Where(item => item.IsSelected && item.CanSelect).Select(item => item.Finding).ToList();
         if (selected.Count == 0)
         {
             MessageBox.Show(this, "请先勾选至少一项可处置发现。", "SteamSentinel", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (selected.Any(finding => finding.Category == FindingCategory.Steam) && IsSteamRunning())
+        {
+            MessageBox.Show(this,
+                "所选动作包含 Steam 客户端恢复。请先从 Steam 菜单完整退出，并确认 steam.exe 与 steamwebhelper.exe 已结束，再重新点击处置。这样可以避免占用文件导致只完成部分隔离。",
+                "请先退出 Steam",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
             return;
         }
 
@@ -242,12 +258,24 @@ public partial class MainWindow : Window
             if (preview.ShowDialog() != true) return;
             HeaderStatusText.Text = "等待管理员处置";
             RemediationRunResult result = await _remediationClient.ExecuteAsync(plan);
-            string details = string.Join(Environment.NewLine, result.Actions.Select(action =>
-                $"{(action.Success ? "成功" : "失败")} · {ReportExporter.ActionLabel(action.Type)} · {action.Message}"));
+            IEnumerable<string> actionDetails = result.Actions.Select(action =>
+                $"{(action.Success ? "成功" : "失败")} · {ReportExporter.ActionLabel(action.Type)} · {action.Message}");
+            string details = string.Join(Environment.NewLine, actionDetails.Concat(result.Errors.Select(error => "错误 · " + error)));
+            bool steamRepairPrepared = result.Success &&
+                                       selected.Any(finding => finding.Category == FindingCategory.Steam) &&
+                                       result.Actions.Any(action => action.Success &&
+                                           action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory);
+            if (steamRepairPrepared)
+            {
+                details += Environment.NewLine + Environment.NewLine +
+                           "Steam 恢复准备已完成：异常前端文件或禁更配置已移入隔离区。现在请从原快捷方式重新启动 Steam，让官方客户端补全缺失组件。若未自动补全，请使用 Steam 官方安装包覆盖安装。";
+            }
             MessageBox.Show(this, details, result.Success ? "处置完成" : "处置部分失败",
                 MessageBoxButton.OK, result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
             HeaderStatusText.Text = result.Success ? "处置完成，建议复扫" : "处置部分失败";
-            HeaderDetailText.Text = result.Success ? "重启后再次扫描，再决定永久删除" : "请查看动作结果，不要直接删除隔离证据";
+            HeaderDetailText.Text = steamRepairPrepared
+                ? "请重新启动 Steam 完成官方组件补全，随后再次扫描"
+                : result.Success ? "重启后再次扫描，再决定永久删除" : "请查看动作结果，不要直接删除隔离证据";
             await RefreshQuarantineItemsAsync();
         }
         catch (OperationCanceledException)
@@ -317,7 +345,11 @@ public partial class MainWindow : Window
 
     private void OpenQuarantine_Click(object sender, RoutedEventArgs e)
     {
-        Directory.CreateDirectory(AppPaths.QuarantineRoot);
+        if (!Directory.Exists(AppPaths.QuarantineRoot))
+        {
+            MessageBox.Show(this, "当前还没有隔离事件。", "SteamSentinel", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         Process.Start(new ProcessStartInfo("explorer.exe", AppPaths.QuarantineRoot) { UseShellExecute = true });
     }
 
@@ -354,6 +386,7 @@ public partial class MainWindow : Window
     private async Task RunIncidentActionAsync(RemediationActionType type, string incidentId)
     {
         if (_busy) return;
+        if (!EnsureRemediationAvailable()) return;
         SetBusy(true);
         try
         {
@@ -372,7 +405,8 @@ public partial class MainWindow : Window
             };
             RemediationRunResult result = await _remediationClient.ExecuteAsync(plan);
             MessageBox.Show(this,
-                string.Join(Environment.NewLine, result.Actions.Select(action => action.Message)),
+                string.Join(Environment.NewLine,
+                    result.Actions.Select(action => action.Message).Concat(result.Errors.Select(error => "错误 · " + error))),
                 result.Success ? "操作完成" : "操作失败",
                 MessageBoxButton.OK,
                 result.Success ? MessageBoxImage.Information : MessageBoxImage.Error);
@@ -397,7 +431,55 @@ public partial class MainWindow : Window
         FileScanButton.IsEnabled = !busy;
         FolderScanButton.IsEnabled = !busy;
         CancelScanButton.IsEnabled = busy && _scanCancellation is not null;
-        RemediateButton.IsEnabled = !busy && Findings.Any(item => item.CanSelect);
+        RemediateButton.IsEnabled = !busy && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
         ExportButton.IsEnabled = !busy && _lastReport is not null;
+        RollbackButton.IsEnabled = !busy && _installationSecurity.IsProtected;
+        DeleteIncidentButton.IsEnabled = !busy && _installationSecurity.IsProtected;
     }
+
+    private bool EnsureRemediationAvailable()
+    {
+        InstallationSecurityStatus current = InstallationSecurity.Evaluate();
+        if (current.IsProtected) return true;
+        MessageBox.Show(this,
+            current.Message + "。请使用 v0.1.4 安装包安装后再执行隔离、恢复或永久删除，扫描与报告导出仍可使用。",
+            "管理员处置未启用",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+        return false;
+    }
+
+    private void ApplyInstallationSecurityStatus()
+    {
+        InstallationSecurityText.Text = _installationSecurity.IsProtected
+            ? "处置环境：受保护安装与组件完整性校验已通过，可使用隔离、恢复和永久删除。"
+            : $"处置环境：{_installationSecurity.Message}。请使用安装包启用隔离与恢复。";
+        InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(
+            _installationSecurity.IsProtected ? "#027A48" : "#B54708"));
+        string tooltip = _installationSecurity.IsProtected ? "管理员处置可用" : _installationSecurity.Message;
+        RemediateButton.ToolTip = tooltip;
+        RollbackButton.ToolTip = tooltip;
+        DeleteIncidentButton.ToolTip = tooltip;
+        SetBusy(_busy);
+    }
+
+    private static bool IsSteamRunning()
+    {
+        foreach (Process process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                try
+                {
+                    if (IsSteamClientProcessName(process.ProcessName)) return true;
+                }
+                catch { }
+            }
+        }
+        return false;
+    }
+
+    internal static bool IsSteamClientProcessName(string processName) =>
+        processName.Equals("steam", StringComparison.OrdinalIgnoreCase) ||
+        processName.Equals("steamwebhelper", StringComparison.OrdinalIgnoreCase);
 }

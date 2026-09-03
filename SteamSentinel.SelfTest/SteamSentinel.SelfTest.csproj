@@ -3,8 +3,11 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>SteamSentinel.SelfTest</AssemblyName>
     <RootNamespace>SteamSentinel.SelfTest</RootNamespace>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />
+    <ProjectReference Include="..\SteamSentinel.App\SteamSentinel.App.csproj" />
+    <ProjectReference Include="..\SteamSentinel.Broker\SteamSentinel.Broker.csproj" />
   </ItemGroup>
 </Project>

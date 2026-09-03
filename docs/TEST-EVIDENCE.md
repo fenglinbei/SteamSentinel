@@ -1,16 +1,18 @@
-# 0.1.3 测试证据
+# 0.1.4 group preview 测试证据
 
-测试日期：2026-09-03（Asia/Shanghai）
+测试日期：2026-09-04（Asia/Shanghai）
 
 ## 自动回归
 
-`SteamSentinel.SelfTest` 在本机 Release 构建中通过 32 项、失败 0、跳过 0，覆盖：
+`SteamSentinel.SelfTest` 在本机 Release 构建中通过 42 项、失败 0、跳过 0，覆盖：
 
 - 规则集载入、真实文件类型、PE 改名 MP4、最小 MP4、MP4 尾随 ZIP。
 - 改后缀压缩包、路径穿越、嵌套家族字符串、解压炸弹压缩比限制、快速模式小文件哈希。
 - 加密 RAR 密码请求、正确密码完整扫描、拒绝密码后 `Partial`。
-- ArchiveWorker 协议及密码往返。
-- 处置计划精确 SHA-256、JSON/Markdown 报告导出。
+- ArchiveWorker 协议及密码往返，以及受限令牌 Low Integrity + 单进程 Job Object 的端到端握手。
+- 处置计划精确 SHA-256、请求者 SID 绑定、计划被改写后的拒绝路径、锁定句柄上的 1 MiB 大小上限、JSON/Markdown 报告导出。
+- 只新建不覆盖的结果文件、目录内容变化导致指纹变化、计划任务路径穿越/后缀冒充拒绝。
+- 句柄绑定的无害文件复制、隔离副本哈希复核与源文件删除。
 - 发现分类、扫描覆盖状态和处置动作的中文展示映射。
 - Steam 多库发现、系统与 Steam 只读扫描。
 - Wallpaper Engine `defaultprojects` 误报抑制。
@@ -18,6 +20,7 @@
 - JSON 异步读取在非泵送同步上下文中不捕获调用方上下文，防止 WPF 同步等待型死锁回归。
 - `ServiceApp.exe` 精确哈希、候选进程名、非主库 Workshop 路径与 `ServiceAppMscopiAuto` Run 项关联。
 - 同一映像对应两个 PID 时生成两个停止动作、一个隔离动作，且所有停止动作排在隔离之前。
+- Steam 退出门禁匹配 `steam.exe` 与 `steamwebhelper.exe`，不把 SteamSentinel 自身误判为 Steam 客户端。
 
 ## 真实样本静态验证
 
@@ -45,6 +48,8 @@
 
 测试结束时，无害目标和测试隔离事件均已清理。
 
+上述三步是 0.1.3 基线的实际 UAC 集成记录。0.1.4 已将集成测试计划更新为“计划 SHA-256 参数 + 固定受保护结果目录 + 管理员窗口二次确认”，需要在安装包落地的测试机上重新执行，列入群内发布门槛，不以单元测试代替。
+
 ## GUI 验证
 
 - 主窗口三个页面在当前 Windows 缩放下完成视觉检查。
@@ -57,6 +62,8 @@
 ## 依赖与构建
 
 - `dotnet build`：0 警告、0 错误。
+- `scripts/build-release.ps1 -ReplaceExisting`：Release 构建与 42 项自检通过，成功生成 win-x64 便携扫描包、源码包和 Inno Setup 安装包。
+- Inno Setup 6.7.3 编译成功；安装/卸载与 Program Files 运行时门禁仍需在干净测试机做一次实际验收。
 - `dotnet format --verify-no-changes`：格式化后应通过。
 - NuGet `--vulnerable --include-transitive`：当前源未报告已知易受攻击包。
 - NuGet `--deprecated --include-transitive`：当前源未报告弃用包。

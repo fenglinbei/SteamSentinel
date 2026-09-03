@@ -16,6 +16,12 @@ internal static class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         try
         {
+            ProcessIntegrityLevel integrity = ProcessIntegrity.GetCurrent();
+            await WriteAsync(new WorkerMessage
+            {
+                Type = WorkerMessageTypes.Ready,
+                Containment = integrity.ToString()
+            });
             string? line = await Console.In.ReadLineAsync();
             if (string.IsNullOrWhiteSpace(line)) return 2;
             line = line.TrimStart('\uFEFF');

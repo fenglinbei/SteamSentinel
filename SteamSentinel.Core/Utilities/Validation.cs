@@ -12,6 +12,25 @@ public static partial class Validation
     public static bool IsHexSha256(string? value) =>
         value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
+    public static bool TryNormalizeScheduledTaskName(string? value, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 512 || value.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        string[] parts = value.Replace('/', '\\').Trim('\\')
+            .Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0 || parts.Any(part => part is "." or ".." || part.Contains(':')))
+        {
+            return false;
+        }
+
+        normalized = "\\" + string.Join('\\', parts);
+        return true;
+    }
+
     public static bool IsSafeExactTarget(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
