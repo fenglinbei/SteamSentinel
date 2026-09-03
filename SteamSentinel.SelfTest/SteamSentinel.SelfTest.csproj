@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SteamSentinel.SelfTest</AssemblyName>
+    <RootNamespace>SteamSentinel.SelfTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />
+  </ItemGroup>
+</Project>

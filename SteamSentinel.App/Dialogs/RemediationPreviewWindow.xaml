@@ -1,0 +1,39 @@
+<Window x:Class="SteamSentinel.App.Dialogs.RemediationPreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="处置动作预览"
+        Width="820" Height="600"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock FontSize="23" FontWeight="SemiBold" Text="请核对每一项处置动作" />
+        <Border Grid.Row="1" Margin="0,12,0,12" Background="#FFF4ED" BorderBrush="#FFB088" BorderThickness="1" CornerRadius="6" Padding="12">
+            <TextBlock TextWrapping="Wrap" Text="文件默认移入隔离区并保留回滚记录，不会立即永久删除。管理员处置组件只接受内置白名单动作、精确路径和扫描时哈希。" />
+        </Border>
+
+        <DataGrid Grid.Row="2" ItemsSource="{Binding Actions}" AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="动作" Binding="{Binding Type}" Width="180" />
+                <DataGridTextColumn Header="说明" Binding="{Binding DisplayName}" Width="230" />
+                <DataGridTextColumn Header="精确目标" Binding="{Binding Target}" Width="*" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <CheckBox x:Name="ConfirmCheckBox" Grid.Row="3" Margin="0,14,0,0" Checked="ConfirmCheckBox_Changed" Unchecked="ConfirmCheckBox_Changed"
+                  Content="我已核对上述精确目标，并同意触发一次 UAC 管理员处置" />
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="取消" Click="Cancel_Click" />
+            <Button x:Name="ExecuteButton" Style="{StaticResource PrimaryButton}" IsEnabled="False" Content="执行处置" Click="Execute_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

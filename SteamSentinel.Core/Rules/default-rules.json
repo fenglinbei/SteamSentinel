@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1",
+  "version": "2026.09.03.3",
+  "publishedAtUtc": "2026-09-03T00:00:00Z",
+  "knownHashes": [
+    { "id": "STEAMRED-EXE-001", "sha256": "015D7391062205C3D5FAF06771E51C49989CF394411957541DDC9CE62771568B", "label": "WindowsUpdatem.exe Steam 定向窃密加载器", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-SERVICEAPP-EXE-001", "sha256": "B0F17D38174E22DCB175663A7B904C3C532BDC9AA93531F988DE3F19DDEE2B7A", "label": "已确认 Wallpaper Workshop 假红信 ServiceApp.exe", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-RAR-001", "sha256": "A3831841D59F5B0EB8F6A99C7B63D0B408559A97D4F80A9C3B41617A7C1C813C", "label": "已确认恶意 WindowsUpdatem.rar", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-DATA-001", "sha256": "A4C415AD3E72149017E2B2B4F290D90CAB92D19636D14CDB33B41E70112EF015", "label": "已确认高熵加密载荷 f63ae3f4.bin", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-IDX-001", "sha256": "84CF643C0EFD98F80D8A101BED0409BCA604DAC8CD5228549FB70011AB48A4E5", "label": "已确认载荷索引 f55c0dcf.idx", "severity": "High", "malware": true },
+    { "id": "STEAMRED-BAT-001", "sha256": "288E499F8E7619A597B9FC783E49F2CAA167C20BA05C2520BA6A125C74888AC2", "label": "已确认 ServiceApp 启动批处理", "severity": "Critical", "malware": true },
+    { "id": "CLICKFIX-PS-001", "sha256": "603690268F17D25DBFB6AE51B33FDBDA8569DD16689D88C429E69498E60B15BF", "label": "ClickFix 恶意 PowerShell 脚本", "severity": "Critical", "malware": true },
+    { "id": "CLICKFIX-BAT-001", "sha256": "F91FE1D33906E8AC43FD5D7F7B64ACB48E1FADD2B37B7734BB01743E98CD8044", "label": "ClickFix _svc_launch.bat", "severity": "Critical", "malware": true },
+    { "id": "CLICKFIX-EXE-001", "sha256": "B755042136001A235F6A5D03A8BCAFCD31D0586D32611A872926B83A7242262F", "label": "ClickFix Telegramx64.exe", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-DESKTOPNOTIFY-EXE-001", "sha256": "8AAABE3F1039D3525D08BF2311A0A9A6D2AE75BCB84FA3C6499D4DE52C86F63F", "label": "已确认假红信 DesktopNotify.exe", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-NOTIFYBRIDGE-DLL-001", "sha256": "439E72A88B48A6B303B0DED2F85CAB07D180700C6DAC3D2D6A5F3BFB8BC31714", "label": "已确认假红信 notify_bridge.dll", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-SVCBAT-002", "sha256": "449DC31A62C915233365A743EA6C45D661FB93AB105895E3CC4ECD40BFC45401", "label": "已确认 SilentFrontier 启动批处理", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-STEAMUI-JS-001", "sha256": "AB3EEBF86F59EA0F1E597647D3DE097C5BB36A596512F2D858AAAB613FCFAC77", "label": "已确认被篡改 steamui chunk", "severity": "Critical", "malware": true },
+    { "id": "STEAMRED-STEAMCFG-001", "sha256": "C9799659EC6E3E786F68D73EEC26E7EB1190708CAAD875711096C98F1AAC4E24", "label": "本次样本的 Steam 禁更配置", "severity": "High", "malware": false }
+  ],
+  "knownDomains": [
+    "orfinta.org",
+    "cleardome.lat",
+    "noctfuee.org",
+    "torionexa.org",
+    "nexustechsolution.top",
+    "verifyni.cfd",
+    "luminovastella.top"
+  ],
+  "knownProcessNames": ["WindowsUpdatem.exe", "Telegramx64.exe", "DesktopNotify.exe", "SilentFrontier.exe", "ServiceApp.exe"],
+  "knownRunValueNames": ["ServiceAppMscopiAuto"],
+  "knownTaskNames": ["ServiceApp360GuardLogon"],
+  "knownPathTemplates": [
+    "%LOCALAPPDATA%\\Programs\\7jf417vr4lxkf0mo",
+    "%LOCALAPPDATA%\\Programs\\0h27iaygdd05zm45",
+    "%LOCALAPPDATA%\\ServiceApp",
+    "%LOCALAPPDATA%\\Programs\\w50s71hel96ab3g0"
+  ],
+  "suspiciousStrings": [
+    { "id": "STEAMRED-STR-KEY", "value": "SteamKey20260310", "score": 70, "label": "已确认通信密钥字符串" },
+    { "id": "STEAMRED-STR-MUTEX", "value": "Global\\SteamProtectInstall", "score": 60, "label": "ClickFix 安装互斥体" },
+    { "id": "STEAMRED-STR-LOG", "value": "匹配成功----下载失败----未执行", "score": 45, "label": "已确认下载状态日志" },
+    { "id": "STEAMRED-STR-ENDPOINT", "value": "/downloadlog/", "score": 25, "label": "家族日志上报端点" },
+    { "id": "STEAMRED-STR-TOAST", "value": "<!--STEAMTOAST:", "score": 35, "label": "假红信通知桥标记" },
+    { "id": "STEAMRED-STR-MUTEX2", "value": "Global\\VqDesktopNotifyHost_Mutex", "score": 55, "label": "DesktopNotify 互斥体" },
+    { "id": "STEAMRED-STR-NOTIFYAPI", "value": "steamhelper/api/last-msg?", "score": 45, "label": "假红信消息接口" },
+    { "id": "STEAMRED-STR-BRIDGE", "value": "notify_bridge.dll", "score": 25, "label": "假红信桥接 DLL 名称" }
+  ],
+  "steamInjectionNames": [
+    "wsock32.dll",
+    "version.dll",
+    "winmm.dll",
+    "steam.cfg"
+  ],
+  "dangerousExtensions": [
+    ".exe", ".com", ".scr", ".dll", ".msi", ".msp", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".cpl"
+  ],
+  "archiveExtensions": [
+    ".zip", ".zipx", ".rar", ".7z", ".tar", ".gz", ".gzip", ".bz2", ".xz", ".zst", ".tgz"
+  ]
+}

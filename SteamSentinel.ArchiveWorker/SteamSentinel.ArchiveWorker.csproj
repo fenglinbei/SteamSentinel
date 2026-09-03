@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SteamSentinel.ArchiveWorker</AssemblyName>
+    <RootNamespace>SteamSentinel.ArchiveWorker</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />
+  </ItemGroup>
+</Project>

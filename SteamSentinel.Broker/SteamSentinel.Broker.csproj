@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>SteamSentinel.Broker</AssemblyName>
+    <RootNamespace>SteamSentinel.Broker</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />
+  </ItemGroup>
+</Project>

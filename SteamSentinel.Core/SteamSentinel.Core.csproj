@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>SteamSentinel.Core</AssemblyName>
+    <RootNamespace>SteamSentinel.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.50.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Rules\default-rules.json" />
+  </ItemGroup>
+</Project>

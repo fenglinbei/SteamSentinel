@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="SteamSentinel.Core/SteamSentinel.Core.csproj" />
+  <Project Path="SteamSentinel.App/SteamSentinel.App.csproj" />
+  <Project Path="SteamSentinel.Broker/SteamSentinel.Broker.csproj" />
+  <Project Path="SteamSentinel.ArchiveWorker/SteamSentinel.ArchiveWorker.csproj" />
+  <Project Path="SteamSentinel.SelfTest/SteamSentinel.SelfTest.csproj" />
+</Solution>

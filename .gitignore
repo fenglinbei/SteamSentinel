@@ -1,0 +1,48 @@
+# .NET build output
+**/bin/
+**/obj/
+artifacts/
+publish/
+releases/
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+*.nupkg
+*.snupkg
+
+# IDE and operating-system files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.DS_Store
+Thumbs.db
+
+# Local diagnostics and generated reports
+*.log
+*.dmp
+*.tmp
+*.bak
+reports/
+evidence/
+quarantine/
+plans/
+
+# Never commit credentials or raw executable/archive samples
+.env
+.env.*
+*.pfx
+*.p12
+*.key
+*.exe
+*.dll
+*.zip
+*.rar
+*.7z
+samples/
+malware/
