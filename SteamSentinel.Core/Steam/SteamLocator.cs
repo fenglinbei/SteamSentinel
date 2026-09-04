@@ -11,6 +11,9 @@ public sealed class SteamLayout
     public List<string> LibraryRoots { get; } = [];
     public List<string> WorkshopRoots { get; } = [];
     public List<string> WallpaperProjectRoots { get; } = [];
+    public List<ContentRoot> ContentRoots { get; } = [];
+    public List<InstalledGame> Games { get; } = [];
+    public List<string> DiscoveryNotes { get; } = [];
 }
 
 public sealed record WallpaperProject(
@@ -64,6 +67,8 @@ public static partial class SteamLocator
             if (!File.Exists(vdf)) continue;
             try
             {
+                if (!ContentDiscovery.IsLocalSafePath(vdf) || new FileInfo(vdf).Length > 2 * 1024 * 1024)
+                { layout.DiscoveryNotes.Add("Steam 库清单过大或路径不安全，未完整发现库。"); continue; }
                 string text = File.ReadAllText(vdf);
                 foreach (Match match in LibraryPathRegex().Matches(text))
                 {
@@ -80,11 +85,7 @@ public static partial class SteamLocator
         layout.SteamRoots.AddRange(steamRoots.Order(StringComparer.OrdinalIgnoreCase));
         layout.LibraryRoots.AddRange(libraries.Order(StringComparer.OrdinalIgnoreCase));
 
-        foreach (string library in libraries)
-        {
-            AddExisting(Path.Combine(library, "steamapps", "workshop", "content", "431960"), layout.WorkshopRoots);
-            AddExisting(Path.Combine(library, "steamapps", "common", "wallpaper_engine", "projects"), layout.WallpaperProjectRoots);
-        }
+        ContentDiscovery.Populate(layout);
 
         return layout;
     }
@@ -100,6 +101,8 @@ public static partial class SteamLocator
 
         try
         {
+            if (!ContentDiscovery.IsLocalSafePath(projectJson) || new FileInfo(projectJson).Length > 1024 * 1024)
+                throw new IOException("项目清单过大或路径不安全。");
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(projectJson));
             JsonElement root = document.RootElement;
             return new WallpaperProject(
@@ -140,7 +143,7 @@ public static partial class SteamLocator
         try
         {
             string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.Replace('/', Path.DirectorySeparatorChar)));
-            if (Directory.Exists(full)) paths.Add(full);
+            if (Directory.Exists(full) && ContentDiscovery.IsLocalSafePath(full)) paths.Add(full);
         }
         catch
         {
@@ -153,7 +156,7 @@ public static partial class SteamLocator
         try
         {
             string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-            if (Directory.Exists(full) && !paths.Contains(full, StringComparer.OrdinalIgnoreCase)) paths.Add(full);
+            if (Directory.Exists(full) && ContentDiscovery.IsLocalSafePath(full) && !paths.Contains(full, StringComparer.OrdinalIgnoreCase)) paths.Add(full);
         }
         catch
         {

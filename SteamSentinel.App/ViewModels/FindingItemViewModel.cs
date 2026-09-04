@@ -12,7 +12,7 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
     public FindingItemViewModel(Finding finding)
     {
         Finding = finding;
-        _isSelected = finding.IsKnownMalware && finding.CanRemediate;
+        _isSelected = finding.IsKnownMalware && CanSelect;
     }
 
     public Finding Finding { get; }
@@ -26,16 +26,18 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
-    public bool CanSelect => Finding.CanRemediate;
+    public bool CanSelect => Finding.CanRemediate && !(Finding.ContentPath?.Contains("!/") == true &&
+        string.IsNullOrWhiteSpace(Finding.TargetSha256));
     public string Severity => ReportExporter.SeverityLabel(Finding.Severity);
     public string Category => ReportExporter.CategoryLabel(Finding.Category);
     public int Score => Finding.Score;
     public string Title => Finding.Title;
     public string Target => Finding.Target;
     public string Evidence => Finding.Evidence;
-    public string Description => Finding.Description;
+    public string Description => Finding.Description + (Finding.CanRemediate && !CanSelect
+        ? " 外层文件尚未完成哈希读取，暂不能隔离，请先对外层文件使用完整内容扫描。" : "");
     public string Sha256 => Finding.Sha256 ?? string.Empty;
-    public string WorkshopId => Finding.WorkshopId ?? string.Empty;
+    public string WorkshopId => Finding.AppId is { Length: > 0 } ? $"{Finding.AppId} / {Finding.WorkshopId ?? "—"}" : Finding.WorkshopId ?? string.Empty;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>

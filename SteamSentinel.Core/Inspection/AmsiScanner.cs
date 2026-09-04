@@ -53,6 +53,13 @@ public sealed class AmsiScanner : IDisposable
         byte[] bytes = content.ToArray();
         try
         {
+            return ScanOwnedBuffer(bytes, contentName);
+        }
+        finally { Array.Clear(bytes); }
+    }
+
+    private AmsiScanResult ScanOwnedBuffer(byte[] bytes, string contentName)
+    {
             int hr = AmsiScanBuffer(_context, bytes, (uint)bytes.Length, contentName, _session, out int result);
             if (hr < 0)
             {
@@ -67,11 +74,6 @@ public sealed class AmsiScanner : IDisposable
                 _ => AmsiVerdict.NotDetected
             };
             return new AmsiScanResult(verdict, result, $"AMSI 返回值：{result}");
-        }
-        finally
-        {
-            Array.Clear(bytes);
-        }
     }
 
     public async Task<AmsiScanResult> ScanFileAsync(
@@ -79,16 +81,20 @@ public sealed class AmsiScanner : IDisposable
         long maximumBytes = 32L * 1024 * 1024,
         CancellationToken cancellationToken = default)
     {
-        FileInfo info = new(path);
-        if (info.Length > maximumBytes)
+        if (_disposed || _context == IntPtr.Zero) return new(AmsiVerdict.Unavailable, 0, "AMSI 不可用。");
+        await using FileStream input = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous);
+        long length = input.Length;
+        if (length > Math.Min(maximumBytes, 32L * 1024 * 1024))
         {
-            return new AmsiScanResult(AmsiVerdict.NotDetected, 1, $"文件超过 AMSI 内存扫描上限 {maximumBytes} 字节。");
+            return new AmsiScanResult(AmsiVerdict.Error, 1, $"文件超过 AMSI 内存扫描上限 {maximumBytes} 字节，未获得引擎判定。");
         }
-
-        byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+        if (length == 0) return new(AmsiVerdict.Clean, 0, "空内容。");
+        byte[] bytes = new byte[(int)length];
         try
         {
-            return Scan(bytes, path);
+            await input.ReadExactlyAsync(bytes, cancellationToken);
+            if (input.ReadByte() != -1) throw new InvalidDataException("文件在 AMSI 读取期间发生大小变化。");
+            return ScanOwnedBuffer(bytes, path);
         }
         finally
         {

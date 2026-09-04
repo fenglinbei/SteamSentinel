@@ -4,11 +4,17 @@ internal sealed record HeuristicMatch(string Id, string Title, string Evidence, 
 
 internal static class ContentHeuristics
 {
+    internal static readonly string[] Tokens = ["steam://open/supportalert", "SupportMessages", "HelpFrontPage", "steamhelper",
+        "bSupportPopupMessage", "steam.cfg", "SteamKey20260310", "CryptUnprotectData", "steam.exe", "/downloadlog/",
+        "steam_save_mafile", "steam_outbox_list", "proconnector.cfd", "/api/v1/plugin/beacon", "password",
+        "bootstrap_secret", "KEY_ENC", "payload.bin", "marshal", "decompress", "runtime_manifest", "key_xor", "MODE_CTR", "<BB16s32s32s16s"];
     public static HeuristicMatch? Match(string text, string path)
+        => Match(value => text.Contains(value, StringComparison.OrdinalIgnoreCase), path);
+
+    internal static HeuristicMatch? Match(Func<string, bool> Has, string path)
     {
         string extension = Path.GetExtension(path).ToLowerInvariant();
         if (extension is ".md" or ".log" or ".lo") return null;
-        bool Has(string value) => text.Contains(value, StringComparison.OrdinalIgnoreCase);
         if (Has("steam://open/supportalert") && Has("SupportMessages") && Has("HelpFrontPage") &&
             Has("steamhelper") && (Has("bSupportPopupMessage") || Has("steam.cfg")))
             return new("HEUR-STEAM-UI-PATCHER", "发现修改 Steam 客服页面的组合特征",

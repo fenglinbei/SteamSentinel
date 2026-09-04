@@ -16,22 +16,56 @@
 
         <TextBlock FontSize="23" FontWeight="SemiBold" Text="请核对每一项处置动作" />
         <Border Grid.Row="1" Margin="0,12,0,12" Background="#FFF4ED" BorderBrush="#FFB088" BorderThickness="1" CornerRadius="6" Padding="12">
-            <TextBlock TextWrapping="Wrap" Text="启发式发现不会自动预选，但经你核对后仍可隔离。文件与目录会保留回滚记录，不会立即永久删除。管理员组件还会复核计划哈希、精确目标和对象指纹。" />
+            <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <TextBlock TextWrapping="Wrap" Text="本方案可能包含已核实的关联启动项、进程和文件。请先保存工作，关闭相关程序可能中断游戏。启发式项仍需你核对，隔离保留回滚记录，不会立即永久删除。" />
+                    <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{Binding PlanNotes}" />
+                </StackPanel>
+            </ScrollViewer>
         </Border>
 
-        <DataGrid Grid.Row="2" ItemsSource="{Binding Actions}" AutoGenerateColumns="False" IsReadOnly="True"
-                  CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+        <TabControl x:Name="PreviewTabs" Grid.Row="2">
+        <TabItem Header="本次将执行">
+        <DataGrid ItemsSource="{Binding GroupedActions}" AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" RowDetailsVisibilityMode="VisibleWhenSelected">
+            <DataGrid.GroupStyle>
+                <GroupStyle><GroupStyle.HeaderTemplate><DataTemplate>
+                    <TextBlock Text="{Binding Name, StringFormat=关联目标：{0}}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="4,10,4,4" />
+                </DataTemplate></GroupStyle.HeaderTemplate></GroupStyle>
+            </DataGrid.GroupStyle>
+            <DataGrid.RowDetailsTemplate><DataTemplate>
+                <TextBlock Text="{Binding ExpectedIdentity, StringFormat=核对依据：{0}}" TextWrapping="Wrap" MaxWidth="720" Margin="10" />
+            </DataTemplate></DataGrid.RowDetailsTemplate>
             <DataGrid.Columns>
-                <DataGridTextColumn Header="动作" Binding="{Binding Type}" Width="150" />
-                <DataGridTextColumn Header="判定" Binding="{Binding Confidence}" Width="110" />
-                <DataGridTextColumn Header="说明" Binding="{Binding DisplayName}" Width="200" />
-                <DataGridTextColumn Header="精确目标" Binding="{Binding Target}" Width="*" />
-                <DataGridTextColumn Header="SHA-256 / 目录指纹" Binding="{Binding ExpectedIdentity}" Width="220" />
+                <DataGridTextColumn Header="批次" Binding="{Binding Batch}" Width="50" />
+                <DataGridTextColumn Header="动作" Binding="{Binding Type}" Width="130" />
+                <DataGridTextColumn Header="判定" Binding="{Binding Confidence}" Width="90" />
+                <DataGridTextColumn Header="说明" Binding="{Binding DisplayName}" Width="190" />
+                <DataGridTextColumn Header="精确目标" Binding="{Binding Target}" Width="*" MinWidth="310">
+                    <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock">
+                        <Setter Property="TextWrapping" Value="Wrap"/><Setter Property="ToolTip" Value="{Binding Target}"/>
+                    </Style></DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
             </DataGrid.Columns>
         </DataGrid>
+        </TabItem>
+        <TabItem Header="未全部纳入">
+            <DataGrid ItemsSource="{Binding OmittedTargets}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="目标" Binding="{Binding Target}" Width="*" MinWidth="260">
+                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="ToolTip" Value="{Binding Target}"/></Style></DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="原因" Binding="{Binding Reason}" Width="*" MinWidth="300">
+                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style></DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </TabItem>
+        </TabControl>
 
         <CheckBox x:Name="ConfirmCheckBox" Grid.Row="3" Margin="0,14,0,0" Checked="ConfirmCheckBox_Changed" Unchecked="ConfirmCheckBox_Changed"
-                  Content="我已核对上述精确目标，并同意触发一次 UAC 管理员处置" />
+                  Content="我已核对全部批次的精确目标和未纳入项，同意执行上述动作" />
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
             <Button Content="取消" Click="Cancel_Click" />

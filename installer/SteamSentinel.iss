@@ -5,7 +5,7 @@
   #error OutputDir must be supplied by the release build.
 #endif
 #ifndef AppVersion
-#define AppVersion "0.1.10"
+#define AppVersion "0.1.16"
 #endif
 
 #define AppName "SteamSentinel Steam 红信安全工具"

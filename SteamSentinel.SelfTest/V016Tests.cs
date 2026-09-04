@@ -180,6 +180,7 @@ internal static partial class Program
             try
             {
                 SteamSentinel.App.App app = new(); app.InitializeComponent();
+                app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
                 ArchivePasswordRequest request = new("ui", "inert.zip", new string('A', 64), "ZIP", 1, null, "inert",
                     ArchivePasswordReuseScope.Session, ArchivePasswordPromptKind.CachedPasswordFailed);
                 PasswordDialog dialog = new(request);
@@ -188,6 +189,7 @@ internal static partial class Program
                 dialog.Close();
                 TestV017Window();
                 TestV018Window();
+                TestV0115Window();
                 app.Shutdown();
             }
             catch (Exception ex) { failure = ex; }

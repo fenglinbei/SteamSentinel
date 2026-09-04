@@ -40,9 +40,10 @@ public static class PowerShellProbe
         {
             await process.WaitForExitAsync(timeoutSource.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { }
+            cancellationToken.ThrowIfCancellationRequested();
             return null;
         }
 

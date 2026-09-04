@@ -1,8 +1,11 @@
 {
   "schemaVersion": "1",
-  "version": "2026.09.04.1",
+  "version": "2026.09.04.2",
   "publishedAtUtc": "2026-09-04T00:00:00Z",
   "knownHashes": [
+    {"id":"STEAMRED-DUCKOV-LOADER-001","sha256":"FA00800B88631999E53071FA299932DD38865DD1D2F0B30FF66BD4260D338B59","label":"已确认的恶意 MOD 加载入口","severity":"Critical","malware":true,"evidence":"精确样本的 ModBehaviour.Awake 将 CalcBridge.Calculator.Open 排入线程池，构成 SteamCFyinxiao 恶意加载链，不泛指同名正常 MOD。"},
+    {"id":"STEAMRED-DUCKOV-BRIDGE-001","sha256":"EB637A6B7DDCD1312B1B619F06E5234191A5C7376AA57DBE0EB269FA60DE3255","label":"已确认的恶意 MOD 桥接组件","severity":"Critical","malware":true,"evidence":"精确样本的 Open 方法从同目录加载 SteamCFyinxiao.dll 并调用对应导出函数，已通过只读 IL 检查确认。"},
+    {"id":"CLICKFIX-DEPLOYMENT-TEXT-001","sha256":"066656C5B9569AA3A8083F68DDD90AADC87CE275AA1B0371461E334AEB49416E","label":"假验证码多阶段部署脚本资料","severity":"High","malware":false,"remediable":true,"evidence":"所保存文本包含下载执行、恶意 steamprocess 部署、安全排除项与防火墙放行修改，作为研究副本只提供人工核对后的隔离。"},
     {"id":"STEAMRED-PAYLOAD-002","sha256":"4FB2B5E6572049F85FA7DEC725F3F6B79B91D42F8959EAA3362A556BF91E926C","label":"已确认的 Steam 凭据窃取加密载荷","severity":"Critical","malware":true,"remediable":false,"evidence":"使用同包密钥数据静态解密后，发现 Steam 内存凭据读取、CryptUnprotectData 与 torionexa.org 上报链，未执行载荷。"},
     {"id":"STEAMRED-BYTECODE-002","sha256":"F5CB367663A3A4F3CDDA1203E883C1396AAD2B9A4426C5BFFCAD92619C1A777F","label":"已确认的 ServiceApp 凭据窃取字节码","severity":"Critical","malware":true,"remediable":false,"evidence":"字节码同时包含 Steam 进程凭据读取、CryptUnprotectData、家族密钥与 syseaa.org 下载及外传端点。"},
     {"id":"STEAMRED-NOTIFY-024","sha256":"3E44DEA0EECE9A2089A6A8FA6F9D5BAD48AB720E2FF4F62CE5399D290DFE965A","label":"已确认的假红信通知程序","severity":"Critical","malware":true,"remediable":false,"evidence":"程序包含通知桥标记、固定家族互斥体和指向第三方的 Steam 客服链接。"},
@@ -41,6 +44,9 @@
     { "id": "STEAMRED-STEAMCFG-001", "sha256": "C9799659EC6E3E786F68D73EEC26E7EB1190708CAAD875711096C98F1AAC4E24", "label": "本次样本的 Steam 禁更配置", "severity": "High", "malware": false }
   ],
   "knownDomains": [
+    "syseaa.org",
+    "clyveron.org",
+    "proconnector.cfd",
     "orfinta.org",
     "cleardome.lat",
     "noctfuee.org",

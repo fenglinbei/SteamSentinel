@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml;
+using System.Xml.Linq;
 using Microsoft.Win32;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
@@ -86,6 +88,7 @@ public sealed partial class SystemScanner
                         Evidence = $"PID {process.Id}；映像：{path ?? "无法读取"}",
                         Sha256 = sha256,
                         ProcessId = process.Id,
+                        ProcessStartedAtUtc = process.StartTime.ToUniversalTime(),
                         IsKnownMalware = confirmed,
                         CanRemediate = confirmed && path is not null,
                         SuggestedActions = confirmed && path is not null
@@ -131,7 +134,9 @@ public sealed partial class SystemScanner
                 Title = known ? "已确认恶意落地点仍然存在" : "已知落地点路径需要哈希复核",
                 Description = known
                     ? "路径与精确恶意哈希同时命中。"
-                    : "路径与已知事件相同，但没有命中精确恶意哈希。路径名可能被其他软件复用，因此不会自动处置。",
+                    : Directory.Exists(path)
+                        ? "目录路径与已知事件相同，仅凭目录名不能判断是否有毒。请进一步检查其中的实际文件，目录存在不等于病毒仍在运行。"
+                        : "路径与已知事件相同，但没有命中精确恶意哈希。路径名可能被其他软件复用，请进一步检查实际内容。",
                 Target = path,
                 Evidence = template,
                 Sha256 = sha256,
@@ -290,10 +295,11 @@ public sealed partial class SystemScanner
                     Severity = knownName ? FindingSeverity.Critical : FindingSeverity.High,
                     Score = knownName ? 95 : 70,
                     Title = "计划任务包含已知假红信家族指标",
-                    Description = knownName ? "任务名称与已确认家族一致，处置前仍应核对任务 XML。" : "任务内容命中指标，但名称未知，首版仅报告。",
+                    Description = knownName ? "任务名称与已确认家族一致，处置前仍应核对实际启动目标。" : "任务内容出现相关指标，需要进一步检查实际启动文件。",
                     Target = taskName,
                     Evidence = file,
                     Sha256 = taskSha256,
+                    ConfigurationSnapshot = TaskCommandSnapshot(text),
                     IsKnownMalware = knownName,
                     CanRemediate = knownName && taskSha256 is not null,
                     SuggestedActions = knownName && taskSha256 is not null
@@ -306,6 +312,21 @@ public sealed partial class SystemScanner
         {
             AddCoverage(report, $"无法完整读取计划任务：{ex.Message}", root);
         }
+    }
+
+    private static string? TaskCommandSnapshot(string text)
+    {
+        if (text.Length == 0 || text.Length > 2 * 1024 * 1024) return null;
+        try
+        {
+            using XmlReader reader = XmlReader.Create(new StringReader(text), new XmlReaderSettings
+            { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 2 * 1024 * 1024 });
+            XDocument document = XDocument.Load(reader);
+            string command = string.Join("\n", document.Descendants().Where(e => e.Name.LocalName == "Exec")
+                .Select(e => string.Join(" ", e.Elements().Where(c => c.Name.LocalName is "Command" or "Arguments").Select(c => c.Value))));
+            return command.Length is > 0 and <= 32768 ? command : null;
+        }
+        catch (XmlException) { return null; }
     }
 
     private void ScanServiceRegistry(ScanReport report)
@@ -533,7 +554,7 @@ public sealed partial class SystemScanner
         string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         string temp = Path.GetTempPath();
         return IsWithin(path, localPrograms) || IsWithin(path, desktop) || IsWithin(path, downloads) || IsWithin(path, temp) ||
-               IsWallpaperWorkshopContentPath(path);
+               IsWallpaperWorkshopContentPath(path) || Steam.ContentDiscovery.IsWorkshopContentPath(path);
     }
 
     public static bool IsWallpaperWorkshopContentPath(string path)

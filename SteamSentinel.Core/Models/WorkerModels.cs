@@ -10,6 +10,7 @@ public static class WorkerMessageTypes
     public const string Completed = "completed";
     public const string Failed = "failed";
     public const string Cancel = "cancel";
+    public const string Checkpoint = "checkpoint";
 }
 
 public sealed class WorkerMessage
@@ -22,6 +23,9 @@ public sealed class WorkerMessage
     public ScanReport? Report { get; init; }
     public string? Error { get; init; }
     public string? Containment { get; init; }
+    public ReportBatch? Batch { get; init; }
+    public int? BatchCount { get; init; }
+    public WorkerDiagnostics? Diagnostics { get; init; }
 }
 
 public static class ScanReportMerger
@@ -31,6 +35,7 @@ public static class ScanReportMerger
         ScanReport merged = new()
         {
             Mode = first.Mode,
+            StartedAtUtc = first.StartedAtUtc < second.StartedAtUtc ? first.StartedAtUtc : second.StartedAtUtc,
             RuleSetVersion = first.RuleSetVersion,
             CompletedAtUtc = new[] { first.CompletedAtUtc, second.CompletedAtUtc }.Max(),
             Coverage = first.Coverage == ScanCoverage.Partial || second.Coverage == ScanCoverage.Partial
@@ -39,10 +44,19 @@ public static class ScanReportMerger
                     ? ScanCoverage.Skipped
                     : ScanCoverage.Complete
         };
+        merged.ContentScanSettings = second.ContentScanSettings ?? first.ContentScanSettings;
+        merged.WorkerDiagnostics = second.WorkerDiagnostics ?? first.WorkerDiagnostics;
         merged.Roots.AddRange(first.Roots.Concat(second.Roots).Distinct(StringComparer.OrdinalIgnoreCase));
+        merged.CandidateRoots.AddRange(first.CandidateRoots.Concat(second.CandidateRoots).Distinct(StringComparer.OrdinalIgnoreCase));
+        merged.ContentSources.AddRange(first.ContentSources.Concat(second.ContentSources).Distinct(StringComparer.OrdinalIgnoreCase));
+        merged.ScopeNotes.AddRange(first.ScopeNotes.Concat(second.ScopeNotes).Distinct(StringComparer.Ordinal));
         merged.CoverageNotes.AddRange(first.CoverageNotes.Concat(second.CoverageNotes).Distinct(StringComparer.Ordinal));
+        // Preserve independently scanned occurrences; immutable groups cannot be changed by merging.
+        merged.CoverageAggregates.AddRange(first.CoverageAggregates.Concat(second.CoverageAggregates));
         merged.Findings.AddRange(first.Findings.Concat(second.Findings));
         merged.RootSummaries.AddRange(first.RootSummaries.Concat(second.RootSummaries));
+        merged.Metrics.QuickPriorityBytesHashed = first.Metrics.QuickPriorityBytesHashed + second.Metrics.QuickPriorityBytesHashed;
+        merged.Metrics.MediaStructuresChecked = first.Metrics.MediaStructuresChecked + second.Metrics.MediaStructuresChecked;
         merged.Findings.Sort((left, right) =>
         {
             int severity = right.Severity.CompareTo(left.Severity);

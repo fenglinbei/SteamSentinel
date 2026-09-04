@@ -14,7 +14,11 @@ public enum RemediationActionType
     BlockKnownDomains,
     RestoreSecurityControls,
     RollbackIncident,
-    DeleteIncident
+    DeleteIncident,
+    StopHostProcess,
+    DisableService,
+    RemoveRelatedDefenderExclusion,
+    DisableRelatedFirewallRule
 }
 
 public sealed class RemediationPlan
@@ -39,6 +43,11 @@ public sealed class RemediationAction
     public bool IsKnownMalware { get; init; }
     public int ConfidenceScore { get; init; }
     public int? ProcessId { get; init; }
+    public DateTimeOffset? ProcessStartedAtUtc { get; init; }
+    public string? RelatedFilePath { get; init; }
+    public string? RelatedFileSha256 { get; init; }
+    public string? ConfigurationKind { get; init; }
+    public string? ConfigurationSnapshot { get; init; }
     public string? RegistryHive { get; init; }
     public string? RegistryView { get; init; }
     public string? RegistryKey { get; init; }
@@ -58,6 +67,10 @@ public sealed class RemediationRunResult
     public List<RemediationActionResult> Actions { get; init; } = [];
     public List<string> Errors { get; init; } = [];
     public string? ManifestPath { get; set; }
+    // Success remains the legacy action-execution outcome, never a clean-machine assertion.
+    public RemediationVerificationStatus VerificationStatus { get; set; }
+    public string VerificationSummary { get; set; } = string.Empty;
+    public DateTimeOffset? VerificationCompletedAtUtc { get; set; }
 }
 
 public sealed class RemediationActionResult
@@ -67,6 +80,41 @@ public sealed class RemediationActionResult
     public string Target { get; init; } = string.Empty;
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
+    public RemediationVerificationStatus VerificationStatus { get; set; }
+    public string VerificationSummary { get; set; } = string.Empty;
+    public List<RemediationVerificationObservation> Verifications { get; init; } = [];
+    public FileOccupancyResult? Occupancy { get; set; }
+}
+
+public enum RemediationVerificationStatus
+{
+    NotChecked, Verified, NoResidual, PendingReboot, Unknown, ResidualDetected, Reappeared
+}
+
+public sealed class RemediationVerificationObservation
+{
+    public int Pass { get; init; }
+    public DateTimeOffset CheckedAtUtc { get; init; } = DateTimeOffset.UtcNow;
+    public RemediationVerificationStatus Status { get; init; }
+    public string Message { get; init; } = string.Empty;
+}
+
+public enum FileOccupancyStatus { Unknown, NoLocksReported, LocksReported }
+
+public sealed class FileOccupancyResult
+{
+    public FileOccupancyStatus Status { get; init; }
+    public List<FileOccupancyProcess> Processes { get; init; } = [];
+    public string Diagnostic { get; init; } = string.Empty;
+    public bool Truncated { get; init; }
+}
+
+public sealed class FileOccupancyProcess
+{
+    public int ProcessId { get; init; }
+    public string ProcessName { get; init; } = string.Empty;
+    public DateTimeOffset? StartedAtUtc { get; init; }
+    public string? ServiceName { get; init; }
 }
 
 public sealed class QuarantineManifest
@@ -97,4 +145,11 @@ public sealed class QuarantineRecord
     public string? DefenderExclusionPath { get; init; }
     public List<string> HostsDomains { get; init; } = [];
     public bool RolledBack { get; set; }
+    public bool? MutationConfirmed { get; set; }
+    public string? RelatedFilePath { get; init; }
+    public string? RelatedFileSha256 { get; init; }
+    public string? ConfigurationKind { get; init; }
+    public string? ConfigurationSnapshot { get; init; }
+    // Broker-computed proof, never copied from request confidence or a finding label.
+    public string? VerifiedContentRuleId { get; init; }
 }

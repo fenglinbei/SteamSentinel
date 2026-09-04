@@ -74,6 +74,22 @@ internal sealed class ArchiveWorkerClient
         BoundedWorkerError errors = new();
         Task errorTask = errors.DrainAsync(worker.StandardError, errorCancellation.Token);
         WorkerStage stage = WorkerStage.Handshake;
+        BoundedLineReader output = new(worker.StandardOutput);
+        ReportBatchReader batches = new();
+        ScanProgress? lastProgress = null;
+        WorkerDiagnostics? diagnostics = null;
+        string launcherIntegrity = ProcessIntegrity.GetCurrent().ToString();
+        long lastUiProgress = 0;
+
+        ScanReport Partial()
+        {
+            ScanReport partial = batches.Report ?? new ScanReport { Mode = options.Mode, ContentScanSettings = options };
+            partial.Coverage = ScanCoverage.Partial;
+            if (diagnostics is not null) partial.WorkerDiagnostics = diagnostics with { LauncherIntegrity = launcherIntegrity };
+            else if (lastProgress is not null) partial.WorkerDiagnostics = new(lastProgress.Stage, lastProgress.CurrentItem,
+                lastProgress.Message, 0, 0, 0, DateTimeOffset.UtcNow, LauncherIntegrity: launcherIntegrity);
+            return partial;
+        }
 
         try
         {
@@ -82,7 +98,7 @@ internal sealed class ArchiveWorkerClient
             string? readyLine;
             try
             {
-                readyLine = await worker.StandardOutput.ReadLineAsync(readyTimeout.Token);
+                readyLine = await output.ReadLineAsync(readyTimeout.Token);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -107,17 +123,29 @@ internal sealed class ArchiveWorkerClient
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? line = await worker.StandardOutput.ReadLineAsync(cancellationToken);
+                string? line = await output.ReadLineAsync(cancellationToken);
                 if (line is null) break;
                 WorkerMessage? message = JsonSerializer.Deserialize<WorkerMessage>(line, JsonFile.Options);
                 if (message is null) continue;
+                if (message.Diagnostics is not null) diagnostics = message.Diagnostics;
 
                 switch (message.Type)
                 {
                     case WorkerMessageTypes.Progress when message.Progress is not null:
-                        progress?.Report(message.Progress);
+                        lastProgress = message.Progress;
+                        if (diagnostics is not null) diagnostics = diagnostics with { Stage = lastProgress.Stage,
+                            LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
+                        if (Environment.TickCount64 - lastUiProgress >= 100)
+                        { progress?.Report(message.Progress); lastUiProgress = Environment.TickCount64; }
+                        break;
+                    case WorkerMessageTypes.Checkpoint when message.Batch is not null:
+                        batches.Apply(message.Batch);
+                        diagnostics = message.Batch.Data.WorkerDiagnostics ?? diagnostics;
                         break;
                     case WorkerMessageTypes.PasswordRequest when message.PasswordRequest is not null:
+                        lastProgress = new("等待压缩包密码", message.PasswordRequest.ArchivePath, 0, null, "尚未读取这一层加密内容");
+                        if (diagnostics is not null) diagnostics = diagnostics with { Stage = lastProgress.Stage,
+                            LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
                         ArchivePasswordResponse response = await passwordCallback(message.PasswordRequest, cancellationToken);
                         await WriteAsync(worker, new WorkerMessage
                         {
@@ -126,7 +154,13 @@ internal sealed class ArchiveWorkerClient
                         }, cancellationToken);
                         break;
                     case WorkerMessageTypes.Completed:
-                        report = message.Report;
+                        if (message.BatchCount is int expected)
+                        {
+                            if (expected != batches.Count || batches.Report is null)
+                                throw new InvalidDataException("扫描结果批次缺失，不能作为完整结果。");
+                            report = batches.Report;
+                        }
+                        else report = message.Report;
                         break;
                     case WorkerMessageTypes.Failed:
                         failure = message.Error ?? "内容扫描工作进程失败。";
@@ -136,7 +170,7 @@ internal sealed class ArchiveWorkerClient
                 if (report is not null || failure is not null) break;
             }
 
-            stage = WorkerStage.Exit;
+            if (report is not null && failure is null) stage = WorkerStage.Exit;
             using CancellationTokenSource exitTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             exitTimeout.CancelAfter(TimeSpan.FromSeconds(5));
             await worker.WaitForExitAsync(exitTimeout.Token);
@@ -145,9 +179,17 @@ internal sealed class ArchiveWorkerClient
             {
                 throw new InvalidOperationException(failure ?? "扫描组件没有正常返回完整结果。");
             }
+            if (report.WorkerDiagnostics is not null)
+                report.WorkerDiagnostics = report.WorkerDiagnostics with { LauncherIntegrity = launcherIntegrity };
+            report.Findings.Sort((left, right) =>
+            {
+                int severity = right.Severity.CompareTo(left.Severity);
+                return severity != 0 ? severity : right.Score.CompareTo(left.Score);
+            });
             return report;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        { throw new WorkerCancelledException(Partial(), cancellationToken); }
         catch (Exception ex)
         {
             int? exitCode = null;
@@ -162,7 +204,7 @@ internal sealed class ArchiveWorkerClient
             catch { }
             string detail = ex is OperationCanceledException ? "扫描组件没有在限定时间内正常退出。" : ex.Message;
             if (!string.IsNullOrWhiteSpace(errors.Text)) detail += "\n组件错误输出：" + errors.Text;
-            throw new WorkerFailureException(stage, exitCode, detail, ex);
+            throw new WorkerFailureException(stage, exitCode, detail, ex) { PartialReport = Partial() };
         }
         finally
         {

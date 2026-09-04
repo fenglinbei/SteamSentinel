@@ -51,7 +51,11 @@ public enum SuggestedActionKind
     AddProgramFirewallBlock,
     BlockKnownDomains,
     RestoreSecurityControls,
-    ReviewOnly
+    ReviewOnly,
+    StopHostProcess,
+    DisableService,
+    RemoveRelatedDefenderExclusion,
+    DisableRelatedFirewallRule
 }
 
 public sealed class Finding
@@ -69,11 +73,18 @@ public sealed class Finding
     public string? ContentPath { get; set; }
     public string? TargetSha256 { get; set; }
     public int? ProcessId { get; init; }
+    public DateTimeOffset? ProcessStartedAtUtc { get; init; }
+    public string? RelatedFilePath { get; init; }
+    public string? RelatedFileSha256 { get; init; }
+    public string? ConfigurationKind { get; init; }
+    public string? ConfigurationSnapshot { get; init; }
     public string? RegistryHive { get; init; }
     public string? RegistryView { get; init; }
     public string? RegistryKey { get; init; }
     public string? RegistryValueName { get; init; }
     public string? WorkshopId { get; init; }
+    public string? AppId { get; set; }
+    public string? SourceKind { get; set; }
     public bool IsKnownMalware { get; init; }
     public bool CanRemediate { get; init; }
     public IReadOnlyList<SuggestedActionKind> SuggestedActions { get; init; } = [];
@@ -84,6 +95,8 @@ public sealed class ScanMetrics
 {
     public long FilesVisited { get; set; }
     public long BytesHashed { get; set; }
+    public long QuickPriorityBytesHashed { get; set; }
+    public long MediaStructuresChecked { get; set; }
     public long ArchiveEntriesVisited { get; set; }
     public long ArchiveBytesExpanded { get; set; }
     public long ProcessesVisited { get; set; }
@@ -104,14 +117,24 @@ public sealed class ScanReport
     public ScanCoverage Coverage { get; set; } = ScanCoverage.Complete;
     public List<string> Roots { get; init; } = [];
     public List<string> CoverageNotes { get; init; } = [];
+    public List<CoverageAggregate> CoverageAggregates { get; init; } = [];
     public List<Finding> Findings { get; init; } = [];
     public List<ScanRootSummary> RootSummaries { get; init; } = [];
+    public List<string> CandidateRoots { get; init; } = [];
+    public List<string> ContentSources { get; init; } = [];
     public ScanMetrics Metrics { get; init; } = new();
+    public ScanOptions? ContentScanSettings { get; set; }
+    public WorkerDiagnostics? WorkerDiagnostics { get; set; }
 
     [JsonIgnore]
-    public FindingSeverity HighestSeverity => Findings.Count == 0
-        ? FindingSeverity.Information
-        : Findings.Max(f => f.Severity);
+    public FindingSeverity HighestSeverity => Findings.Where(f => f.Category != FindingCategory.Coverage)
+        .Select(f => f.Severity).DefaultIfEmpty(FindingSeverity.Information).Max();
+
+    public int RiskFindingCount => Findings.Count(f => f.Category != FindingCategory.Coverage);
+    public string ExecutionStatus => Findings.Any(f => f.RuleId == "CONTENT-SCAN-FAILED") ? "内容检查失败，已保留可用结果" :
+        CoverageNotes.Any(n => n.Contains("取消")) ? "扫描已取消，已保留可用结果" :
+        CompletedAtUtc is null ? "尚未结束" : "扫描流程已结束，未检查内容另列";
+    public List<string> ScopeNotes { get; init; } = [];
 }
 
 public sealed record ScanRootSummary(string Path, ScanCoverage Coverage, int KnownThreats, int ActionableFindings, long FilesVisited);
@@ -122,6 +145,12 @@ public sealed class ScanOptions
     public bool IncludeSystem { get; init; } = true;
     public bool IncludeSteam { get; init; } = true;
     public bool IncludeWorkshop { get; init; } = true;
+    public bool IncludeRelatedContent { get; init; }
+    public bool IncludeDownloadLocations { get; init; }
+    public bool IncludeExecutionHistory { get; init; }
+    public List<string> RelatedRoots { get; init; } = [];
+    public List<string> WorkshopAppIds { get; init; } = [];
+    public long MaximumContentBytes { get; init; } = long.MaxValue;
     public bool InspectArchives { get; init; } = true;
     public bool UseAmsi { get; init; } = true;
     public bool HashEveryFile { get; init; }
@@ -182,5 +211,5 @@ public sealed class NullPasswordProvider : IArchivePasswordProvider
 public static class ProductInfo
 {
     public const string Name = "SteamSentinel Steam 红信安全工具";
-    public const string Version = "0.1.10";
+    public const string Version = "0.1.16";
 }

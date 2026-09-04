@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using SteamSentinel.App;
@@ -37,6 +38,56 @@ internal static class UiPreview
                 report.Findings.Add(new Finding { IsKnownMalware = true, Severity = FindingSeverity.Critical });
                 typeof(MainWindow).GetMethod("UpdateSummary", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [report]);
                 Capture(window, "main-partial-threat", 980, 680, output);
+                MainWindow coverageWindow = new();
+                ScanReport coverageReport = new() { Mode = ScanMode.Quick, Coverage = ScanCoverage.Partial, CompletedAtUtc = DateTimeOffset.UtcNow };
+                for (int i = 0; i < 6500; i++) coverageReport.Findings.Add(new() { RuleId = "QUICK-MEDIA-STRUCTURE", Category = FindingCategory.Coverage,
+                    Target = @"C:\示例内容\视频" + i + ".mp4", Description = "视频已检查格式、顶层结构与尾随数据，未做整文件哈希比对。" });
+                coverageReport.Findings.Add(new() { RuleId = "ARCHIVE-PASSWORD-FAILED", Category = FindingCategory.Coverage,
+                    Target = @"C:\示例内容\压缩包.rar", Description = "内层密码未能解开，尚未读取内部内容。" });
+                typeof(MainWindow).GetField("_lastReport", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(coverageWindow, coverageReport);
+                typeof(MainWindow).GetMethod("PopulateFindings", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(coverageWindow, [coverageReport]);
+                typeof(MainWindow).GetMethod("UpdateSummary", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(coverageWindow, [coverageReport]);
+                ApplyAccessState(coverageWindow, InstallationSecurityStatus.Protected, new(false, true));
+                Capture(coverageWindow, "quick-scope-complete", 980, 720, output);
+                ((TabControl)coverageWindow.FindName("ResultTabs")).SelectedIndex = 1;
+                Capture(coverageWindow, "quick-coverage-groups", 980, 720, output);
+                ((DataGrid)coverageWindow.FindName("CoverageGrid")).SelectedIndex = 1;
+                Capture(coverageWindow, "quick-encrypted-next-step", 1180, 830, output);
+                string previewTarget = @"C:\Users\用户\AppData\Local\ServiceApp\示例文件.exe";
+                RemediationPlan previewPlan = new()
+                {
+                    Actions =
+                    [
+                        new() { Type = RemediationActionType.StopProcess, Target = previewTarget, RelatedFilePath = previewTarget,
+                            DisplayName = "停止已核实的关联进程", ConfidenceScore = 90, ExpectedSha256 = new string('A', 64) },
+                        new() { Type = RemediationActionType.RemoveRegistryValue, Target = "示例启动项", RelatedFilePath = previewTarget,
+                            DisplayName = "移除关联启动入口", ConfidenceScore = 90 },
+                        new() { Type = RemediationActionType.QuarantineFile, Target = previewTarget,
+                            DisplayName = "隔离关联文件", ConfidenceScore = 90, ExpectedSha256 = new string('A', 64) }
+                    ]
+                };
+                RemediationPreviewWindow relationPreview = new(previewPlan,
+                    ["这里只展示无害的界面测试数据，没有读取或处置对应路径。", "按关联目标分组展示，执行顺序以管理员组件核对后的方案为准。"]);
+                Capture(relationPreview, "remediation-related-preview", 820, 600, output);
+                RemediationBatchSession batch = new()
+                {
+                    Plans = [previewPlan, new() { Actions = [new() { Type = RemediationActionType.QuarantineFile, Target = @"C:\示例内容\第二份文件.zip", DisplayName = "隔离文件", ConfidenceScore = 95 }] }],
+                    Targets = [new() { Target = previewTarget, Status = "已完成", ActionIds = [previewPlan.Actions[0].ActionId], Reason = "所选动作已执行并完成目标核验，不代表整台电脑安全。" },
+                        new() { Target = @"C:\示例内容\第二份文件.zip", Status = "尚未执行", ActionIds = [Guid.NewGuid()], Reason = "后续批次已暂停，没有执行。" },
+                        new() { Target = @"C:\示例内容\较长目录\本次扫描后已经变化的文件.zip", Status = "未处理", MissingActions = ["inert"], Reason = "文件在扫描后发生变化，未纳入处置，请重新扫描。" }],
+                    Notes = ["只展示无害界面示例，没有读取或处置这些路径。"]
+                };
+                RemediationPreviewWindow batchPreview = new(batch);
+                Capture(batchPreview, "batch-omissions", 820, 600, output);
+                ((TabControl)batchPreview.FindName("PreviewTabs")).SelectedIndex = 0;
+                Capture(batchPreview, "batch-actions", 820, 600, output);
+                batch.ExecutionStarted = true;
+                MainWindow batchWindow = new(); ApplyAccessState(batchWindow, InstallationSecurityStatus.Protected, new(true, true));
+                typeof(MainWindow).GetField("_caseBatch", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(batchWindow, batch);
+                typeof(MainWindow).GetMethod("UpdateBatchResults", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(batchWindow, null);
+                ((TextBlock)batchWindow.FindName("BatchFollowUpText")).Text = "原扫描范围：仍有可处置项，尚未全部清除。\n系统与 Steam：Windows 安全防护未完全开启，这是配置提示，不是样本复活。";
+                ((TabControl)batchWindow.FindName("ResultTabs")).SelectedIndex = 2;
+                Capture(batchWindow, "batch-outcomes", 980, 720, output);
                 MainWindow failedWindow = new();
                 typeof(MainWindow).GetMethod("PreserveScanFailure", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(failedWindow,
                     [new ScanReport { Mode = ScanMode.Quick, Metrics = new ScanMetrics { ProcessesVisited = 7 } },
@@ -69,6 +120,17 @@ internal static class UiPreview
                     ApplyAccessState(accessWindow, status, context);
                     Capture(accessWindow, name, 980, 680, output);
                 }
+                foreach (MainWindow.ActivityPhase phase in new[] { MainWindow.ActivityPhase.Preparing,
+                    MainWindow.ActivityPhase.Confirmation, MainWindow.ActivityPhase.Applying, MainWindow.ActivityPhase.FollowUp, MainWindow.ActivityPhase.ContentFollowUp })
+                {
+                    MainWindow active = new();
+                    ApplyAccessState(active, InstallationSecurityStatus.Protected, new(true, true));
+                    typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(active, [true]);
+                    active.ShowActivity(phase);
+                    Capture(active, "activity-" + phase.ToString().ToLowerInvariant(), 980, 720, output);
+                }
+                foreach (MainWindow created in app.Windows.OfType<MainWindow>().ToArray())
+                    typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(created, [false]);
                 app.Shutdown();
             }
             catch (Exception ex) { failure = ex; }
@@ -111,5 +173,7 @@ internal static class UiPreview
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using FileStream stream = File.Create(Path.Combine(output, name + ".png"));
         encoder.Save(stream);
+        host.Child = null;
+        window.Content = content;
     }
 }

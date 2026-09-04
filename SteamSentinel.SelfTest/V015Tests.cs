@@ -108,7 +108,7 @@ internal static partial class Program
         ScanReport msi = new();
         using (ContentScanner scanner = new(rules))
             await scanner.ScanRootAsync(compound, msi, ContentOptions(), new NullPasswordProvider());
-        Check("未展开结构化安装包不伪报完整", msi.Coverage == ScanCoverage.Partial && msi.Findings.Any(f => f.RuleId == "COMPOUND-CONTENT-NOT-EXPANDED"));
+        Check("无法解析的结构化安装包不伪报完整", msi.Coverage == ScanCoverage.Partial && msi.Findings.Any(f => f.RuleId == "INSTALLER-PARTIAL"));
         Check("逐路径报告保留覆盖与告警", msi.RootSummaries.Single().Coverage == ScanCoverage.Partial && nested.RootSummaries.Single().ActionableFindings == 2);
         ScanReport cancelled = new();
         using (ContentScanner scanner = new(rules))

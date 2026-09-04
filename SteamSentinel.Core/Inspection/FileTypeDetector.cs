@@ -28,7 +28,8 @@ public enum DetectedFileType
     Pdf,
     Png,
     Jpeg,
-    Gif
+    Gif,
+    Cabinet
 }
 
 public sealed record FileTypeResult(
@@ -67,7 +68,7 @@ public static class FileTypeDetector
         bool mismatch = IsMeaningfulMismatch(type, extension);
         bool archive = type is DetectedFileType.Zip or DetectedFileType.Rar or
             DetectedFileType.SevenZip or DetectedFileType.GZip or DetectedFileType.BZip2 or
-            DetectedFileType.Xz or DetectedFileType.Zstandard or DetectedFileType.Tar;
+            DetectedFileType.Xz or DetectedFileType.Zstandard or DetectedFileType.Tar or DetectedFileType.Cabinet;
         bool executable = type is DetectedFileType.PortableExecutable or DetectedFileType.PowerShell or
             DetectedFileType.Batch or DetectedFileType.JavaScript or DetectedFileType.Shortcut;
         return new FileTypeResult(type, Label(type), mismatch, expected, archive, executable);
@@ -81,6 +82,7 @@ public static class FileTypeDetector
         }
 
         if (StartsWith(data, "MZ"u8)) return DetectedFileType.PortableExecutable;
+        if (StartsWith(data, "MSCF"u8)) return DetectedFileType.Cabinet;
         if (StartsWith(data, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])) return DetectedFileType.CompoundDocument;
         if (StartsWith(data, [0x50, 0x4B, 0x03, 0x04]) ||
             StartsWith(data, [0x50, 0x4B, 0x05, 0x06]) ||
@@ -136,6 +138,7 @@ public static class FileTypeDetector
             DetectedFileType.CompoundDocument => extension is not (".msi" or ".msp" or ".doc" or ".xls" or ".ppt" or ".msg"),
             DetectedFileType.Zip => extension is not (".zip" or ".zipx" or ".jar" or ".docx" or ".xlsx" or ".pptx" or ".nupkg"),
             DetectedFileType.Rar => extension != ".rar",
+            DetectedFileType.Cabinet => extension != ".cab",
             DetectedFileType.SevenZip => extension != ".7z",
             DetectedFileType.GZip => extension is not (".gz" or ".gzip" or ".tgz"),
             DetectedFileType.Mp4 => extension is not (".mp4" or ".m4v" or ".mov"),
@@ -150,6 +153,7 @@ public static class FileTypeDetector
         DetectedFileType.CompoundDocument => ".msi/.msp/复合文档",
         DetectedFileType.Zip => ".zip",
         DetectedFileType.Rar => ".rar",
+        DetectedFileType.Cabinet => ".cab",
         DetectedFileType.SevenZip => ".7z",
         DetectedFileType.GZip => ".gz",
         DetectedFileType.BZip2 => ".bz2",
@@ -167,6 +171,7 @@ public static class FileTypeDetector
         DetectedFileType.CompoundDocument => "OLE 结构化安装包或复合文档",
         DetectedFileType.Zip => "ZIP 压缩包",
         DetectedFileType.Rar => "RAR 压缩包",
+        DetectedFileType.Cabinet => "CAB 安装归档",
         DetectedFileType.SevenZip => "7z 压缩包",
         DetectedFileType.GZip => "GZip 数据",
         DetectedFileType.BZip2 => "BZip2 数据",

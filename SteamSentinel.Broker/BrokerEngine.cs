@@ -2,13 +2,14 @@ using System.Diagnostics;
 using System.Text;
 using Microsoft.Win32;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Rules;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Broker;
 
-internal sealed class BrokerEngine
+internal sealed partial class BrokerEngine
 {
     private readonly RuleSet _rules = RuleLoader.LoadEmbedded();
     private readonly SteamLayout _steamLayout = SteamLocator.Discover();
@@ -17,12 +18,19 @@ internal sealed class BrokerEngine
     private string _incidentRoot = string.Empty;
     private string _manifestPath = string.Empty;
     private bool _persistOwnManifest;
+    private RemediationVerification _verification = null!;
 
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default)
     {
         ValidatePlan(plan);
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         _result = new RemediationRunResult { PlanId = plan.PlanId };
+        _contentProofs.Clear();
+        _verification = new(new WindowsRemediationStateProbe(async (script, token) =>
+        {
+            ProcessResult output = await RunEncodedPowerShellAsync(script, null, token);
+            return output.ExitCode == 0 && output.Output.Length <= 16_384 ? output.Output.Trim() : null;
+        }, _result.IncidentId));
         _persistOwnManifest = plan.Actions[0].Type is not (RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident);
         if (_persistOwnManifest)
         {
@@ -56,13 +64,22 @@ internal sealed class BrokerEngine
             catch (Exception ex)
             {
                 actionResult.Success = false;
-                actionResult.Message = $"{ex.GetType().Name}: {ex.Message}";
-                _result.Errors.Add($"{action.DisplayName}: {actionResult.Message}");
+                actionResult.Message = RemediationVerification.Limit($"{ex.GetType().Name}: {ex.Message}", 700);
+                if (action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory &&
+                    ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+                {
+                    actionResult.Occupancy = FileOccupancy.Inspect(action.Target, action.Type == RemediationActionType.QuarantineDirectory);
+                    actionResult.Message += " " + FileOccupancy.Describe(actionResult.Occupancy);
+                }
+                _result.Errors.Add(RemediationVerification.Limit($"{action.DisplayName}: {actionResult.Message}", 1700));
             }
+            actionResult.Message = RemediationVerification.Limit(actionResult.Message, 1700);
+            await _verification.ObserveAsync(action, actionResult, 1, cancellationToken);
             _result.Actions.Add(actionResult);
             if (_persistOwnManifest) await PersistManifestAsync(cancellationToken);
         }
 
+        await _verification.CompleteAsync(plan, _result, cancellationToken);
         _result.CompletedAtUtc = DateTimeOffset.UtcNow;
         _result.Success = _result.Errors.Count == 0 && _result.Actions.All(action => action.Success);
         if (_persistOwnManifest) await PersistManifestAsync(cancellationToken);
@@ -95,8 +112,10 @@ internal sealed class BrokerEngine
         switch (action.Type)
         {
             case RemediationActionType.StopProcess:
-                if (action.ProcessId is null or <= 4 || !Path.IsPathFullyQualified(action.Target) ||
-                    !Validation.IsHexSha256(action.ExpectedSha256))
+                if (action.ProcessId is null or <= 4 || action.ProcessStartedAtUtc is null || !Path.IsPathFullyQualified(action.Target) ||
+                    !Validation.IsHexSha256(action.ExpectedSha256) ||
+                    IsWithin(action.Target, Environment.GetFolderPath(Environment.SpecialFolder.Windows)) || IsWithin(action.Target, AppContext.BaseDirectory) ||
+                    !IsKnownImageHash(action.ExpectedSha256) && !HasDirectStrongBinding(action))
                     throw new InvalidDataException("进程动作缺少有效 PID、映像路径或 SHA-256。");
                 break;
             case RemediationActionType.QuarantineFile:
@@ -111,7 +130,7 @@ internal sealed class BrokerEngine
                     string.IsNullOrWhiteSpace(action.RegistryValueName) ||
                     action.ExpectedValueData is null ||
                     action.RegistryView is not ("Default" or "Registry32" or "Registry64") ||
-                    !_rules.KnownRunValueNames.Contains(action.RegistryValueName, StringComparer.OrdinalIgnoreCase))
+                    (!_rules.KnownRunValueNames.Contains(action.RegistryValueName, StringComparer.OrdinalIgnoreCase) && !HasPersistenceBinding(action)))
                 {
                     throw new UnauthorizedAccessException("Broker 只允许删除内置规则确认的 Run/RunOnce 值。");
                 }
@@ -120,9 +139,9 @@ internal sealed class BrokerEngine
                 string taskName = action.TaskName ?? action.Target;
                 if (!Validation.TryNormalizeScheduledTaskName(taskName, out string normalizedTask) ||
                     !Validation.IsHexSha256(action.ExpectedSha256) ||
-                    !_rules.KnownTaskNames.Any(known =>
+                    (!_rules.KnownTaskNames.Any(known =>
                         Validation.TryNormalizeScheduledTaskName(known, out string normalizedKnown) &&
-                        normalizedTask.Equals(normalizedKnown, StringComparison.OrdinalIgnoreCase)))
+                        normalizedTask.Equals(normalizedKnown, StringComparison.OrdinalIgnoreCase)) && !HasPersistenceBinding(action)))
                     throw new UnauthorizedAccessException("任务名称不在内置规则允许列表。");
                 break;
             case RemediationActionType.RemoveDefenderExclusion:
@@ -142,6 +161,12 @@ internal sealed class BrokerEngine
                 break;
             case RemediationActionType.RestoreSecurityControls:
                 if (action.Target != "Windows Security") throw new InvalidDataException("安全恢复动作目标无效。");
+                break;
+            case RemediationActionType.StopHostProcess:
+            case RemediationActionType.DisableService:
+            case RemediationActionType.RemoveRelatedDefenderExclusion:
+            case RemediationActionType.DisableRelatedFirewallRule:
+                ValidateBoundAction(action);
                 break;
             case RemediationActionType.RollbackIncident:
             case RemediationActionType.DeleteIncident:
@@ -163,14 +188,20 @@ internal sealed class BrokerEngine
         RemediationActionType.AddProgramFirewallBlock => await AddFirewallRuleAsync(action, cancellationToken),
         RemediationActionType.BlockKnownDomains => await BlockDomainsAsync(action, cancellationToken),
         RemediationActionType.RestoreSecurityControls => await RestoreSecurityControlsAsync(cancellationToken),
+        RemediationActionType.StopHostProcess => await StopHostAsync(action, cancellationToken),
+        RemediationActionType.DisableService => await DisableServiceAsync(action, cancellationToken),
+        RemediationActionType.RemoveRelatedDefenderExclusion => await ChangeRelatedExclusionAsync(action, false, cancellationToken),
+        RemediationActionType.DisableRelatedFirewallRule => await ChangeRelatedFirewallAsync(action, false, cancellationToken),
         RemediationActionType.RollbackIncident => await RollbackIncidentAsync(action, cancellationToken),
         RemediationActionType.DeleteIncident => await DeleteIncidentAsync(action, cancellationToken),
         _ => throw new NotSupportedException()
     };
 
-    private static async Task<string> StopProcessAsync(RemediationAction action, CancellationToken cancellationToken)
+    private async Task<string> StopProcessAsync(RemediationAction action, CancellationToken cancellationToken)
     {
         using Process process = Process.GetProcessById(action.ProcessId!.Value);
+        if (action.ProcessStartedAtUtc is { } expectedStart && process.StartTime.ToUniversalTime() != expectedStart.UtcDateTime)
+            throw new InvalidOperationException("进程已重启或 PID 被复用，请重新扫描。");
         string? image = process.MainModule?.FileName;
         if (image is null || !PathsEquivalent(image, action.Target))
             throw new InvalidOperationException("PID 当前映像与扫描时路径不一致，已拒绝终止。");
@@ -178,10 +209,13 @@ internal sealed class BrokerEngine
         string currentHash = await lease.ComputeSha256Async(cancellationToken);
         if (!currentHash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("进程映像哈希已变化，已拒绝终止。");
+        await VerifyDirectProcessContentAsync(action, lease, cancellationToken);
         if (!PathsEquivalent(process.MainModule?.FileName ?? string.Empty, lease.FinalPath))
             throw new InvalidOperationException("进程映像在确认期间发生变化，已拒绝终止。");
-        process.Kill(entireProcessTree: true);
-        await process.WaitForExitAsync(cancellationToken);
+        process.Kill(entireProcessTree: false);
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        await process.WaitForExitAsync(timeout.Token);
         return $"已终止 PID {action.ProcessId}。";
     }
 
@@ -264,6 +298,8 @@ internal sealed class BrokerEngine
         if (value is null) return "注册表值已不存在。";
         if (!string.Equals(value.ToString(), action.ExpectedValueData, StringComparison.Ordinal))
             throw new InvalidOperationException("启动项内容在扫描后发生变化，已拒绝删除。");
+        await using SecureFileLease? bound = HasPersistenceBinding(action)
+            ? await OpenBoundLeaseAsync(action, value.ToString(), cancellationToken) : null;
         RegistryValueKind kind = key.GetValueKind(action.RegistryValueName!);
         if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString))
             throw new InvalidDataException("启动项不是字符串类型，已拒绝自动删除。");
@@ -277,11 +313,19 @@ internal sealed class BrokerEngine
             RegistryKey = action.RegistryKey,
             RegistryValueName = action.RegistryValueName,
             RegistryValueData = value.ToString(),
-            RegistryValueKind = (int)kind
+            RegistryValueKind = (int)kind,
+            MutationConfirmed = false,
+            RelatedFilePath = action.RelatedFilePath, RelatedFileSha256 = action.RelatedFileSha256,
+            VerifiedContentRuleId = _contentProofs.GetValueOrDefault(action.ActionId)
         };
         _manifest.Records.Add(record);
         await PersistManifestAsync(cancellationToken);
+        object? latest = key.GetValue(action.RegistryValueName!, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        if (!string.Equals(latest?.ToString(), action.ExpectedValueData, StringComparison.Ordinal) || key.GetValueKind(action.RegistryValueName!) != kind)
+            throw new InvalidOperationException("启动项在处置确认期间发生变化，已拒绝删除，请重新扫描。");
         key.DeleteValue(action.RegistryValueName!, throwOnMissingValue: false);
+        record.MutationConfirmed = true;
+        await PersistManifestAsync(cancellationToken);
         return $"已删除 {action.RegistryHive}\\{action.RegistryKey}\\{action.RegistryValueName}";
     }
 
@@ -294,15 +338,21 @@ internal sealed class BrokerEngine
         if (!IsWithin(taskFile, tasksRoot) || Validation.ContainsReparsePoint(Path.GetDirectoryName(taskFile)!))
             throw new UnauthorizedAccessException("计划任务文件路径不安全。");
         string? backup = null;
+        await using SecureFileLease? bound = HasPersistenceBinding(action) ? await OpenBoundLeaseAsync(action, action.ConfigurationSnapshot, cancellationToken) : null;
+        if (!File.Exists(taskFile)) throw new InvalidOperationException("无法读取计划任务快照，不能确认任务已不存在，请重新扫描。");
         if (File.Exists(taskFile))
         {
             backup = Path.Combine(_incidentRoot, "tasks", action.ActionId.ToString("N") + ".xml");
             Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
             await using SecureFileLease taskLease = SecureFileLease.Open(taskFile);
             string taskHash = await taskLease.ComputeSha256Async(cancellationToken);
-            if (!taskHash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("计划任务内容在扫描后发生变化，已拒绝删除。");
+            RequireTaskSnapshotHash(taskHash, action.ExpectedSha256);
             await taskLease.CopyToAsync(backup, taskHash, cancellationToken);
+            if (HasPersistenceBinding(action))
+            {
+                string xml = await File.ReadAllTextAsync(backup, cancellationToken);
+                if (!CommandTargetsAreBound(action, TaskCommands(xml))) throw new InvalidOperationException("任务实际命令与绑定不符。");
+            }
         }
         _manifest.Records.Add(new QuarantineRecord
         {
@@ -311,13 +361,22 @@ internal sealed class BrokerEngine
             OriginalTarget = taskName,
             QuarantinedPath = backup,
             TaskName = taskName,
-            Sha256 = action.ExpectedSha256
+            Sha256 = action.ExpectedSha256,
+            MutationConfirmed = false,
+            RelatedFilePath = action.RelatedFilePath, RelatedFileSha256 = action.RelatedFileSha256,
+            VerifiedContentRuleId = _contentProofs.GetValueOrDefault(action.ActionId)
         });
         await PersistManifestAsync(cancellationToken);
+        // Scheduler deletion cannot share our deny-delete lease. Recheck after all awaited backup work,
+        // then release immediately before invoking the fixed, exact-name Scheduler operation.
+        await using (SecureFileLease finalTask = SecureFileLease.Open(taskFile))
+            RequireTaskSnapshotHash(await finalTask.ComputeSha256Async(cancellationToken), action.ExpectedSha256);
         ProcessResult result = await RunProcessAsync(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe"),
             ["/Delete", "/TN", taskName, "/F"], cancellationToken);
-        if (result.ExitCode != 0 && File.Exists(taskFile)) throw new InvalidOperationException(result.Error);
-        return "计划任务已删除或原本不存在。";
+        if (result.ExitCode != 0) throw new InvalidOperationException(result.Error);
+        _manifest.Records.Last(record => record.ActionId == action.ActionId).MutationConfirmed = true;
+        await PersistManifestAsync(cancellationToken);
+        return "计划任务删除命令已成功，任务注册状态由只读复验确认。";
     }
 
     private async Task<string> ChangeDefenderExclusionAsync(RemediationAction action, bool add, CancellationToken cancellationToken)
@@ -409,9 +468,17 @@ internal sealed class BrokerEngine
 
     private static async Task<string> RestoreSecurityControlsAsync(CancellationToken cancellationToken)
     {
-        const string script = "Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue; Set-MpPreference -DisableBehaviorMonitoring $false -ErrorAction SilentlyContinue; Set-NetFirewallProfile -All -Enabled True -ErrorAction Stop";
+        const string script = "$problems=[Collections.Generic.List[string]]::new();$mayChange=$false;" +
+            "try{$m=Get-MpComputerStatus -ErrorAction Stop;$av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop|" +
+            "Where-Object {$_.displayName -notmatch '^(Microsoft|Windows) Defender'});" +
+            "$mayChange=($m.AMRunningMode -eq 'Normal' -and $av.Count -eq 0);" +
+            "if(-not $mayChange){$problems.Add('Defender mode/third-party antivirus requires manual review, no Defender changes requested')}}catch{$problems.Add('Cannot confirm antivirus ownership: '+$_.Exception.Message)};" +
+            "if($mayChange){try{Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop}catch{$problems.Add('Realtime: '+$_.Exception.Message)};" +
+            "try{Set-MpPreference -DisableBehaviorMonitoring $false -ErrorAction Stop}catch{$problems.Add('Behavior: '+$_.Exception.Message)}};" +
+            "try{Set-NetFirewallProfile -All -Enabled True -ErrorAction Stop}catch{$problems.Add('Firewall: '+$_.Exception.Message)};" +
+            "if($problems.Count -gt 0){throw ($problems -join ', ')}";
         ProcessResult result = await RunEncodedPowerShellAsync(script, null, cancellationToken);
-        if (result.ExitCode != 0) throw new InvalidOperationException(result.Error);
+        if (result.ExitCode != 0) throw new InvalidOperationException("安全恢复未全部完成或无法确认主防护，未强制改变第三方/被动模式。" + result.Error);
         return "已请求开启 Defender 实时/行为监控及全部防火墙配置。";
     }
 
@@ -429,10 +496,13 @@ internal sealed class BrokerEngine
             throw new InvalidDataException("隔离清单记录数量或动作 ID 异常。");
         foreach (QuarantineRecord record in manifest.Records)
             ValidateQuarantineRecord(record, incidentRoot, incidentId);
+        foreach (QuarantineRecord record in manifest.Records)
+            await VerifyRecordedContentAsync(record, manifest, cancellationToken);
 
         foreach (QuarantineRecord record in manifest.Records.AsEnumerable().Reverse())
         {
             if (record.RolledBack) continue;
+            if (record.MutationConfirmed == false) throw new InvalidOperationException("上次配置操作的完成状态不确定，请人工核对，未自动覆盖当前配置。");
             switch (record.Type)
             {
                 case RemediationActionType.QuarantineFile:
@@ -459,6 +529,15 @@ internal sealed class BrokerEngine
                     break;
                 case RemediationActionType.BlockKnownDomains:
                     await RemoveHostsMarkerAsync(incidentId, record.OriginalTarget, cancellationToken);
+                    break;
+                case RemediationActionType.DisableService:
+                    await RestoreServiceAsync(record, cancellationToken);
+                    break;
+                case RemediationActionType.RemoveRelatedDefenderExclusion:
+                    await ChangeRelatedExclusionAsync(FromRecord(record), true, cancellationToken);
+                    break;
+                case RemediationActionType.DisableRelatedFirewallRule:
+                    await ChangeRelatedFirewallAsync(FromRecord(record), true, cancellationToken);
                     break;
             }
             record.RolledBack = true;
@@ -616,15 +695,15 @@ internal sealed class BrokerEngine
                     record.RegistryKey is not (@"Software\Microsoft\Windows\CurrentVersion\Run" or @"Software\Microsoft\Windows\CurrentVersion\RunOnce") ||
                     string.IsNullOrWhiteSpace(record.RegistryValueName) ||
                     record.RegistryValueKind is not ((int)RegistryValueKind.String or (int)RegistryValueKind.ExpandString) ||
-                    !_rules.KnownRunValueNames.Contains(record.RegistryValueName, StringComparer.OrdinalIgnoreCase))
+                    (!_rules.KnownRunValueNames.Contains(record.RegistryValueName, StringComparer.OrdinalIgnoreCase) && !HasKnownBinding(FromRecord(record)) && !HasHeuristicRecord(record)))
                     throw new InvalidDataException("隔离清单中的注册表记录不在允许范围。");
                 break;
             case RemediationActionType.RemoveScheduledTask:
                 if (!Validation.IsHexSha256(record.Sha256) ||
                     !Validation.TryNormalizeScheduledTaskName(record.TaskName, out string normalizedTask) ||
-                    !_rules.KnownTaskNames.Any(known =>
+                    (!_rules.KnownTaskNames.Any(known =>
                         Validation.TryNormalizeScheduledTaskName(known, out string normalizedKnown) &&
-                        normalizedTask.Equals(normalizedKnown, StringComparison.OrdinalIgnoreCase)))
+                        normalizedTask.Equals(normalizedKnown, StringComparison.OrdinalIgnoreCase)) && !HasKnownBinding(FromRecord(record)) && !HasHeuristicRecord(record)))
                     throw new InvalidDataException("隔离清单中的计划任务不在允许范围。");
                 break;
             case RemediationActionType.RemoveDefenderExclusion:
@@ -635,6 +714,11 @@ internal sealed class BrokerEngine
                 if (record.FirewallRuleName is null ||
                     !record.FirewallRuleName.StartsWith($"SteamSentinel-{incidentId:N}-", StringComparison.Ordinal))
                     throw new InvalidDataException("隔离清单中的防火墙规则名称无效。");
+                break;
+            case RemediationActionType.DisableService:
+            case RemediationActionType.RemoveRelatedDefenderExclusion:
+            case RemediationActionType.DisableRelatedFirewallRule:
+                ValidateBoundAction(FromRecord(record));
                 break;
             case RemediationActionType.BlockKnownDomains:
                 string expectedHosts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "drivers", "etc", "hosts");
@@ -927,9 +1011,10 @@ internal sealed class BrokerEngine
         {
             await process.WaitForExitAsync(timeout.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { }
+            cancellationToken.ThrowIfCancellationRequested();
             throw new TimeoutException($"系统命令超时：{Path.GetFileName(fileName)}");
         }
         return new ProcessResult(process.ExitCode, await output, await error);

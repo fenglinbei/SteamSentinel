@@ -8,12 +8,19 @@ namespace SteamSentinel.ArchiveWorker;
 internal static class Program
 {
     private static readonly SemaphoreSlim OutputLock = new(1, 1);
+    private static readonly JsonSerializerOptions CompactJson = new(JsonFile.Options) { WriteIndented = false };
+    private static readonly BoundedLineReader Input = new(Console.In);
 
     [STAThread]
     private static async Task<int> Main()
     {
         Console.InputEncoding = System.Text.Encoding.UTF8;
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+        ScanProgress? lastProgress = null;
+        WorkerDiagnostics? diagnostics = null;
+        ScanReport? live = null;
+        ScanResourceGuard resources = new(checkProcessMemory: true);
+        byte[]? emergencyReserve = new byte[2 * 1024 * 1024];
         try
         {
             ProcessIntegrityLevel integrity = ProcessIntegrity.GetCurrent();
@@ -22,7 +29,7 @@ internal static class Program
                 Type = WorkerMessageTypes.Ready,
                 Containment = integrity.ToString()
             });
-            string? line = await Console.In.ReadLineAsync();
+            string? line = await Input.ReadLineAsync();
             if (string.IsNullOrWhiteSpace(line)) return 2;
             line = line.TrimStart('\uFEFF');
             WorkerMessage? start = JsonSerializer.Deserialize<WorkerMessage>(line, JsonFile.Options);
@@ -33,11 +40,46 @@ internal static class Program
             }
 
             StdioPasswordProvider passwordProvider = new();
+            long lastDiagnostics = 0, lastCheckpoint = 0, lastProgressSent = 0;
+            int lastFindings = -1;
+            long lastCoverageOccurrences = -1;
+            ReportBatchWriter batches = new(batch => WriteAsync(new WorkerMessage
+                { Type = WorkerMessageTypes.Checkpoint, Batch = batch }).GetAwaiter().GetResult());
             SynchronousProgress progress = new(message =>
-                WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Progress, Progress = message }).GetAwaiter().GetResult());
+            {
+                lastProgress = message;
+                long now = Environment.TickCount64;
+                if (now - lastDiagnostics >= 1000)
+                { diagnostics = WorkerDiagnostics.Capture(message); lastDiagnostics = now; }
+                if (now - lastProgressSent >= 100 || message.Stage is "压缩包目录" or "压缩包扫描" or "内容特征" or "本机安全引擎")
+                {
+                    WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Progress, Progress = message,
+                        Diagnostics = diagnostics }).GetAwaiter().GetResult();
+                    lastProgressSent = now;
+                }
+                if (live is not null) resources.Check(live);
+            });
+            void Checkpoint(ScanReport state)
+            {
+                live = state;
+                resources.Check(state);
+                long coverageOccurrences = state.CoverageAggregates.Sum(item => item.Count);
+                if (state.Findings.Count == lastFindings && coverageOccurrences == lastCoverageOccurrences &&
+                    Environment.TickCount64 - lastCheckpoint < 1000) return;
+                state.WorkerDiagnostics = diagnostics ??= WorkerDiagnostics.Capture(lastProgress);
+                if (lastProgress is not null) state.WorkerDiagnostics = state.WorkerDiagnostics with
+                    { Stage = lastProgress.Stage, LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
+                batches.Send(state);
+                lastFindings = state.Findings.Count;
+                lastCoverageOccurrences = coverageOccurrences;
+                lastCheckpoint = Environment.TickCount64;
+            }
             ScanCoordinator coordinator = new();
-            ScanReport report = await coordinator.RunAsync(start.Options, passwordProvider, progress);
-            await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Completed, Report = report });
+            ScanReport report = await coordinator.RunAsync(start.Options, passwordProvider, progress, checkpoint: Checkpoint);
+            report.WorkerDiagnostics = WorkerDiagnostics.Capture(lastProgress);
+            batches.Send(report, final: true);
+            await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Completed, BatchCount = batches.Count });
+            GC.KeepAlive(emergencyReserve);
             return 0;
         }
         catch (OperationCanceledException)
@@ -47,10 +89,14 @@ internal static class Program
         }
         catch (Exception ex)
         {
+            emergencyReserve = null;
+            if (ex is OutOfMemoryException) GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            try { diagnostics = WorkerDiagnostics.Capture(lastProgress, ex); } catch { }
             await WriteAsync(new WorkerMessage
             {
                 Type = WorkerMessageTypes.Failed,
-                Error = $"{ex.GetType().Name}: {ex.Message}"
+                Error = $"{ex.GetType().Name}: {ex.Message}",
+                Diagnostics = diagnostics
             });
             return 1;
         }
@@ -61,8 +107,8 @@ internal static class Program
         await OutputLock.WaitAsync();
         try
         {
-            string json = JsonSerializer.Serialize(message, JsonFile.Options);
-            json = json.Replace("\r", string.Empty).Replace("\n", string.Empty);
+            string json = JsonSerializer.Serialize(message, CompactJson);
+            if (json.Length > 1024 * 1024) throw new InvalidDataException("扫描结果单批过大，已保留此前交回的结果。");
             await Console.Out.WriteLineAsync(json);
             await Console.Out.FlushAsync();
         }
@@ -87,7 +133,7 @@ internal static class Program
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string? line = await Console.In.ReadLineAsync(cancellationToken);
+                string? line = await Input.ReadLineAsync(cancellationToken);
                 if (line is null) return new ArchivePasswordResponse(request.RequestId, true, null, false);
                 line = line.TrimStart('\uFEFF');
                 WorkerMessage? response = JsonSerializer.Deserialize<WorkerMessage>(line, JsonFile.Options);

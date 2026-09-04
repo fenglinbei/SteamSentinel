@@ -22,6 +22,23 @@ public sealed class SteamSecurityScanner(RuleSet rules)
         ScanReport report,
         CancellationToken cancellationToken = default)
     {
+        foreach (string path in WallpaperUiInspector.CandidateFiles(layout))
+        {
+            try
+            {
+                if (!ContentDiscovery.IsLocalSafePath(path) || new FileInfo(path).Length > MaximumScriptBytes) throw new IOException("路径或大小超出检查范围");
+                string text = await File.ReadAllTextAsync(path, cancellationToken);
+                if (!WallpaperUiInspector.HasCombinedSuppression(text)) continue;
+                report.Findings.Add(new Finding { RuleId = "WALLPAPER-REPORT-SUPPRESSION", Category = FindingCategory.WallpaperEngine,
+                    Severity = FindingSeverity.High, Score = 75, Title = "Wallpaper 举报入口存在组合隐藏信号", Target = path,
+                    Sha256 = await Hashing.Sha256FileAsync(path, cancellationToken),
+                    Description = "同时出现举报能力强制关闭与界面隐藏，需核对插件和修改来源，不自动替换版本未知的 Wallpaper 文件。",
+                    Evidence = "举报状态常量与隐藏样式组合", SuggestedActions = [SuggestedActionKind.ReviewOnly],
+                    CanRemediate = false });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { report.Coverage = ScanCoverage.Partial; report.CoverageNotes.Add("Wallpaper 界面检查未完成：" + path); }
+        }
         foreach (string steamRoot in layout.SteamRoots)
         {
             cancellationToken.ThrowIfCancellationRequested();

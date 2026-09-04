@@ -27,7 +27,8 @@ public static class JsonFile
             ?? throw new InvalidDataException($"JSON 文件为空或无效：{sourceDescription}");
     }
 
-    public static async Task WriteAtomicAsync<T>(string path, T value, CancellationToken cancellationToken = default)
+    public static async Task WriteAtomicAsync<T>(string path, T value, CancellationToken cancellationToken = default,
+        JsonSerializerOptions? options = null)
     {
         string fullPath = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(fullPath)
@@ -39,7 +40,7 @@ public static class JsonFile
         {
             await using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
-                await JsonSerializer.SerializeAsync(stream, value, Options, cancellationToken).ConfigureAwait(false);
+                await JsonSerializer.SerializeAsync(stream, value, options ?? Options, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 

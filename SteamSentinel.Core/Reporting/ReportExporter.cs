@@ -7,7 +7,7 @@ namespace SteamSentinel.Core.Reporting;
 public static class ReportExporter
 {
     public static Task ExportJsonAsync(ScanReport report, string path, CancellationToken cancellationToken = default) =>
-        JsonFile.WriteAtomicAsync(path, report, cancellationToken);
+        JsonFile.WriteAtomicAsync(path, report, cancellationToken, ReportPrivacy.ExportOptions);
 
     public static async Task ExportMarkdownAsync(ScanReport report, string path, CancellationToken cancellationToken = default)
     {
@@ -21,6 +21,9 @@ public static class ReportExporter
         text.AppendLine($"- 完成时间：{report.CompletedAtUtc?.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}");
         text.AppendLine($"- 覆盖状态：**{CoverageLabel(report.Coverage)}**");
         text.AppendLine($"- 最高严重度：**{SeverityLabel(report.HighestSeverity)}**");
+        text.AppendLine($"- 执行状态：{report.ExecutionStatus}");
+        text.AppendLine($"- 风险或提示数量：{report.RiskFindingCount}，不包含覆盖记录");
+        foreach (string scope in report.ScopeNotes) text.AppendLine("- 检查范围：" + Escape(scope));
         text.AppendLine();
         text.AppendLine("> “未发现已知威胁”不等同于对未知漏洞或未解密内容的绝对安全保证。");
         text.AppendLine();
@@ -32,6 +35,35 @@ public static class ReportExporter
         text.AppendLine($"- 持久化项：{report.Metrics.PersistenceItemsVisited}");
         text.AppendLine($"- 工坊项目：{report.Metrics.WorkshopItemsVisited}");
         text.AppendLine($"- 压缩包条目：{report.Metrics.ArchiveEntriesVisited}");
+        text.AppendLine();
+        text.AppendLine("## 内容来源与关联落点");
+        if (report.ContentScanSettings is ScanOptions settings)
+        {
+            text.AppendLine();
+            text.AppendLine($"- 内容扫描设置：{settings.Mode}，额外下载/桌面/临时目录：{settings.IncludeDownloadLocations}，压缩包：{settings.InspectArchives}，AMSI：{settings.UseAmsi}");
+            string hashBudget = settings.MaximumContentBytes == long.MaxValue ? "不设整轮哈希字节上限" :
+                $"{settings.MaximumContentBytes / 1024 / 1024:N0} MiB（{settings.MaximumContentBytes:N0} 字节）";
+            text.AppendLine($"- 累计哈希预算：{hashBudget}" +
+                (settings.Mode == ScanMode.Quick ? "，另为不超过 8 MiB 的小型启动文件保留最多 128 MiB" : "") +
+                $"，单条解压上限：{settings.MaximumEntryBytes / 1024 / 1024:N0} MiB，嵌套深度：{settings.MaximumArchiveDepth}");
+        }
+        if (report.WorkerDiagnostics is WorkerDiagnostics diagnostic)
+        {
+            text.AppendLine();
+            text.AppendLine("### 扫描组件诊断");
+            text.AppendLine();
+            text.AppendLine("- 最后处理阶段：" + Escape(diagnostic.Stage + " / " + diagnostic.Operation));
+            text.AppendLine("- 最后处理路径：" + Escape(diagnostic.LastPath));
+            text.AppendLine($"- 组件私有内存：{diagnostic.PrivateBytes / 1024 / 1024:N0} MiB，峰值：{diagnostic.PeakPrivateBytes / 1024 / 1024:N0} MiB，托管内存：{diagnostic.ManagedBytes / 1024 / 1024:N0} MiB");
+            text.AppendLine("- 主窗口权限级别：" + Escape(diagnostic.LauncherIntegrity ?? "未记录"));
+            text.AppendLine($"- 内存采样时间：{diagnostic.CapturedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}，采样值不等同于失败瞬间峰值");
+            if (diagnostic.FailureType is not null) text.AppendLine("- 内部错误类型：" + Escape(diagnostic.FailureType));
+            if (diagnostic.FailureStack is not null) text.AppendLine("- 内部调用位置：" + Escape(diagnostic.FailureStack));
+            text.AppendLine("- 中断时正在处理的文件不能视作已完成检查，已交回结果也不能证明其他内容安全。");
+        }
+        text.AppendLine();
+        foreach (string source in report.ContentSources.Distinct()) text.AppendLine("- " + Escape(source));
+        foreach (string source in report.CandidateRoots.Distinct()) text.AppendLine("- 关联候选落点：" + Escape(source));
         text.AppendLine();
 
         if (report.RootSummaries.Count > 0)
@@ -45,11 +77,19 @@ public static class ReportExporter
             text.AppendLine();
         }
 
-        if (report.CoverageNotes.Count > 0)
+        if (report.CoverageNotes.Count > 0 || report.CoverageAggregates.Count > 0 || report.Findings.Any(f => f.Category == FindingCategory.Coverage))
         {
-            text.AppendLine("## 覆盖限制");
+            text.AppendLine("## 未检查内容与补查方式");
             text.AppendLine();
-            foreach (string note in report.CoverageNotes) text.AppendLine($"- {Escape(note)}");
+            foreach (CoverageGroup group in CoveragePresentation.Groups(report))
+            {
+                text.AppendLine($"### {Escape(group.Kind)} · {group.Count} 次覆盖记录（非去重文件数）");
+                text.AppendLine();
+                text.AppendLine(Escape(group.NextStep));
+                text.AppendLine();
+                foreach (CoverageEntry item in group.Entries) text.AppendLine($"- {Escape(item.Target)}：{Escape(item.Detail)}");
+                text.AppendLine();
+            }
             text.AppendLine();
         }
 
@@ -57,7 +97,7 @@ public static class ReportExporter
         text.AppendLine();
         text.AppendLine("| 严重度 | 规则 ID | 分类 | 分数 | 标题 | SHA-256 | 目标 |");
         text.AppendLine("|---|---|---|---:|---|---|---|");
-        foreach (Finding finding in report.Findings.OrderByDescending(f => f.Severity).ThenByDescending(f => f.Score))
+        foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage).OrderByDescending(f => f.Severity).ThenByDescending(f => f.Score))
         {
             text.AppendLine($"| {SeverityLabel(finding.Severity)} | `{Escape(finding.RuleId)}` | {CategoryLabel(finding.Category)} | {finding.Score} | {Escape(finding.Title)} | `{Escape(finding.Sha256 ?? "—")}` | `{Escape(finding.Target)}` |");
         }
@@ -65,12 +105,14 @@ public static class ReportExporter
         text.AppendLine();
         text.AppendLine("## 逐项详情");
         text.AppendLine();
-        foreach (Finding finding in report.Findings.OrderByDescending(f => f.Severity).ThenByDescending(f => f.Score))
+        foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage).OrderByDescending(f => f.Severity).ThenByDescending(f => f.Score))
         {
             text.AppendLine($"### {SeverityLabel(finding.Severity)} · {Escape(finding.Title)}");
             text.AppendLine();
             text.AppendLine($"- 规则 ID：`{Escape(finding.RuleId)}`");
             text.AppendLine($"- 说明：{Escape(finding.Description)}");
+            text.AppendLine($"- 内容归属：AppID {Escape(finding.AppId ?? "—")}，工坊 {Escape(finding.WorkshopId ?? "—")}，{Escape(finding.SourceKind ?? "—")}");
+            if (finding.RelatedFilePath is not null) text.AppendLine($"- 关联文件：{Escape(finding.RelatedFilePath)}，SHA-256：{Escape(finding.RelatedFileSha256 ?? "—")}");
             text.AppendLine($"- 目标：`{Escape(finding.Target)}`");
             text.AppendLine($"- SHA-256：`{Escape(finding.Sha256 ?? "未计算/不适用")}`");
             text.AppendLine($"- 命中内容位置：`{Escape(finding.ContentPath ?? finding.Target)}`");
@@ -82,19 +124,19 @@ public static class ReportExporter
 
         text.AppendLine("## 结论边界");
         text.AppendLine();
-        text.AppendLine("本工具只能处理命中已确认哈希或高置信 Steam 篡改规则的目标。即使处置成功，也只表示这些目标已被隔离或恢复，不代表整台电脑已经无毒。请继续使用专业杀毒软件进行全盘扫描并复扫。");
+        text.AppendLine("文件存在、运行关联和 Steam 篡改是不同证据。工具可隔离已知威胁，也保留需要你确认的启发式处置。处置成功不代表整台电脑无毒，请重启后复扫，必要时用专业杀毒软件全盘检查。如果可能发生凭据窃取，应从可信设备更换密码并撤销其他会话，本地恢复不能撤回已外泄的数据。");
 
         string fullPath = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         await File.WriteAllTextAsync(fullPath, text.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), cancellationToken);
     }
 
-    private static string Escape(string value) => value.Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
+    private static string Escape(string value) => Inspection.ScriptSignals.RedactSecrets(value).Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
 
     public static string CoverageLabel(ScanCoverage value) => value switch
     {
-        ScanCoverage.Complete => "完整扫描，未跳过已支持内容",
-        ScanCoverage.Partial => "未完整扫描",
+        ScanCoverage.Complete => "本次支持范围内未跳过检查",
+        ScanCoverage.Partial => "有内容未检查或尚未深查",
         _ => "已跳过"
     };
 
@@ -116,6 +158,10 @@ public static class ReportExporter
     public static string ActionLabel(RemediationActionType value) => value switch
     {
         RemediationActionType.StopProcess => "停止进程",
+        RemediationActionType.StopHostProcess => "关闭加载恶意组件的宿主",
+        RemediationActionType.DisableService => "禁用关联服务",
+        RemediationActionType.RemoveRelatedDefenderExclusion => "移除关联安全排除项",
+        RemediationActionType.DisableRelatedFirewallRule => "禁用关联放行规则",
         RemediationActionType.RemoveRegistryValue => "删除启动项",
         RemediationActionType.RemoveScheduledTask => "删除计划任务",
         RemediationActionType.RemoveDefenderExclusion => "移除 Defender 排除项",

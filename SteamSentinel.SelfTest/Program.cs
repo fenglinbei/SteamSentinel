@@ -50,6 +50,14 @@ internal static partial class Program
             await TestV016Async(root, rules);
             await TestV017Async(root);
             await TestV018Async(root);
+            await TestV0111Async(root, rules);
+            await TestV0112Async(root);
+            await TestV0113Async(root);
+            await TestV0114CoverageAsync(root);
+            await TestV0114RelationAsync(root);
+            await TestV0114BrokerAsync(root);
+            await TestV0114UiAsync(root);
+            await TestV0116Async(root);
             await TestWorkerProtocolAsync(root);
             await TestRestrictedWorkerClientAsync(root);
             await TestPlanBuilderAsync(root, rules);
@@ -387,6 +395,7 @@ internal static partial class Program
             Score = 70,
             Title = "synthetic",
             Target = file,
+            Sha256 = await Hashing.Sha256FileAsync(file),
             CanRemediate = true,
             SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
@@ -407,6 +416,7 @@ internal static partial class Program
             Target = executable,
             Sha256 = executableHash,
             ProcessId = processId,
+            ProcessStartedAtUtc = DateTimeOffset.Parse("2026-09-01T00:00:00Z"),
             IsKnownMalware = true,
             CanRemediate = true,
             SuggestedActions = [SuggestedActionKind.StopProcess, SuggestedActionKind.QuarantineFile]
@@ -527,6 +537,7 @@ internal static partial class Program
         await worker.StandardInput.WriteLineAsync(start);
         await worker.StandardInput.FlushAsync();
         ScanReport? report = null;
+        ReportBatchReader batches = new();
         bool passwordRequested = false;
         string? workerFailure = null;
         while (true)
@@ -547,9 +558,10 @@ internal static partial class Program
             }
             else if (message?.Type == WorkerMessageTypes.Completed)
             {
-                report = message.Report;
+                report = message.BatchCount == batches.Count ? batches.Report : message.Report;
                 break;
             }
+            else if (message?.Type == WorkerMessageTypes.Checkpoint && message.Batch is not null) batches.Apply(message.Batch);
             else if (message?.Type == WorkerMessageTypes.Failed)
             {
                 workerFailure = message.Error;
@@ -674,10 +686,16 @@ internal static partial class Program
                 return installation.IsProtected ? 0 : 1;
             case "--render-ui" when args.Length == 2:
                 return UiPreview.Render(args[1]);
+            case "--ui-dispatcher-test" when args.Length == 1:
+                TestV016Dialog();
+                Console.WriteLine($"UI_DISPATCHER_PASS={_passed};FAIL={Failures.Count}");
+                return Failures.Count == 0 ? 0 : 1;
             case "--corpus" when args.Length == 3:
                 return await CorpusRegression.RunAsync(args[1], args[2]);
             case "--corpus-batch" when args.Length == 3:
                 return await CorpusRegression.RunBatchAsync(args[1], args[2]);
+            case "--plan-regression" when args.Length == 4:
+                return await PlanRegression.RunAsync(args[1], args[2], args[3]);
             case "--prepare-broker-smoke":
                 return await PrepareBrokerSmokeAsync();
             case "--prepare-broker-rollback" when args.Length == 2:

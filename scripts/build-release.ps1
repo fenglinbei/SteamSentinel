@@ -16,7 +16,7 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $workspaceRoot 'outputs'
 }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
-$version = '0.1.10'
+$version = '0.1.16'
 $packageName = "SteamSentinel-$version-win-x64"
 $packageDir = Join-Path $OutputRoot $packageName
 $archivePath = Join-Path $OutputRoot ($packageName + '.zip')
@@ -88,6 +88,10 @@ Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\INSTALLATION-REGRESSION-0.
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\WORKER-STARTUP-0.1.8.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\SIGNING.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\ROADMAP.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\COVERAGE-0.1.13.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\COVERAGE-0.1.14.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\COVERAGE-0.1.15.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\COVERAGE-0.1.16.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\ICONS.md') -Destination $packageDir
 
 $dotnetRoot = Split-Path -Parent (Get-Command dotnet).Source
@@ -99,7 +103,7 @@ Copy-Item -LiteralPath (Join-Path $dotnetRoot "sdk\$sdkVersion\Sdks\Microsoft.NE
 $versionLines = @(
     'Product=SteamSentinel',
     "Version=$version",
-    'Rules=2026.09.04.1',
+    'Rules=2026.09.04.2',
     'Runtime=win-x64 self-contained .NET 10',
     ('BuiltAtUtc=' + [DateTimeOffset]::UtcNow.ToString('O')),
     "SignatureStatus=$signatureStatus"
@@ -119,7 +123,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($packageDir, $archivePath, [IO.Compression.CompressionLevel]::Optimal, $true)
 
 Get-ChildItem -LiteralPath $solutionRoot -Recurse -Force -File |
-    Where-Object { $_.FullName -notmatch '[\\/](bin|obj|\.git)[\\/]' -and $_.Extension -notin @('.pfx', '.p12', '.key') } |
+    Where-Object { $_.FullName -notmatch '[\\/](bin|obj|artifacts|\.git)[\\/]' -and $_.Extension -notin @('.pfx', '.p12', '.key') } |
     ForEach-Object {
         $relative = $_.FullName.Substring($solutionRoot.Length).TrimStart('\', '/')
         $destination = Join-Path $sourceStage $relative

@@ -78,7 +78,7 @@ internal static partial class Program
         static Task<ArchivePasswordResponse> NoPassword(ArchivePasswordRequest request, CancellationToken _) => Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false));
         HashSet<string> beforeFolders = Directory.Exists(AppPaths.WorkerTemporaryRoot)
             ? Directory.GetDirectories(AppPaths.WorkerTemporaryRoot).ToHashSet(StringComparer.OrdinalIgnoreCase) : [];
-        foreach (string mode in new[] { "exit0142", "exit259", "flood", "invalidhello", "reportfail" })
+        foreach (string mode in new[] { "exit0142", "exit259", "flood", "invalidhello", "reportfail", "checkpointoom", "checkpointexit" })
         {
             WorkerFailureException? failure = null;
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
@@ -89,8 +89,17 @@ internal static partial class Program
                 "exit0142" or "flood" => failure.Stage == WorkerStage.Handshake && failure.NativeExitCode == unchecked((int)0xC0000142) && failure.Message.Contains("0xC0000142", StringComparison.Ordinal),
                 "exit259" => failure.NativeExitCode == 259,
                 "invalidhello" => failure.BeforeScan && failure.Message.Contains("Low Integrity", StringComparison.Ordinal),
+                "checkpointoom" or "checkpointexit" => failure.Stage == WorkerStage.Scanning && failure.PartialReport?.Metrics.FilesVisited == 4 &&
+                    failure.PartialReport.Findings.Count == 1 && failure.PartialReport.WorkerDiagnostics?.LastPath == "inert.zip!/next.rar",
                 _ => failure.Stage == WorkerStage.Exit && failure.NativeExitCode == 23
             });
+        }
+        using (CancellationTokenSource cancel = new(TimeSpan.FromSeconds(2)))
+        {
+            WorkerCancelledException? failure = null;
+            try { await new ArchiveWorkerClient(Fixture("checkpointcancel")).RunAsync(options, NoPassword, null, cancel.Token); }
+            catch (WorkerCancelledException ex) { failure = ex; }
+            Check("取消后保留已交回内容批次", failure?.PartialReport?.Metrics.FilesVisited == 4 && failure.PartialReport.Findings.Count == 1);
         }
         using (CancellationTokenSource cancel = new(TimeSpan.FromMilliseconds(250)))
         {
@@ -145,6 +154,20 @@ internal static partial class Program
         }));
         await Console.Out.FlushAsync();
         if (await Console.In.ReadLineAsync() is null) return 2;
+        if (mode.StartsWith("checkpoint", StringComparison.Ordinal))
+        {
+            ScanReport partial = new() { Metrics = new() { FilesVisited = 4 },
+                WorkerDiagnostics = new("压缩包目录", "inert.zip!/next.rar", "读取目录", 123, 456, 100, DateTimeOffset.UtcNow) };
+            partial.Findings.Add(new() { RuleId = "BENIGN-CHECKPOINT", Target = "inert.txt", TargetSha256 = new string('A', 64) });
+            new ReportBatchWriter(batch => Console.Out.WriteLine(JsonSerializer.Serialize(new WorkerMessage
+                { Type = WorkerMessageTypes.Checkpoint, Batch = batch }))).Send(partial);
+            await Console.Out.FlushAsync();
+            if (mode == "checkpointcancel") await Task.Delay(TimeSpan.FromSeconds(30));
+            if (mode == "checkpointoom") await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new WorkerMessage
+                { Type = WorkerMessageTypes.Failed, Error = "OutOfMemoryException: inert simulated failure",
+                    Diagnostics = partial.WorkerDiagnostics with { FailureType = "OutOfMemoryException" } }));
+            return 23;
+        }
         if (mode == "reportfail")
             await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new WorkerMessage { Type = WorkerMessageTypes.Completed, Report = new ScanReport() }));
         return 23;

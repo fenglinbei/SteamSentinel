@@ -5,6 +5,7 @@ using SharpCompress.Common;
 using SharpCompress.Readers;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
@@ -17,6 +18,9 @@ public sealed class ContentScanner : IDisposable
     private readonly Dictionary<Guid, int> _amsiUnavailableCounts = [];
     private readonly AmsiScanner _amsi = new();
     private bool _disposed;
+    private readonly ScanResourceGuard _resources = new();
+    private string? _coverageRoot;
+    internal Action<ScanReport>? Checkpoint { get; set; }
 
     public ContentScanner(RuleSet rules)
     {
@@ -35,24 +39,30 @@ public sealed class ContentScanner : IDisposable
     {
         int first = report.Findings.Count;
         int notes = report.CoverageNotes.Count;
+        long gaps = CoverageAggregation.OccurrenceCount(report);
+        string? previousRoot = _coverageRoot;
         int amsiUnavailable = _amsiUnavailableCounts.GetValueOrDefault(report.ScanId);
         long files = report.Metrics.FilesVisited;
         bool completed = false;
         try
         {
+            _coverageRoot = Path.GetFullPath(root);
             await ScanRootCoreAsync(root, report, options, passwordProvider, progress, cancellationToken, workshopId, projectType);
             completed = true;
         }
         finally
         {
+            _coverageRoot = previousRoot;
             if (!completed) report.Coverage = ScanCoverage.Partial;
             Finding[] added = report.Findings.Skip(first).ToArray();
             report.RootSummaries.Add(new ScanRootSummary(root,
                 !completed || report.CoverageNotes.Count > notes ||
+                CoverageAggregation.OccurrenceCount(report) > gaps ||
                 _amsiUnavailableCounts.GetValueOrDefault(report.ScanId) > amsiUnavailable ||
                 added.Any(f => f.Category == FindingCategory.Coverage)
                     ? ScanCoverage.Partial : ScanCoverage.Complete,
                 added.Count(f => f.IsKnownMalware), added.Count(f => f.CanRemediate), report.Metrics.FilesVisited - files));
+            if (completed) Checkpoint?.Invoke(report);
         }
     }
 
@@ -62,10 +72,14 @@ public sealed class ContentScanner : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         string fullRoot = Path.GetFullPath(root);
+        if (IsExcluded(fullRoot, options.ExcludedRoots)) return;
+        if (!ContentDiscovery.IsLocalSafePath(fullRoot))
+        { AddCoverage(report, $"已跳过网络路径或重解析点：{fullRoot}", fullRoot, workshopId); return; }
         if (File.Exists(fullRoot))
         {
             await ScanFileAsync(fullRoot, fullRoot, fullRoot, report, options, passwordProvider, progress,
                 cancellationToken, 0, workshopId, projectType, new ArchiveBudget(options));
+            Checkpoint?.Invoke(report);
             return;
         }
 
@@ -94,10 +108,16 @@ public sealed class ContentScanner : IDisposable
                     continue;
                 }
 
-                foreach (string child in Directory.EnumerateDirectories(directory)) pending.Push(child);
-                foreach (string file in Directory.EnumerateFiles(directory))
+                foreach (string child in Directory.EnumerateDirectories(directory).Take(options.MaximumFiles + 1))
+                {
+                    if (++budget.DirectoryEntries > options.MaximumFiles) { AddCoverage(report, "目录数量达到扫描上限", fullRoot, workshopId); return; }
+                    pending.Push(child);
+                }
+                foreach (string file in Directory.EnumerateFiles(directory).Take((int)Math.Clamp((long)options.MaximumFiles - budget.FilesVisited + 1, 0, int.MaxValue))
+                    .Chunk(512).SelectMany(chunk => chunk.OrderBy(ContentPriority)))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (IsExcluded(file, options.ExcludedRoots)) continue;
                     if (++budget.FilesVisited > options.MaximumFiles)
                     {
                         AddCoverage(report, $"文件数量达到上限 {options.MaximumFiles}，剩余内容未扫描。", fullRoot, workshopId);
@@ -106,6 +126,7 @@ public sealed class ContentScanner : IDisposable
 
                     await ScanFileAsync(file, file, file, report, options, passwordProvider, progress,
                         cancellationToken, 0, workshopId, projectType, budget);
+                    Checkpoint?.Invoke(report);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -131,13 +152,16 @@ public sealed class ContentScanner : IDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         progress?.Report(new ScanProgress("内容扫描", displayPath, report.Metrics.FilesVisited, null, "正在识别真实格式"));
+        _resources.Check(report);
+        if (report.Metrics.FilesVisited >= options.MaximumFiles)
+            throw new ScanResourceLimitException($"本轮文件数达到上限 {options.MaximumFiles}，已保留此前结果，请分批检查剩余目录。");
         int firstFinding = report.Findings.Count;
         string? scanIdentity = null;
 
         try
         {
             FileInfo info = new(physicalPath);
-            if (!info.Exists) return;
+            if (!info.Exists) { AddCoverage(report, "扫描时文件已不存在或无法读取：" + displayPath, remediationTarget, workshopId); return; }
             report.Metrics.FilesVisited++;
 
             if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
@@ -148,6 +172,25 @@ public sealed class ContentScanner : IDisposable
             string extension = Path.GetExtension(displayPath);
             FileTypeResult type = await FileTypeDetector.DetectAsync(physicalPath, cancellationToken, displayPath);
             bool suspiciousExtension = _rules.DangerousExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+            // Format and MP4 structure checks do not require reading the whole media payload.
+            // Never trust a .mp4 extension alone, and inspect overlays before applying hash budgets.
+            Mp4InspectionResult? media = type.Type == DetectedFileType.Mp4
+                ? await InspectMediaAsync(physicalPath, displayPath, remediationTarget, report, options, passwordProvider,
+                    progress, cancellationToken, archiveDepth, workshopId, projectType, budget) : null;
+            if (options.Mode == ScanMode.Quick && media?.IsStructurallyValid == true && !type.ExtensionMismatch)
+            {
+                CoverageAggregation.Add(report, "QUICK-MEDIA-STRUCTURE", _coverageRoot ?? remediationTarget, displayPath);
+                return;
+            }
+            // long.MaxValue means no global hash-byte cap, not a larger allocation. Hashing remains streamed.
+            long charged = Math.Max(0, report.Metrics.BytesHashed -
+                (options.Mode == ScanMode.Quick ? report.Metrics.QuickPriorityBytesHashed : 0));
+            long remaining = options.MaximumContentBytes == long.MaxValue ? long.MaxValue :
+                Math.Max(0, Math.Max(0, options.MaximumContentBytes) - charged);
+            bool priorityReserve = options.Mode == ScanMode.Quick && info.Length > remaining && info.Length <= 8L * 1024 * 1024 &&
+                (type.IsExecutableOrScript || suspiciousExtension) && info.Length <= 128L * 1024 * 1024 - report.Metrics.QuickPriorityBytesHashed;
+            bool tooLarge = options.Mode == ScanMode.Quick && info.Length > 256L * 1024 * 1024;
+            bool deepReadAllowed = !tooLarge && (info.Length <= remaining || priorityReserve);
             bool shouldHash = options.HashEveryFile || options.Mode != ScanMode.Quick ||
                               info.Length <= 64L * 1024 * 1024 ||
                               suspiciousExtension || type.IsArchive || type.IsExecutableOrScript ||
@@ -155,10 +198,11 @@ public sealed class ContentScanner : IDisposable
                               _rules.KnownProcessNames.Contains(info.Name, StringComparer.OrdinalIgnoreCase);
 
             string? sha256 = null;
-            if (shouldHash)
+            if (shouldHash && deepReadAllowed)
             {
+                progress?.Report(new ScanProgress("文件哈希", displayPath, report.Metrics.FilesVisited, null, "正在分块计算文件哈希"));
                 sha256 = await Hashing.Sha256FileAsync(physicalPath, cancellationToken,
-                    bytes => report.Metrics.BytesHashed += bytes);
+                    bytes => { report.Metrics.BytesHashed += bytes; if (priorityReserve) report.Metrics.QuickPriorityBytesHashed += bytes; });
                 if (archiveDepth == 0) scanIdentity = sha256;
                 HashRule? hashRule = _rules.KnownHashes.FirstOrDefault(rule =>
                     rule.Sha256.Equals(sha256, StringComparison.OrdinalIgnoreCase));
@@ -226,14 +270,23 @@ public sealed class ContentScanner : IDisposable
                 });
             }
 
+            if (!deepReadAllowed)
+            {
+                CoverageAggregation.Add(report, tooLarge ? "QUICK-FILE-SIZE" : "CONTENT-BYTE-BUDGET",
+                    _coverageRoot ?? remediationTarget, displayPath);
+                return;
+            }
+
             if (info.Length <= MaximumStringScanBytes && (type.IsExecutableOrScript || suspiciousExtension ||
                 type.Type is DetectedFileType.Unknown or DetectedFileType.Html or DetectedFileType.Json or DetectedFileType.Xml))
             {
+                progress?.Report(new ScanProgress("内容特征", displayPath, report.Metrics.FilesVisited, null, "正在分块检查文本与行为特征"));
                 await ScanStringsAsync(physicalPath, displayPath, remediationTarget, sha256, report, workshopId, projectType, cancellationToken);
             }
 
             if (options.UseAmsi && (type.IsExecutableOrScript || type.IsArchive || suspiciousExtension) && info.Length <= MaximumStringScanBytes)
             {
+                progress?.Report(new ScanProgress("本机安全引擎", displayPath, report.Metrics.FilesVisited, null, "正在等待本机反恶意软件接口"));
                 AmsiScanResult amsiResult = await _amsi.ScanFileAsync(physicalPath, MaximumStringScanBytes, cancellationToken);
                 if (amsiResult.Verdict is AmsiVerdict.Detected or AmsiVerdict.BlockedByPolicy)
                 {
@@ -259,39 +312,35 @@ public sealed class ContentScanner : IDisposable
                 }
             }
 
-            if (type.Type == DetectedFileType.Mp4)
+            if (type.Type == DetectedFileType.Shortcut)
             {
-                Mp4InspectionResult mp4 = await Mp4Inspector.InspectAsync(physicalPath, cancellationToken);
-                if (mp4.TrailingBytes > 0)
+                ShortcutInspection shortcut = info.Length <= 1024 * 1024
+                    ? ShortcutInspector.Inspect(await File.ReadAllBytesAsync(physicalPath, cancellationToken))
+                    : new(null, null, null, false, "快捷方式超过大小上限");
+                string command = shortcut.Target + " " + shortcut.Arguments;
+                IReadOnlyList<string> signals = ScriptSignals.Analyze(command);
+                if (signals.Count > 0) report.Findings.Add(new Finding
                 {
-                    report.Findings.Add(new Finding
-                    {
-                        RuleId = "MP4-TRAILING-DATA",
-                        Category = FindingCategory.WallpaperEngine,
-                        Severity = mp4.EmbeddedType is null ? FindingSeverity.Medium : FindingSeverity.High,
-                        Score = mp4.EmbeddedType is null ? 45 : 75,
-                        Title = "MP4 存在容器外尾随数据",
-                        Description = mp4.EmbeddedType is null
-                            ? "媒体结构结束后仍有额外数据，需要人工复核。"
-                            : $"媒体尾部识别到 {mp4.EmbeddedType}。",
-                        Target = remediationTarget,
-                        Evidence = $"{mp4.Detail} 内容位置：{displayPath}",
-                        Sha256 = sha256,
-                        WorkshopId = workshopId,
-                        CanRemediate = false,
-                        SuggestedActions = [SuggestedActionKind.ReviewOnly]
-                    });
-                    if (mp4.EmbeddedType is not null && options.InspectArchives && mp4.LastValidOffset > 0)
-                        await ScanOverlayAsync(physicalPath, displayPath, remediationTarget, mp4.LastValidOffset, report,
-                            options, passwordProvider, progress, cancellationToken, archiveDepth, workshopId, projectType, budget);
-                }
+                    RuleId = "SHORTCUT-EXECUTION-CHAIN", Category = FindingCategory.File, Severity = FindingSeverity.High,
+                    Score = 85, Title = "快捷方式包含可疑执行链", Description = string.Join("，", signals),
+                    Target = remediationTarget, Sha256 = sha256, Evidence = ScriptSignals.Redact(command),
+                    CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+                });
+                if (!shortcut.Complete) AddCoverage(report, shortcut.Detail + "：" + displayPath, remediationTarget, workshopId, "SHORTCUT-PARTIAL");
             }
 
-            if (type.Type == DetectedFileType.CompoundDocument)
-                AddCoverage(report, $"结构化安装包或复合文档未展开，已检查文件哈希：{displayPath}", remediationTarget,
+            if (type.Type is DetectedFileType.CompoundDocument or DetectedFileType.Cabinet)
+            {
+                if (options.InspectArchives && archiveDepth < options.MaximumArchiveDepth)
+                    await ScanStructuredAsync(physicalPath, displayPath, remediationTarget, type.Type, sha256, report, options,
+                        passwordProvider, progress, cancellationToken, archiveDepth, workshopId, projectType, budget);
+                else AddCoverage(report, $"安装包内部未展开，已检查文件哈希：{displayPath}", remediationTarget,
                     workshopId, "COMPOUND-CONTENT-NOT-EXPANDED");
+            }
 
-            if (options.InspectArchives && type.IsArchive)
+            if (!options.InspectArchives && type.IsArchive)
+                AddCoverage(report, $"本次未检查压缩包内部：{displayPath}", remediationTarget, workshopId, "ARCHIVE-NOT-REQUESTED");
+            if (options.InspectArchives && type.IsArchive && type.Type != DetectedFileType.Cabinet)
             {
                 if (archiveDepth >= options.MaximumArchiveDepth)
                 {
@@ -319,6 +368,82 @@ public sealed class ContentScanner : IDisposable
                 finding.ContentPath ??= displayPath;
                 if (archiveDepth == 0) finding.TargetSha256 = scanIdentity;
             }
+        }
+    }
+
+    private static int ContentPriority(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".exe" or ".dll" or ".lnk" or ".ps1" or ".bat" or ".cmd" or ".vbs" or ".js" or ".lua" or ".py" => 0,
+        ".zip" or ".rar" or ".7z" or ".msi" or ".cab" => 1,
+        ".mp4" => 3,
+        _ => 2
+    };
+
+    private async Task<Mp4InspectionResult> InspectMediaAsync(string physicalPath, string displayPath, string target,
+        ScanReport report, ScanOptions options, IArchivePasswordProvider provider, IProgress<ScanProgress>? progress,
+        CancellationToken token, int depth, string? workshopId, string? projectType, ArchiveBudget budget)
+    {
+        Mp4InspectionResult mp4 = await Mp4Inspector.InspectAsync(physicalPath, token);
+        report.Metrics.MediaStructuresChecked++;
+        if (mp4.TrailingBytes > 0)
+        {
+            report.Findings.Add(new Finding
+            {
+                RuleId = "MP4-TRAILING-DATA", Category = FindingCategory.WallpaperEngine,
+                Severity = mp4.EmbeddedType is null ? FindingSeverity.Medium : FindingSeverity.High,
+                Score = mp4.EmbeddedType is null ? 45 : 75, Title = "MP4 存在容器外尾随数据",
+                Description = mp4.EmbeddedType is null ? "媒体结构结束后仍有额外数据，需要人工复核。" : $"媒体尾部识别到 {mp4.EmbeddedType}。",
+                Target = target, Evidence = $"{mp4.Detail} 内容位置：{displayPath}", WorkshopId = workshopId,
+                SuggestedActions = [SuggestedActionKind.ReviewOnly]
+            });
+            if (mp4.EmbeddedType is not null && options.InspectArchives && mp4.LastValidOffset > 0)
+                await ScanOverlayAsync(physicalPath, displayPath, target, mp4.LastValidOffset, report,
+                    options, provider, progress, token, depth, workshopId, projectType, budget);
+            else AddCoverage(report, "媒体尾随内容未展开：" + displayPath, target, workshopId,
+                options.InspectArchives ? "MP4-OVERLAY-UNSUPPORTED" : "ARCHIVE-NOT-REQUESTED");
+        }
+        else if (!mp4.IsStructurallyValid)
+            AddCoverage(report, "媒体结构无法确认：" + displayPath, target, workshopId, "MP4-STRUCTURE-PARTIAL");
+        return mp4;
+    }
+
+    private async Task ScanStructuredAsync(string physicalPath, string displayPath, string target, DetectedFileType type,
+        string? sha256, ScanReport report, ScanOptions options, IArchivePasswordProvider passwords,
+        IProgress<ScanProgress>? progress, CancellationToken token, int depth, string? workshopId, string? projectType, ArchiveBudget budget)
+    {
+        using TemporaryDirectory temp = new();
+        long remaining = Math.Max(0, options.MaximumExpandedBytes - budget.ExpandedBytes);
+        int entries = (int)Math.Max(0, options.MaximumArchiveEntries - budget.ArchiveEntries);
+        StructuredInspection result = type == DetectedFileType.Cabinet
+            ? StructuredContainerInspector.ReadCabinet(physicalPath, temp, options.MaximumEntryBytes, remaining, entries, token)
+            : StructuredContainerInspector.ReadMsi(physicalPath, temp, options.MaximumEntryBytes, remaining, entries, token);
+        budget.ExpandedBytes += result.ExpandedBytes;
+        report.Metrics.ArchiveBytesExpanded += result.ExpandedBytes;
+        foreach (string note in result.Notes.Distinct()) AddCoverage(report, ScriptSignals.Redact(note) + "：" + displayPath,
+            target, workshopId, "INSTALLER-PARTIAL");
+        if (result.Recognized && type == DetectedFileType.CompoundDocument)
+        {
+            string actions = string.Join("\n", result.Metadata.Where(line => line.StartsWith("CustomAction:", StringComparison.Ordinal)));
+            IReadOnlyList<string> signals = ScriptSignals.Analyze(actions);
+            report.Findings.Add(new Finding
+            {
+                RuleId = "INSTALLER-STRUCTURE", Category = FindingCategory.Archive,
+                Severity = signals.Count > 0 ? FindingSeverity.High : FindingSeverity.Information,
+                Score = signals.Count > 0 ? 85 : 5, Title = signals.Count > 0 ? "安装包自定义动作包含可疑执行链" : "已只读检查安装包结构",
+                Description = $"读取 {result.Metadata.Count} 条安装表记录、{result.Members.Count} 个内嵌成员，未安装或执行自定义动作。" +
+                    (signals.Count > 0 ? string.Join("，", signals) : "存在自定义动作本身不代表恶意。"),
+                Target = target, Sha256 = sha256, Evidence = ScriptSignals.Redact(string.Join("\n", result.Metadata.Take(24))),
+                CanRemediate = signals.Count > 0, SuggestedActions = signals.Count > 0 ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
+            });
+        }
+        foreach (StructuredMember member in result.Members)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!File.Exists(member.Path)) { AddCoverage(report, "安装包成员展开失败：" + member.Name, target, workshopId); continue; }
+            if (++budget.ArchiveEntries > options.MaximumArchiveEntries) { AddCoverage(report, "安装包成员数量达到上限", target, workshopId); break; }
+            report.Metrics.ArchiveEntriesVisited++;
+            await ScanFileAsync(member.Path, displayPath + "!/" + SanitizeEntryDisplayName(member.Name), target, report,
+                options, passwords, progress, token, depth + 1, workshopId, projectType, budget);
         }
     }
 
@@ -350,25 +475,29 @@ public sealed class ContentScanner : IDisposable
                 };
                 // Known formats must retain their decoder's password errors. Factory probing can
                 // swallow ZIP AES "bad password" and replace it with "unknown archive format".
-                using IArchive archive = type.Type switch
+                progress?.Report(new ScanProgress("压缩包目录", displayPath, budget.ArchiveEntries, null, "正在读取压缩包目录与解码参数"));
+                _resources.Check(report);
+                using TemporaryDirectory temporary = new();
+                List<(string Physical, string Virtual)> staged = [];
+                ScanReport stageReport = new();
+                bool validatedEncryptedEntry = false;
+                using (IArchive archive = type.Type switch
                 {
                     DetectedFileType.Zip => SharpCompress.Archives.Zip.ZipArchive.OpenArchive(physicalPath, readerOptions),
                     DetectedFileType.Rar => SharpCompress.Archives.Rar.RarArchive.OpenArchive(physicalPath, readerOptions),
                     DetectedFileType.SevenZip => SharpCompress.Archives.SevenZip.SevenZipArchive.OpenArchive(physicalPath, readerOptions),
                     _ => ArchiveFactory.OpenArchive(physicalPath, readerOptions)
-                };
+                })
+                {
                 encrypted |= archive.IsEncrypted || archive.Entries.Any(entry => entry.IsEncrypted);
                 if (encrypted && password is null) throw new PasswordNeededException();
 
                 // Validate/decompress this level before scanning children. A bad password cannot
                 // publish findings, cache entries or duplicate visible counters from a failed attempt.
-                using TemporaryDirectory temporary = new();
-                List<(string Physical, string Virtual)> staged = [];
-                ScanReport stageReport = new();
-                bool validatedEncryptedEntry = false;
                 foreach (IArchiveEntry entry in archive.Entries)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    _resources.Check(report);
                     if (entry.IsDirectory) continue;
                     if (++budget.ArchiveEntries > options.MaximumArchiveEntries)
                     {
@@ -439,6 +568,7 @@ public sealed class ContentScanner : IDisposable
                         break;
                     }
                 }
+                } // Release this decoder before recursively opening any child archive.
                 if (password is not null && validatedEncryptedEntry)
                     _passwords.Remember(password, remediationTarget, scope);
                 report.Findings.AddRange(stageReport.Findings);
@@ -573,15 +703,19 @@ public sealed class ContentScanner : IDisposable
         string? projectType,
         CancellationToken cancellationToken)
     {
-        byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken);
-        try
+        var signals = await StreamingStringInspection.ReadAsync(path,
+            _rules.SuspiciousStrings.Select(rule => rule.Value).Concat(_rules.KnownDomains),
+            MaximumStringScanBytes, cancellationToken);
         {
             List<string> matches = [];
-            string text = Encoding.UTF8.GetString(bytes);
-            string wide = Encoding.Unicode.GetString(bytes);
-            bool Contains(string value) => text.Contains(value, StringComparison.OrdinalIgnoreCase) ||
-                                           wide.Contains(value, StringComparison.OrdinalIgnoreCase);
-            HeuristicMatch? combined = ContentHeuristics.Match(text + "\n" + wide, displayPath);
+            bool Contains(string value) => signals.Raw.Contains(value);
+            HeuristicMatch? combined = ContentHeuristics.Match(Contains, displayPath);
+            if (combined is null && Path.GetExtension(displayPath).ToLowerInvariant() is not (".md" or ".log" or ".lo"))
+            {
+                IReadOnlyList<string> scriptSignals = ScriptSignals.Analyze(signals.Script.Contains);
+                if (scriptSignals.Count > 0) combined = new HeuristicMatch("HEUR-STEAM-DEPLOYMENT-CHAIN",
+                    "发现 Steam 插件部署或凭据收集链", string.Join("，", scriptSignals), 90);
+            }
             if (combined is not null && !string.Equals(projectType, "trusted-default", StringComparison.OrdinalIgnoreCase))
                 report.Findings.Add(new Finding
                 {
@@ -641,10 +775,6 @@ public sealed class ContentScanner : IDisposable
                 CanRemediate = false,
                 SuggestedActions = [SuggestedActionKind.ReviewOnly]
             });
-        }
-        finally
-        {
-            Array.Clear(bytes);
         }
     }
 
@@ -709,6 +839,7 @@ public sealed class ContentScanner : IDisposable
     private static bool IsUnexpectedExecutable(FileTypeResult type, string extension, string? projectType)
     {
         if (string.Equals(projectType, "trusted-default", StringComparison.OrdinalIgnoreCase)) return false;
+        if (projectType is "workshop" or "mod" or "plugin") return false;
         if (string.Equals(projectType, "application", StringComparison.OrdinalIgnoreCase) &&
             type.Type == DetectedFileType.PortableExecutable) return false;
         if (type.Type is DetectedFileType.PortableExecutable or DetectedFileType.Shortcut or
@@ -777,13 +908,14 @@ public sealed class ContentScanner : IDisposable
         string ruleId = "SCAN-PARTIAL")
     {
         report.Coverage = ScanCoverage.Partial;
-        if (!report.CoverageNotes.Contains(message, StringComparer.Ordinal)) report.CoverageNotes.Add(message);
+        // Keep append O(1) for large libraries. Presentation/export deduplicates notes.
+        report.CoverageNotes.Add(message);
         report.Findings.Add(new Finding
         {
             RuleId = ruleId,
             Category = FindingCategory.Coverage,
-            Severity = FindingSeverity.Medium,
-            Score = 30,
+            Severity = FindingSeverity.Information,
+            Score = 0,
             Title = "未完整扫描",
             Description = message,
             Target = target,
@@ -819,6 +951,7 @@ public sealed class ContentScanner : IDisposable
     private sealed class ArchiveBudget(ScanOptions options)
     {
         public long FilesVisited { get; set; }
+        public long DirectoryEntries { get; set; }
         public long ArchiveEntries { get; set; }
         public long ExpandedBytes { get; set; }
         public ScanOptions Options { get; } = options;

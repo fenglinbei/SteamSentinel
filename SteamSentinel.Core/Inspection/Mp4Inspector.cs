@@ -57,7 +57,9 @@ public static class Mp4Inspector
             {
                 read = await ReadExactlyAtMostAsync(stream, header.AsMemory(8, 8), cancellationToken);
                 if (read < 8) break;
-                boxSize = checked((long)BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(8, 8)));
+                ulong extendedSize = BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(8, 8));
+                if (extendedSize > long.MaxValue) break;
+                boxSize = (long)extendedSize;
                 headerSize = 16;
             }
             else if (size32 == 0)

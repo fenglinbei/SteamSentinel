@@ -142,6 +142,7 @@ internal static partial class Program
             window.Findings[0].IsSelected && ReferenceEquals(typeof(MainWindow).GetField("_lastReport", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window), report));
         typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [true]);
         Check("扫描或处置中禁止并发提权与刷新", !Button("ElevateButton").IsEnabled && !Button("RefreshInstallationButton").IsEnabled);
+        typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [false]);
         window.Close();
     }
 }

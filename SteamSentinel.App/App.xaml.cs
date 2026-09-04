@@ -17,6 +17,7 @@ public partial class App : Application
         AdministratorWindowRequested = e.Args.Length == 1 && e.Args[0] == ElevationService.WindowArgument;
         DispatcherUnhandledException += (_, args) =>
         {
+            AppErrorLog.Write("DispatcherUnhandledException", args.Exception);
             MessageBox.Show(
                 $"发生未处理错误：\n\n{args.Exception.Message}",
                 "SteamSentinel",
@@ -24,6 +25,11 @@ public partial class App : Application
                 MessageBoxImage.Error);
             args.Handled = true;
         };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception error) AppErrorLog.Write("FatalUnhandledException", error);
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) => AppErrorLog.Write("UnobservedTaskException", args.Exception);
         base.OnStartup(e);
     }
 }
