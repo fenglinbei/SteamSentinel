@@ -20,7 +20,8 @@ public partial class MainWindow : Window
     private readonly ScanCoordinator _coordinator = new();
     private readonly ArchiveWorkerClient _workerClient = new();
     private readonly RemediationClient _remediationClient = new();
-    private readonly InstallationSecurityStatus _installationSecurity;
+    private InstallationSecurityStatus _installationSecurity = new(false, "正在检查安装环境");
+    private ElevationContext _elevationContext = ElevationContext.Read();
     private CancellationTokenSource? _scanCancellation;
     private ScanReport? _lastReport;
     private bool _busy;
@@ -31,7 +32,7 @@ public partial class MainWindow : Window
         Findings = [];
         QuarantineItems = [];
         DataContext = this;
-        _installationSecurity = InstallationSecurity.Evaluate();
+        SetBusy(true);
         HeaderDetailText.Text = $"规则 {_coordinator.Rules.Version}";
         Loaded += MainWindow_Loaded;
         Closing += (_, _) => _scanCancellation?.Cancel();
@@ -42,7 +43,11 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        ApplyInstallationSecurityStatus();
+        await RefreshInstallationSecurityAsync();
+        if (Application.Current is App { AdministratorWindowRequested: true })
+            FooterText.Text = _elevationContext.IsElevated
+                ? "这是新的管理员窗口，请重新扫描，再核对目标并处置。若使用了另一账户，请确认扫描范围包含原用户的 Steam 与工坊目录。"
+                : "新窗口未取得管理员权限，请重新授权，扫描与报告导出仍可使用。";
         await RefreshQuarantineItemsAsync();
     }
 
@@ -66,6 +71,22 @@ public partial class MainWindow : Window
 
     private void CancelScan_Click(object sender, RoutedEventArgs e) => _scanCancellation?.Cancel();
 
+    private async void RetryPasswords_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _lastReport is null) return;
+        List<string> targets = GetPasswordRetryTargets(_lastReport);
+        if (targets.Count == 0) return;
+        if (MessageBox.Show(this, $"将重新扫描 {targets.Count} 个相关外层文件，之前的密码已清空，需要重新输入。请准备好外层和内层密码。新结果只覆盖这些文件，不是全机复扫。",
+            "重试未解密内容", MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK) return;
+        ArchiveCheckBox.IsChecked = true;
+        await StartScanAsync(ScanMode.Custom, targets);
+    }
+
+    internal static List<string> GetPasswordRetryTargets(ScanReport report) => report.Findings
+        .Where(f => f.Category == FindingCategory.Coverage && f.RuleId is
+            "ARCHIVE-PASSWORD-FAILED" or "ARCHIVE-ENCRYPTED-NOT-SCANNED" or "ARCHIVE-ENCRYPTED-DEFERRED")
+        .Select(f => f.Target).Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
     private async Task StartScanAsync(ScanMode mode, List<string> customRoots)
     {
         if (_busy) return;
@@ -84,10 +105,11 @@ public partial class MainWindow : Window
         _scanCancellation = new CancellationTokenSource();
         CancellationToken token = _scanCancellation.Token;
         Progress<ScanProgress> progress = new(UpdateProgress);
+        ScanReport? systemReport = null;
+        bool contentAttempted = false;
 
         try
         {
-            ScanReport? systemReport = null;
             if (mode != ScanMode.Custom)
             {
                 ScanOptions systemOptions = new()
@@ -117,22 +139,28 @@ public partial class MainWindow : Window
                 ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot, AppPaths.WorkerTemporaryRoot, AppContext.BaseDirectory]
             };
 
+            contentAttempted = true;
             ScanReport contentReport = await _workerClient.RunAsync(
                 contentOptions, RequestPasswordAsync, progress, token);
             _lastReport = systemReport is null ? contentReport : ScanReportMerger.Merge(systemReport, contentReport);
             PopulateFindings(_lastReport);
             UpdateSummary(_lastReport);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
+            if (contentAttempted) PreserveScanFailure(systemReport, mode, customRoots, ex, cancelled: true);
             HeaderStatusText.Text = "扫描已取消";
-            HeaderDetailText.Text = "尚未形成可用于处置的完整结果";
-            FooterText.Text = "扫描已取消，加密包密码不会保留。";
+            HeaderDetailText.Text = systemReport is null ? "内容检查未完成" : "已保留系统检查结果，内容检查未完成";
+            FooterText.Text = "扫描已取消，加密包密码不会保留，当前结果不能作为完整复扫。";
         }
         catch (Exception ex)
         {
-            HeaderStatusText.Text = "扫描失败";
-            HeaderDetailText.Text = ex.Message;
+            if (contentAttempted) PreserveScanFailure(systemReport, mode, customRoots, ex, cancelled: false);
+            else
+            {
+                HeaderStatusText.Text = "扫描失败";
+                HeaderDetailText.Text = ex.Message;
+            }
             MessageBox.Show(this, ex.Message, "SteamSentinel 扫描失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -143,6 +171,19 @@ public partial class MainWindow : Window
             _scanCancellation?.Dispose();
             _scanCancellation = null;
         }
+    }
+
+    private void PreserveScanFailure(ScanReport? systemReport, ScanMode mode, IReadOnlyList<string> roots,
+        Exception failure, bool cancelled)
+    {
+        _lastReport = ScanFailureReports.PreserveSystemResults(systemReport, mode, roots, _coordinator.Rules.Version, failure, cancelled);
+        PopulateFindings(_lastReport);
+        UpdateSummary(_lastReport);
+        HeaderDetailText.Text = systemReport is null
+            ? "内容检查未完成，可导出报告查看启动阶段与错误"
+            : "系统检查结果已保留，内容检查未完成，可导出报告查看错误";
+        ProgressStageText.Text = cancelled ? "扫描已取消" : "内容检查未完成";
+        ProgressItemText.Text = "已保留可用结果，请查看覆盖说明，或导出报告反馈。";
     }
 
     private Task<ArchivePasswordResponse> RequestPasswordAsync(ArchivePasswordRequest request, CancellationToken cancellationToken)
@@ -156,7 +197,7 @@ public partial class MainWindow : Window
                 request.RequestId,
                 !accepted,
                 accepted ? dialog.EnteredPassword : null,
-                accepted && dialog.ReuseForSession);
+                false, dialog.ReuseScope);
         }).Task;
     }
 
@@ -179,12 +220,13 @@ public partial class MainWindow : Window
 
     private void UpdateSummary(ScanReport report)
     {
-        bool confirmed = report.Findings.Any(finding => finding.IsKnownMalware && finding.Severity == FindingSeverity.Critical);
+        bool confirmed = report.Findings.Any(finding => finding.IsKnownMalware);
         bool suspicious = report.Findings.Any(finding => finding.Severity >= FindingSeverity.High);
         if (confirmed)
         {
-            HeaderStatusText.Text = "已确认威胁";
-            HeaderDetailText.Text = "请核对预选动作并进行隔离";
+            bool hostEvidence = report.Findings.Any(f => f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam && f.Severity >= FindingSeverity.High);
+            HeaderStatusText.Text = hostEvidence ? "发现威胁与本机异常" : "扫描内容包含已知威胁";
+            HeaderDetailText.Text = "请核对内容位置与外层隔离目标，文件检出不等于本机已感染";
         }
         else if (suspicious)
         {
@@ -202,6 +244,8 @@ public partial class MainWindow : Window
             HeaderDetailText.Text = "不代表对未知漏洞的绝对保证";
         }
 
+        HeaderDetailText.Text += report.Coverage == ScanCoverage.Complete
+            ? "，已完成支持范围内的检查。" : "，仍有内容未完整扫描，请查看覆盖说明。";
         FooterText.Text = $"文件 {report.Metrics.FilesVisited:N0} · 工坊 {report.Metrics.WorkshopItemsVisited:N0} · 压缩条目 {report.Metrics.ArchiveEntriesVisited:N0} · 覆盖 {ReportExporter.CoverageLabel(report.Coverage)}";
     }
 
@@ -210,7 +254,7 @@ public partial class MainWindow : Window
         FindingItemViewModel? item = FindingsGrid.SelectedItem as FindingItemViewModel;
         DetailDescriptionText.Text = item?.Description ?? string.Empty;
         DetailEvidenceText.Text = item?.Evidence ?? string.Empty;
-        DetailHashText.Text = item?.Sha256 ?? string.Empty;
+        DetailHashText.Text = item is null ? string.Empty : $"命中内容：{item.Sha256}\n隔离目标：{item.Finding.TargetSha256 ?? "不适用"}\n内容位置：{item.Finding.ContentPath ?? item.Target}";
         DetailWorkshopText.Text = item?.WorkshopId ?? string.Empty;
     }
 
@@ -227,7 +271,7 @@ public partial class MainWindow : Window
     private async void Remediate_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        if (!EnsureRemediationAvailable()) return;
+        if (!await EnsureRemediationAvailableAsync()) return;
         List<Finding> selected = Findings.Where(item => item.IsSelected && item.CanSelect).Select(item => item.Finding).ToList();
         if (selected.Count == 0)
         {
@@ -386,7 +430,7 @@ public partial class MainWindow : Window
     private async Task RunIncidentActionAsync(RemediationActionType type, string incidentId)
     {
         if (_busy) return;
-        if (!EnsureRemediationAvailable()) return;
+        if (!await EnsureRemediationAvailableAsync()) return;
         SetBusy(true);
         try
         {
@@ -430,20 +474,29 @@ public partial class MainWindow : Window
         FullScanButton.IsEnabled = !busy;
         FileScanButton.IsEnabled = !busy;
         FolderScanButton.IsEnabled = !busy;
+        RetryPasswordsButton.IsEnabled = !busy && _lastReport is not null && GetPasswordRetryTargets(_lastReport).Count > 0;
         CancelScanButton.IsEnabled = busy && _scanCancellation is not null;
         RemediateButton.IsEnabled = !busy && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
         ExportButton.IsEnabled = !busy && _lastReport is not null;
         RollbackButton.IsEnabled = !busy && _installationSecurity.IsProtected;
         DeleteIncidentButton.IsEnabled = !busy && _installationSecurity.IsProtected;
+        ElevateButton.IsEnabled = !busy && _installationSecurity.IsProtected && !_elevationContext.IsElevated;
+        RefreshInstallationButton.IsEnabled = !busy;
     }
 
-    private bool EnsureRemediationAvailable()
+    private async Task<bool> EnsureRemediationAvailableAsync()
     {
-        InstallationSecurityStatus current = InstallationSecurity.Evaluate();
-        if (current.IsProtected) return true;
+        await RefreshInstallationSecurityAsync();
+        if (_installationSecurity.IsProtected)
+        {
+            if (_elevationContext.CanElevateSameUser) return true;
+            // Broker plans remain bound to one SID. A different administrator must rescan.
+            await OpenAdministratorWindowAsync();
+            return false;
+        }
         MessageBox.Show(this,
-            current.Message + "。请使用 v0.1.4 安装包安装后再执行隔离、恢复或永久删除，扫描与报告导出仍可使用。",
-            "管理员处置未启用",
+            _installationSecurity.Message + "。这不是缺少管理员授权，提权也不会解除此限制。请使用安装包修复安装，再点击“重新检查”。扫描与报告导出仍可使用。",
+            "安装环境未通过检查",
             MessageBoxButton.OK,
             MessageBoxImage.Warning);
         return false;
@@ -452,8 +505,18 @@ public partial class MainWindow : Window
     private void ApplyInstallationSecurityStatus()
     {
         InstallationSecurityText.Text = _installationSecurity.IsProtected
-            ? "处置环境：受保护安装与组件完整性校验已通过，可使用隔离、恢复和永久删除。"
-            : $"处置环境：{_installationSecurity.Message}。请使用安装包启用隔离与恢复。";
+            ? (_elevationContext.IsElevated ? "安装检查通过，当前为管理员窗口。" : "安装检查通过，当前为普通权限窗口。")
+            : $"安装检查未通过：{_installationSecurity.Message}。";
+        ElevationHintText.Text = !_installationSecurity.IsProtected
+            ? "提权不能修复安装环境，请用安装包修复后重新检查。扫描与导出仍可用。"
+            : _elevationContext.IsElevated
+                ? "可扫描并处置，执行前仍会请你核对并确认，不会自动清除。"
+                : _elevationContext.CanElevateSameUser
+                    ? "扫描无需提权，处置时会自动请求 Windows 授权。也可先打开管理员窗口。"
+                    : "扫描无需提权，处置需先打开管理员窗口，输入管理员凭据并重新扫描。";
+        ElevateButton.Content = _elevationContext.IsElevated ? "已是管理员窗口" : "打开管理员窗口";
+        ElevateButton.ToolTip = "通过 Windows UAC 打开独立窗口，原窗口与报告会保留，新窗口需重新扫描。";
+        RefreshInstallationButton.ToolTip = "重新检查安装目录、组件完整性与当前权限，不会更改扫描结果。";
         InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(
             _installationSecurity.IsProtected ? "#027A48" : "#B54708"));
         string tooltip = _installationSecurity.IsProtected ? "管理员处置可用" : _installationSecurity.Message;
@@ -461,6 +524,50 @@ public partial class MainWindow : Window
         RollbackButton.ToolTip = tooltip;
         DeleteIncidentButton.ToolTip = tooltip;
         SetBusy(_busy);
+    }
+
+    private async Task RefreshInstallationSecurityAsync()
+    {
+        SetBusy(true);
+        try
+        {
+            _installationSecurity = await Task.Run(() => InstallationSecurity.Evaluate());
+            _elevationContext = ElevationContext.Read();
+            ApplyInstallationSecurityStatus();
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async void RefreshInstallation_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_busy) await RefreshInstallationSecurityAsync();
+    }
+
+    private async void Elevate_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_busy) await OpenAdministratorWindowAsync();
+    }
+
+    private async Task OpenAdministratorWindowAsync()
+    {
+        if (_elevationContext.IsElevated) return;
+        if (MessageBox.Show(this,
+                "即将请求 Windows 管理员授权，并打开一个独立窗口。原窗口和扫描结果会保留，取消授权不会丢失结果。\n\n请在新窗口重新扫描，再确认处置。若 Windows 要求输入另一管理员账户的凭据，请确认新扫描包含原用户的 Steam 与工坊目录。没有管理员凭据时仍可扫描和导出报告。继续吗？",
+                "打开管理员窗口", MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK) return;
+        SetBusy(true);
+        try
+        {
+            ElevationOutcome outcome = await Task.Run(() => new ElevationService().OpenAdministratorWindow());
+            FooterText.Text = outcome == ElevationOutcome.Cancelled
+                ? "已取消管理员授权，原窗口和扫描结果均已保留。"
+                : "已请求打开管理员窗口，请确认新窗口显示管理员状态后重新扫描。此窗口仍保留原报告。";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"未能打开管理员窗口：{ex.Message}\n\n原窗口和扫描结果均已保留。",
+                "管理员窗口未打开", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally { SetBusy(false); }
     }
 
     private static bool IsSteamRunning()

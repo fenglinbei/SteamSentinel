@@ -16,7 +16,7 @@ using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.SelfTest;
 
-internal static class Program
+internal static partial class Program
 {
     private static readonly List<string> Failures = [];
     private static int _passed;
@@ -24,6 +24,10 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        string executableName = Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? string.Empty;
+        const string fixturePrefix = "SteamSentinelFixture-";
+        if (executableName.StartsWith(fixturePrefix, StringComparison.Ordinal))
+            return await RunWorkerFixtureAsync(executableName[fixturePrefix.Length..]);
         if (args.Length > 0) return await RunUtilityAsync(args);
 
         string root = Path.Combine(Path.GetTempPath(), "SteamSentinel-SelfTest-" + Guid.NewGuid().ToString("N"));
@@ -42,6 +46,10 @@ internal static class Program
             await TestDefaultWallpaperSuppressionAsync(root, rules);
             await TestSteamTamperScannerAsync(root, rules);
             await TestEncryptedArchiveAsync(root, rules);
+            await TestV015Async(root, rules);
+            await TestV016Async(root, rules);
+            await TestV017Async(root);
+            await TestV018Async(root);
             await TestWorkerProtocolAsync(root);
             await TestRestrictedWorkerClientAsync(root);
             await TestPlanBuilderAsync(root, rules);
@@ -657,6 +665,19 @@ internal static class Program
     {
         switch (args[0])
         {
+            case "--elevated-worker-smoke" when args.Length == 1:
+                return await RunElevatedWorkerSmokeAsync();
+            case "--installation-check" when args.Length == 2:
+                Stopwatch timer = Stopwatch.StartNew();
+                InstallationSecurityStatus installation = InstallationSecurity.Evaluate(args[1]);
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { installation.IsProtected, installation.Message, ElapsedMs = timer.ElapsedMilliseconds, Elevation = ElevationContext.Read() }, JsonFile.Options));
+                return installation.IsProtected ? 0 : 1;
+            case "--render-ui" when args.Length == 2:
+                return UiPreview.Render(args[1]);
+            case "--corpus" when args.Length == 3:
+                return await CorpusRegression.RunAsync(args[1], args[2]);
+            case "--corpus-batch" when args.Length == 3:
+                return await CorpusRegression.RunBatchAsync(args[1], args[2]);
             case "--prepare-broker-smoke":
                 return await PrepareBrokerSmokeAsync();
             case "--prepare-broker-rollback" when args.Length == 2:

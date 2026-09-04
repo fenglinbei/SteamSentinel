@@ -42,6 +42,7 @@ public static class ScanReportMerger
         merged.Roots.AddRange(first.Roots.Concat(second.Roots).Distinct(StringComparer.OrdinalIgnoreCase));
         merged.CoverageNotes.AddRange(first.CoverageNotes.Concat(second.CoverageNotes).Distinct(StringComparer.Ordinal));
         merged.Findings.AddRange(first.Findings.Concat(second.Findings));
+        merged.RootSummaries.AddRange(first.RootSummaries.Concat(second.RootSummaries));
         merged.Findings.Sort((left, right) =>
         {
             int severity = right.Severity.CompareTo(left.Severity);

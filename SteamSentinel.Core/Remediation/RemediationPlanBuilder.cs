@@ -17,7 +17,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         foreach (Finding finding in selectedFindings.Where(item => item.CanRemediate))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            shouldBlockDomains |= finding.IsKnownMalware ||
+            shouldBlockDomains |= (finding.IsKnownMalware && finding.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam) ||
                                   finding.SuggestedActions.Contains(SuggestedActionKind.BlockKnownDomains);
 
             foreach (SuggestedActionKind suggested in finding.SuggestedActions)
@@ -86,7 +86,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
 
             if (finding.IsKnownMalware && finding.Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(finding.Target))
             {
-                string hash = finding.Sha256 ?? await Hashing.Sha256FileAsync(finding.Target, cancellationToken);
+                string hash = await VerifyTargetIdentityAsync(finding, cancellationToken);
                 RemediationAction firewall = new()
                 {
                     Type = RemediationActionType.AddProgramFirewallBlock,
@@ -147,7 +147,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
     private static async Task<RemediationAction> CreateFileActionAsync(Finding finding, CancellationToken cancellationToken)
     {
         string path = Path.GetFullPath(finding.Target);
-        string hash = await Hashing.Sha256FileAsync(path, cancellationToken);
+        string hash = await VerifyTargetIdentityAsync(finding, cancellationToken);
         return new RemediationAction
         {
             Type = RemediationActionType.QuarantineFile,
@@ -174,5 +174,15 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             IsKnownMalware = finding.IsKnownMalware,
             ConfidenceScore = finding.Score
         };
+    }
+
+    private static async Task<string> VerifyTargetIdentityAsync(Finding finding, CancellationToken cancellationToken)
+    {
+        string hash = await Hashing.Sha256FileAsync(finding.Target, cancellationToken);
+        string? expected = finding.TargetSha256 ?? (finding.ContentPath is null ? finding.Sha256 : null);
+        if ((finding.ContentPath is not null && expected is null) ||
+            (expected is not null && !expected.Equals(hash, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException($"目标在扫描后发生变化或缺少扫描身份，请重新扫描：{finding.Target}");
+        return hash;
     }
 }

@@ -24,6 +24,8 @@ public sealed class HashRule
     public string Label { get; init; } = string.Empty;
     public FindingSeverity Severity { get; init; } = FindingSeverity.Critical;
     public bool Malware { get; init; } = true;
+    public bool Remediable { get; init; }
+    public string? Evidence { get; init; }
 }
 
 public sealed class StringRule

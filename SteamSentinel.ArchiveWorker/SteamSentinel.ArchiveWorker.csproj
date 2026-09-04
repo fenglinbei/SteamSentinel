@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>SteamSentinel.ArchiveWorker</AssemblyName>
     <RootNamespace>SteamSentinel.ArchiveWorker</RootNamespace>
+    <ApplicationIcon>..\SteamSentinel.App\Assets\App.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />

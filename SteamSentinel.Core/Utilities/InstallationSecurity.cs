@@ -12,14 +12,6 @@ public sealed record InstallationSecurityStatus(bool IsProtected, string Message
 
 public static class InstallationSecurity
 {
-    private static readonly HashSet<string> WritableIdentities = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "S-1-1-0",       // Everyone
-        "S-1-5-4",       // Interactive
-        "S-1-5-11",      // Authenticated Users
-        "S-1-5-32-545"   // Builtin Users
-    };
-
     private static readonly HashSet<string> TrustedOwners = new(StringComparer.OrdinalIgnoreCase)
     {
         "S-1-5-18",      // Local System
@@ -28,19 +20,35 @@ public static class InstallationSecurity
     };
 
     private const FileSystemRights DangerousRights =
-        FileSystemRights.Write |
-        FileSystemRights.Modify |
-        FileSystemRights.FullControl |
+        // Composite Modify/FullControl include read bits, so they cannot be used as a mask.
+        FileSystemRights.WriteData |
+        FileSystemRights.AppendData |
+        FileSystemRights.WriteExtendedAttributes |
+        FileSystemRights.WriteAttributes |
         FileSystemRights.Delete |
         FileSystemRights.DeleteSubdirectoriesAndFiles |
         FileSystemRights.ChangePermissions |
-        FileSystemRights.TakeOwnership;
+        FileSystemRights.TakeOwnership |
+        (FileSystemRights)0x10000000 | // GENERIC_ALL
+        (FileSystemRights)0x40000000;  // GENERIC_WRITE
+
+    internal static bool GrantsWrite(FileSystemRights rights) => (rights & DangerousRights) != 0;
 
     private static readonly string[] RequiredComponents =
     [
         "SteamSentinel.exe",
         "SteamSentinel.Broker.exe",
-        "SteamSentinel.ArchiveWorker.exe"
+        "SteamSentinel.ArchiveWorker.exe",
+        "SteamSentinel.dll",
+        "SteamSentinel.Core.dll",
+        "SteamSentinel.Broker.dll",
+        "SteamSentinel.ArchiveWorker.dll",
+        "SteamSentinel.deps.json",
+        "SteamSentinel.runtimeconfig.json",
+        "SteamSentinel.Broker.deps.json",
+        "SteamSentinel.Broker.runtimeconfig.json",
+        "SteamSentinel.ArchiveWorker.deps.json",
+        "SteamSentinel.ArchiveWorker.runtimeconfig.json"
     ];
 
     public static InstallationSecurityStatus Evaluate(string? baseDirectory = null)
@@ -53,24 +61,34 @@ public static class InstallationSecurity
             if (Validation.ContainsReparsePoint(root))
                 return new(false, "安装路径包含重解析点，管理员处置已关闭");
 
-            string currentSid = WindowsIdentity.GetCurrent().User?.Value ?? string.Empty;
-            InstallationSecurityStatus directoryAcl = CheckAcl(new DirectoryInfo(root), currentSid);
+            InstallationSecurityStatus directoryAcl = CheckAcl(new DirectoryInfo(root));
             if (!directoryAcl.IsProtected) return directoryAcl;
 
             string sumsPath = Path.Combine(root, "SHA256SUMS.txt");
             if (!File.Exists(sumsPath) || (File.GetAttributes(sumsPath) & FileAttributes.ReparsePoint) != 0)
                 return new(false, "安装包完整性清单缺失或不安全，管理员处置已关闭");
+            InstallationSecurityStatus sumsAcl = CheckAcl(new FileInfo(sumsPath));
+            if (!sumsAcl.IsProtected) return sumsAcl;
 
             Dictionary<string, string> expected = ReadChecksums(sumsPath);
             foreach (string component in RequiredComponents)
+                if (!expected.ContainsKey(component)) return new(false, $"完整性清单缺少组件：{component}");
+
+            // Apphosts load managed assemblies and bundled runtime files. Protect the payload,
+            // not only the three EXEs, before either the broker or the UI can elevate.
+            HashSet<string> checkedDirectories = new(StringComparer.OrdinalIgnoreCase) { root };
+            foreach ((string component, string expectedHash) in expected)
             {
                 string path = Path.Combine(root, component);
-                if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                if (!File.Exists(path) || Validation.ContainsReparsePoint(path))
                     return new(false, $"受保护组件缺失或被重定向：{component}");
-                InstallationSecurityStatus fileAcl = CheckAcl(new FileInfo(path), currentSid);
+                for (DirectoryInfo? parent = Directory.GetParent(path); parent is not null && checkedDirectories.Add(parent.FullName); parent = parent.Parent)
+                {
+                    InstallationSecurityStatus parentAcl = CheckAcl(parent);
+                    if (!parentAcl.IsProtected) return parentAcl;
+                }
+                InstallationSecurityStatus fileAcl = CheckAcl(new FileInfo(path));
                 if (!fileAcl.IsProtected) return fileAcl;
-                if (!expected.TryGetValue(component, out string? expectedHash))
-                    return new(false, $"完整性清单缺少组件：{component}");
                 string actualHash = ComputeSha256Exclusive(path);
                 if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
                     return new(false, $"组件完整性校验失败：{component}");
@@ -94,7 +112,7 @@ public static class InstallationSecurity
         return roots.Where(root => !string.IsNullOrWhiteSpace(root)).Any(root => IsWithin(path, root));
     }
 
-    private static InstallationSecurityStatus CheckAcl(FileSystemInfo item, string currentSid)
+    internal static InstallationSecurityStatus CheckAcl(FileSystemInfo item)
     {
         FileSystemSecurity security = item switch
         {
@@ -105,11 +123,19 @@ public static class InstallationSecurity
             _ => throw new NotSupportedException()
         };
 
-        if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner &&
+        return CheckSecurityDescriptor(security, item.Name);
+    }
+
+    internal static InstallationSecurityStatus CheckSecurityDescriptor(FileSystemSecurity security, string name)
+    {
+        if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
             !TrustedOwners.Contains(owner.Value))
         {
-            return new(false, $"安装对象所有者不受信任：{item.Name}");
+            return new(false, $"安装对象所有者不受信任：{name}");
         }
+
+        if (new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0).DiscretionaryAcl is null)
+            return new(false, $"安装对象没有访问限制：{name}");
 
         foreach (FileSystemAccessRule rule in security.GetAccessRules(
                      includeExplicit: true,
@@ -117,31 +143,38 @@ public static class InstallationSecurity
                      targetType: typeof(SecurityIdentifier)))
         {
             if (rule.AccessControlType != AccessControlType.Allow ||
-                (rule.FileSystemRights & DangerousRights) == 0 ||
+                (rule.PropagationFlags & PropagationFlags.InheritOnly) != 0 ||
+                !GrantsWrite(rule.FileSystemRights) ||
                 rule.IdentityReference is not SecurityIdentifier identity)
             {
                 continue;
             }
 
-            if (WritableIdentities.Contains(identity.Value) ||
-                (!string.IsNullOrWhiteSpace(currentSid) && identity.Value.Equals(currentSid, StringComparison.OrdinalIgnoreCase)))
+            // Deny ACEs are deliberately not used to excuse an unsafe allow entry.
+            // Also cover custom users/groups, including a filtered administrator's direct SID.
+            if (!TrustedOwners.Contains(identity.Value))
             {
-                return new(false, $"安装对象允许普通用户写入：{item.Name}");
+                return new(false, $"安装对象允许非受信任账户写入：{name}");
             }
         }
 
         return InstallationSecurityStatus.Protected;
     }
 
-    private static Dictionary<string, string> ReadChecksums(string path)
+    internal static Dictionary<string, string> ReadChecksums(string path)
     {
         Dictionary<string, string> checksums = new(StringComparer.OrdinalIgnoreCase);
         foreach (string line in File.ReadLines(path))
         {
-            if (line.Length < 67 || !Validation.IsHexSha256(line[..64])) continue;
-            string relative = line[64..].TrimStart().TrimStart('*').Replace('/', Path.DirectorySeparatorChar);
-            if (string.IsNullOrWhiteSpace(relative) || Path.IsPathFullyQualified(relative)) continue;
-            checksums[relative] = line[..64];
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (line.Length < 67 || !Validation.IsHexSha256(line[..64]) || line[64] != ' ')
+                throw new InvalidDataException("安装包完整性清单格式无效。");
+            string relative = line[65..].TrimStart(' ', '*').Replace('/', Path.DirectorySeparatorChar);
+            if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative) || relative.Contains(':') ||
+                relative.Split(Path.DirectorySeparatorChar).Any(part => part is "" or "." or ".." ||
+                    part.EndsWith(' ') || part.EndsWith('.') || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) ||
+                !checksums.TryAdd(relative, line[..64]))
+                throw new InvalidDataException("安装包完整性清单包含重复或不安全的路径。");
         }
         return checksums;
     }

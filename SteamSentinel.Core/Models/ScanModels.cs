@@ -66,6 +66,8 @@ public sealed class Finding
     public string Target { get; init; } = string.Empty;
     public string Evidence { get; init; } = string.Empty;
     public string? Sha256 { get; init; }
+    public string? ContentPath { get; set; }
+    public string? TargetSha256 { get; set; }
     public int? ProcessId { get; init; }
     public string? RegistryHive { get; init; }
     public string? RegistryView { get; init; }
@@ -103,6 +105,7 @@ public sealed class ScanReport
     public List<string> Roots { get; init; } = [];
     public List<string> CoverageNotes { get; init; } = [];
     public List<Finding> Findings { get; init; } = [];
+    public List<ScanRootSummary> RootSummaries { get; init; } = [];
     public ScanMetrics Metrics { get; init; } = new();
 
     [JsonIgnore]
@@ -110,6 +113,8 @@ public sealed class ScanReport
         ? FindingSeverity.Information
         : Findings.Max(f => f.Severity);
 }
+
+public sealed record ScanRootSummary(string Path, ScanCoverage Coverage, int KnownThreats, int ActionableFindings, long FilesVisited);
 
 public sealed class ScanOptions
 {
@@ -144,13 +149,20 @@ public sealed record ArchivePasswordRequest(
     string Format,
     int Depth,
     string? WorkshopId,
-    string Reason);
+    string Reason,
+    ArchivePasswordReuseScope PreferredReuseScope = ArchivePasswordReuseScope.ArchiveTree,
+    ArchivePasswordPromptKind PromptKind = ArchivePasswordPromptKind.Needed);
 
 public sealed record ArchivePasswordResponse(
     string RequestId,
     bool Cancelled,
     string? Password,
-    bool ReuseForSession);
+    bool ReuseForSession,
+    ArchivePasswordReuseScope ReuseScope = ArchivePasswordReuseScope.CurrentOnly);
+
+public enum ArchivePasswordReuseScope { CurrentOnly, ArchiveTree, Session }
+
+public enum ArchivePasswordPromptKind { Needed, CachedPasswordFailed, EnteredPasswordFailed, RepeatedPassword }
 
 public interface IArchivePasswordProvider
 {
@@ -170,5 +182,5 @@ public sealed class NullPasswordProvider : IArchivePasswordProvider
 public static class ProductInfo
 {
     public const string Name = "SteamSentinel Steam 红信安全工具";
-    public const string Version = "0.1.4";
+    public const string Version = "0.1.10";
 }

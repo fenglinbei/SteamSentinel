@@ -5,7 +5,7 @@
   #error OutputDir must be supplied by the release build.
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.1.4"
+#define AppVersion "0.1.10"
 #endif
 
 #define AppName "SteamSentinel Steam 红信安全工具"
@@ -38,7 +38,13 @@ SetupLogging=yes
 CloseApplications=yes
 RestartApplications=no
 UninstallDisplayIcon={app}\SteamSentinel.exe
+SetupIconFile={#PayloadDir}\Assets\App.ico
 LicenseFile={#PayloadDir}\LICENSE
+#ifdef EnableSigning
+SignTool=fenglinbei
+SignedUninstaller=yes
+SignedUninstallerDir={#OutputDir}\signing-cache\SteamSentinel
+#endif
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

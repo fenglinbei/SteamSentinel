@@ -9,13 +9,24 @@ public partial class PasswordDialog : Window
     {
         InitializeComponent();
         Request = request;
+        ReuseScope = request.PreferredReuseScope;
+        CurrentOnlyRadio.IsChecked = ReuseScope == ArchivePasswordReuseScope.CurrentOnly;
+        ArchiveTreeRadio.IsChecked = ReuseScope == ArchivePasswordReuseScope.ArchiveTree;
+        SessionRadio.IsChecked = ReuseScope == ArchivePasswordReuseScope.Session;
         DataContext = this;
         Loaded += (_, _) => PasswordInput.Focus();
     }
 
     public ArchivePasswordRequest Request { get; }
+    public string PromptTitle => Request.PromptKind switch
+    {
+        ArchivePasswordPromptKind.CachedPasswordFailed => "已保存的密码未能解开这一层",
+        ArchivePasswordPromptKind.EnteredPasswordFailed => "刚输入的密码未能解开这一层",
+        ArchivePasswordPromptKind.RepeatedPassword => "这个密码已经尝试过",
+        _ => "这一层内容需要密码"
+    };
     public string? EnteredPassword { get; private set; }
-    public bool ReuseForSession { get; private set; }
+    public ArchivePasswordReuseScope ReuseScope { get; private set; }
 
     private void Continue_Click(object sender, RoutedEventArgs e)
     {
@@ -25,7 +36,7 @@ public partial class PasswordDialog : Window
             return;
         }
         EnteredPassword = PasswordInput.Password;
-        ReuseForSession = ReuseCheckBox.IsChecked == true;
+        ReuseScope = SelectedScope();
         PasswordInput.Clear();
         DialogResult = true;
     }
@@ -33,8 +44,11 @@ public partial class PasswordDialog : Window
     private void Skip_Click(object sender, RoutedEventArgs e)
     {
         EnteredPassword = null;
-        ReuseForSession = false;
+        ReuseScope = SelectedScope();
         PasswordInput.Clear();
         DialogResult = false;
     }
+
+    private ArchivePasswordReuseScope SelectedScope() => SessionRadio.IsChecked == true ? ArchivePasswordReuseScope.Session :
+        ArchiveTreeRadio.IsChecked == true ? ArchivePasswordReuseScope.ArchiveTree : ArchivePasswordReuseScope.CurrentOnly;
 }

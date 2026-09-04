@@ -9,7 +9,9 @@ internal sealed class RemediationClient
 {
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default)
     {
-        InstallationSecurityStatus installation = InstallationSecurity.Evaluate();
+        if (!ElevationContext.Read().CanElevateSameUser)
+            throw new UnauthorizedAccessException("当前账户需要先打开管理员窗口并重新扫描，不能把原账户的处置计划交给另一账户执行。");
+        InstallationSecurityStatus installation = await Task.Run(() => InstallationSecurity.Evaluate(), cancellationToken);
         if (!installation.IsProtected) throw new UnauthorizedAccessException(installation.Message);
 
         string brokerPath = Path.Combine(AppContext.BaseDirectory, "SteamSentinel.Broker.exe");

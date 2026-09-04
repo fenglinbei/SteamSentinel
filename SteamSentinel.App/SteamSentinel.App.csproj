@@ -5,8 +5,11 @@
     <AssemblyName>SteamSentinel</AssemblyName>
     <RootNamespace>SteamSentinel.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\App.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets\App.ico" />
+    <Resource Include="Assets\App.png" />
     <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />
     <ProjectReference Include="..\SteamSentinel.Broker\SteamSentinel.Broker.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SteamSentinel.ArchiveWorker\SteamSentinel.ArchiveWorker.csproj" ReferenceOutputAssembly="false" />

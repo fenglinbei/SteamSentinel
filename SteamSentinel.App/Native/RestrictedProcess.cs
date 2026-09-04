@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -8,16 +7,16 @@ namespace SteamSentinel.App.Native;
 
 internal sealed class RestrictedProcess : IDisposable
 {
-    private readonly Process _process;
+    private readonly SafeKernelHandle _processHandle;
     private bool _disposed;
 
     private RestrictedProcess(
-        Process process,
+        SafeKernelHandle processHandle,
         StreamWriter standardInput,
         StreamReader standardOutput,
         StreamReader standardError)
     {
-        _process = process;
+        _processHandle = processHandle;
         StandardInput = standardInput;
         StandardOutput = standardOutput;
         StandardError = standardError;
@@ -26,8 +25,22 @@ internal sealed class RestrictedProcess : IDisposable
     public StreamWriter StandardInput { get; }
     public StreamReader StandardOutput { get; }
     public StreamReader StandardError { get; }
-    public bool HasExited => _process.HasExited;
-    public int ExitCode => _process.ExitCode;
+    public bool HasExited => WaitForSingleObject(_processHandle, 0) switch
+    {
+        0 => true,
+        258 => false,
+        _ => throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取扫描组件的进程状态。")
+    };
+    public int ExitCode
+    {
+        get
+        {
+            if (!HasExited) throw new InvalidOperationException("扫描组件尚未退出。");
+            if (!GetExitCodeProcess(_processHandle, out uint code))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取扫描组件的退出码。");
+            return unchecked((int)code);
+        }
+    }
 
     public static RestrictedProcess Start(string executable, string workingDirectory, JobObject job)
     {
@@ -40,15 +53,17 @@ internal sealed class RestrictedProcess : IDisposable
             Length = Marshal.SizeOf<SecurityAttributes>(),
             InheritHandle = true
         };
-        CreatePipePair(inheritable, childReads: true, out SafeFileHandle childStdin, out SafeFileHandle parentStdin);
-        CreatePipePair(inheritable, childReads: false, out SafeFileHandle childStdout, out SafeFileHandle parentStdout);
-        CreatePipePair(inheritable, childReads: false, out SafeFileHandle childStderr, out SafeFileHandle parentStderr);
+        SafeFileHandle? childStdin = null, parentStdin = null, childStdout = null,
+            parentStdout = null, childStderr = null, parentStderr = null;
 
         SafeKernelHandle? processHandle = null;
         SafeKernelHandle? threadHandle = null;
         IntPtr environment = IntPtr.Zero;
         try
         {
+            CreatePipePair(inheritable, childReads: true, out childStdin, out parentStdin);
+            CreatePipePair(inheritable, childReads: false, out childStdout, out parentStdout);
+            CreatePipePair(inheritable, childReads: false, out childStderr, out parentStderr);
             using SafeAccessTokenHandle restrictedToken = CreateLowIntegrityToken();
             environment = BuildEnvironmentBlock(fullWorkingDirectory);
             StartupInfo startup = new()
@@ -87,12 +102,9 @@ internal sealed class RestrictedProcess : IDisposable
                 throw new Win32Exception(error, "无法恢复受限扫描进程。");
             }
 
-            Process process = Process.GetProcessById((int)information.ProcessId);
             childStdin.Dispose();
             childStdout.Dispose();
             childStderr.Dispose();
-            processHandle.Dispose();
-            processHandle = null;
             threadHandle.Dispose();
             threadHandle = null;
 
@@ -102,16 +114,20 @@ internal sealed class RestrictedProcess : IDisposable
             StreamWriter input = new(stdinStream, new UTF8Encoding(false)) { AutoFlush = false };
             StreamReader output = new(stdoutStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             StreamReader errorReader = new(stderrStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            return new RestrictedProcess(process, input, output, errorReader);
+            RestrictedProcess result = new(processHandle, input, output, errorReader);
+            processHandle = null; // Ownership transfers only after all streams are ready.
+            return result;
         }
         catch
         {
-            childStdin.Dispose();
-            childStdout.Dispose();
-            childStderr.Dispose();
-            parentStdin.Dispose();
-            parentStdout.Dispose();
-            parentStderr.Dispose();
+            // A failed Job assignment or stream setup must not leave a suspended orphan.
+            if (processHandle is not null && !processHandle.IsInvalid) TerminateProcess(processHandle, 1);
+            childStdin?.Dispose();
+            childStdout?.Dispose();
+            childStderr?.Dispose();
+            parentStdin?.Dispose();
+            parentStdout?.Dispose();
+            parentStderr?.Dispose();
             processHandle?.Dispose();
             threadHandle?.Dispose();
             throw;
@@ -122,22 +138,27 @@ internal sealed class RestrictedProcess : IDisposable
         }
     }
 
-    public Task WaitForExitAsync(CancellationToken cancellationToken) =>
-        _process.WaitForExitAsync(cancellationToken);
+    public async Task WaitForExitAsync(CancellationToken cancellationToken)
+    {
+        // Query the original handle, never reopen a possibly exited/reused PID.
+        while (!HasExited) await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+    }
 
     public void Kill()
     {
-        if (!_process.HasExited) _process.Kill(entireProcessTree: true);
+        if (!HasExited && !TerminateProcess(_processHandle, 1) && !HasExited)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法结束扫描组件。");
     }
 
     public void Dispose()
     {
         if (_disposed) return;
+        _disposed = true;
+        try { Kill(); } catch { }
         StandardInput.Dispose();
         StandardOutput.Dispose();
         StandardError.Dispose();
-        _process.Dispose();
-        _disposed = true;
+        _processHandle.Dispose();
     }
 
     private static void CreatePipePair(
@@ -159,37 +180,40 @@ internal sealed class RestrictedProcess : IDisposable
         }
     }
 
-    private static SafeAccessTokenHandle CreateLowIntegrityToken()
+    internal static SafeAccessTokenHandle CreateLowIntegrityToken()
     {
         uint access = TokenAssignPrimary | TokenDuplicate | TokenQuery | TokenAdjustDefault | TokenAdjustSessionId;
         if (!OpenProcessToken(GetCurrentProcess(), access, out SafeAccessTokenHandle current))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "无法打开当前进程令牌。");
-        using (current)
-        {
-            if (!CreateRestrictedToken(
-                    current,
-                    DisableMaxPrivilege | LuaToken,
-                    0,
-                    IntPtr.Zero,
-                    0,
-                    IntPtr.Zero,
-                    0,
-                    IntPtr.Zero,
-                    out SafeAccessTokenHandle restricted))
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建受限扫描令牌。");
-            }
+        using (current) return CreateLowIntegrityToken(current);
+    }
 
-            try
-            {
-                SetLowIntegrity(restricted);
-                return restricted;
-            }
-            catch
-            {
-                restricted.Dispose();
-                throw;
-            }
+    internal static SafeAccessTokenHandle CreateLowIntegrityToken(SafeAccessTokenHandle current)
+    {
+        if (!CreateRestrictedToken(
+                current,
+                DisableMaxPrivilege | LuaToken,
+                0,
+                IntPtr.Zero,
+                0,
+                IntPtr.Zero,
+                0,
+                IntPtr.Zero,
+                out SafeAccessTokenHandle restricted))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建受限扫描令牌。");
+        }
+
+        try
+        {
+            SetLowIntegrity(restricted);
+            RestrictedTokenSecurity.ConfigureDefaultObjects(restricted);
+            return restricted;
+        }
+        catch
+        {
+            restricted.Dispose();
+            throw;
         }
     }
 
@@ -326,6 +350,13 @@ internal sealed class RestrictedProcess : IDisposable
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(SafeKernelHandle handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetExitCodeProcess(SafeKernelHandle process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

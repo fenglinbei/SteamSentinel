@@ -15,14 +15,8 @@ public sealed class TemporaryDirectory : IDisposable
 
     public string CreateFilePath(string? originalName = null)
     {
-        string extension = string.Empty;
-        if (!string.IsNullOrWhiteSpace(originalName))
-        {
-            extension = System.IO.Path.GetExtension(originalName);
-            if (extension.Length > 16 || extension.Any(c => !char.IsLetterOrDigit(c) && c != '.')) extension = string.Empty;
-        }
-
-        return System.IO.Path.Combine(Path, $"{Guid.NewGuid():N}.scan{extension}");
+        // Never retain an executable extension. Detection uses the virtual member name.
+        return System.IO.Path.Combine(Path, $"{Guid.NewGuid():N}.scan");
     }
 
     public void Dispose()
@@ -41,7 +35,7 @@ public sealed class TemporaryDirectory : IDisposable
         }
         catch
         {
-            // A locked scan artifact is harmless and can be cleaned on the next launch.
+            // A leftover may contain malicious bytes, never launch it or call it harmless.
         }
 
         _disposed = true;

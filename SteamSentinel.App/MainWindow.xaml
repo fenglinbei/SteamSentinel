@@ -2,34 +2,42 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SteamSentinel Steam 红信安全工具"
+        Icon="/SteamSentinel;component/Assets/App.ico"
         Width="1180" Height="790" MinWidth="980" MinHeight="680"
         WindowStartupLocation="CenterScreen"
         Background="#F2F4F7">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="82" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="32" />
         </Grid.RowDefinitions>
 
-        <Border Background="#101828" Padding="24,14">
+        <Border Background="#101828" Padding="24,14" MinHeight="112">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="45*" />
+                    <ColumnDefinition Width="55*" />
                 </Grid.ColumnDefinitions>
-                <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Image Source="/SteamSentinel;component/Assets/App.png" Width="48" Height="48" Margin="0,0,12,0" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="SteamSentinel 图标" />
+                    <StackPanel Grid.Column="1">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Foreground="White" FontSize="25" FontWeight="SemiBold" Text="SteamSentinel" />
                         <Border Margin="12,2,0,0" Background="#B42318" CornerRadius="10" Padding="9,3" VerticalAlignment="Center">
-                            <TextBlock Foreground="White" FontSize="11" FontWeight="SemiBold" Text="0.1.4 GROUP PREVIEW" />
+                            <TextBlock Foreground="White" FontSize="11" FontWeight="SemiBold" Text="0.1.10" />
                         </Border>
                     </StackPanel>
-                    <TextBlock Margin="0,5,0,0" Foreground="#D0D5DD" Text="扫描、隔离并恢复 Steam / Wallpaper Engine 假红信威胁" />
-                </StackPanel>
+                    <TextBlock Margin="0,5,0,0" Foreground="#D0D5DD" TextWrapping="Wrap" Text="扫描、隔离并恢复 Steam / Wallpaper Engine 假红信威胁" />
+                    </StackPanel>
+                </Grid>
                 <StackPanel Grid.Column="1" HorizontalAlignment="Right">
                     <TextBlock x:Name="HeaderStatusText" Foreground="White" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Right" Text="尚未扫描" />
-                    <TextBlock x:Name="HeaderDetailText" Margin="0,4,0,0" Foreground="#D0D5DD" HorizontalAlignment="Right" Text="规则载入中" />
+                    <TextBlock x:Name="HeaderDetailText" Margin="18,4,0,0" Foreground="#D0D5DD" HorizontalAlignment="Right" TextWrapping="Wrap" TextAlignment="Right" Text="规则载入中" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -40,8 +48,8 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="180" />
+                        <RowDefinition Height="2*" />
+                        <RowDefinition Height="*" MaxHeight="180" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
@@ -57,6 +65,7 @@
                                 <Button x:Name="FullScanButton" Content="完整工坊扫描" Click="FullScan_Click" />
                                 <Button x:Name="FileScanButton" Content="扫描文件" Click="FileScan_Click" />
                                 <Button x:Name="FolderScanButton" Content="扫描目录" Click="FolderScan_Click" />
+                                <Button x:Name="RetryPasswordsButton" Content="重试未解密内容" IsEnabled="False" Click="RetryPasswords_Click" />
                                 <Button x:Name="CancelScanButton" Content="取消" IsEnabled="False" Click="CancelScan_Click" />
                             </WrapPanel>
                             <WrapPanel Grid.Row="1" Margin="0,12,0,0">
@@ -64,8 +73,20 @@
                                 <CheckBox x:Name="AmsiCheckBox" IsChecked="True" Margin="0,0,22,0" Content="使用本机反恶意软件接口（AMSI）辅助扫描" />
                                 <CheckBox x:Name="DomainBlockCheckBox" IsChecked="True" Content="处置时阻断已知恶意域名" />
                             </WrapPanel>
-                            <TextBlock x:Name="InstallationSecurityText" Grid.Row="2" Margin="0,10,0,0"
-                                       FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <Grid Grid.Row="2" Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,12,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="InstallationSecurityText" FontWeight="SemiBold" TextWrapping="Wrap" Text="正在检查安装环境…" />
+                                    <TextBlock x:Name="ElevationHintText" Margin="0,4,0,0" Foreground="#475467" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="ElevateButton" Content="打开管理员窗口" IsEnabled="False" Click="Elevate_Click" />
+                                    <Button x:Name="RefreshInstallationButton" Content="重新检查" IsEnabled="False" Click="RefreshInstallation_Click" />
+                                </StackPanel>
+                            </Grid>
                         </Grid>
                     </Border>
 
@@ -103,26 +124,28 @@
                     </DataGrid>
 
                     <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0,12,0,0">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="110" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <TextBlock FontWeight="SemiBold" Text="意味着什么" />
-                            <TextBlock x:Name="DetailDescriptionText" Grid.Column="1" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="1" Margin="0,7,0,0" FontWeight="SemiBold" Text="证据" />
-                            <TextBlock x:Name="DetailEvidenceText" Grid.Row="1" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="2" Margin="0,7,0,0" FontWeight="SemiBold" Text="SHA-256" />
-                            <TextBlock x:Name="DetailHashText" Grid.Row="2" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
-                            <TextBlock Grid.Row="3" Margin="0,7,0,0" FontWeight="SemiBold" Text="工坊 ID" />
-                            <TextBlock x:Name="DetailWorkshopText" Grid.Row="3" Grid.Column="1" Margin="0,7,0,0" />
-                        </Grid>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="意味着什么" />
+                                <TextBlock x:Name="DetailDescriptionText" Grid.Column="1" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="1" Margin="0,7,0,0" FontWeight="SemiBold" Text="证据" />
+                                <TextBlock x:Name="DetailEvidenceText" Grid.Row="1" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="2" Margin="0,7,0,0" FontWeight="SemiBold" Text="SHA-256" />
+                                <TextBlock x:Name="DetailHashText" Grid.Row="2" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="3" Margin="0,7,0,0" FontWeight="SemiBold" Text="工坊 ID" />
+                                <TextBlock x:Name="DetailWorkshopText" Grid.Row="3" Grid.Column="1" Margin="0,7,0,0" />
+                            </Grid>
+                        </ScrollViewer>
                     </Border>
 
                     <Grid Grid.Row="4" Margin="0,12,0,0">
@@ -173,18 +196,16 @@
                         <TextBlock Margin="0,14,0,0" TextWrapping="Wrap" LineHeight="22"
                                    Text="本程序不会运行被扫描的媒体、脚本或可执行文件。压缩内容会在 Low Integrity 受限令牌的独立工作进程中读取，进程先加入单进程 Job Object，再接收扫描路径，并在主程序退出时终止。普通扫描不会请求管理员权限。" />
                         <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="只有使用 Program Files 受保护安装，且组件完整性校验通过时，动作预览才会触发 UAC。管理员处置组件会再次核对请求者、计划 SHA-256、精确路径、文件哈希或目录指纹，不会执行远程脚本或任意命令。" />
+                                   Text="只有安装环境与组件完整性检查通过后，才能请求管理员授权。处置时可自动请求 UAC，也可点击“打开管理员窗口”后重新扫描，原窗口与报告会保留。标准账户需提供管理员凭据，工具不会收集密码。管理员处置组件仍会核对请求者、计划 SHA-256、精确路径、文件哈希或目录指纹。" />
                         <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22"
                                    Text="本程序聚焦 Steam、Wallpaper Engine 与已观察到的假红信链路，可完成一次快速扫描、辨别、隔离和 Steam 恢复。“完整扫描，未发现已知威胁”仍不代表电脑绝对安全。加密内容未解开、格式不受支持、缺少分卷或触发资源限制时，报告会标记为“未完整扫描”。" />
                         <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22" FontWeight="SemiBold" Foreground="#B42318"
                                    Text="启发式发现会继续保留处置能力，但默认不预选。即使处置显示成功，也只代表本次计划中的目标已处理，不代表整台电脑已经无毒。条件允许时，仍建议再用保持更新的专业杀毒软件进行全盘复核。" />
-                        <Border Margin="0,18,0,0" Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="发布前仍需完成" />
-                                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
-                                           Text="代码签名证书、规则包离线签名与更新器、AppContainer 级解析沙箱、更多加密/分卷格式语料、Windows 10/11 多版本兼容测试、第三方安全审计。当前版本适合群内受控测试，不建议未经复核直接公开分发。" />
-                            </StackPanel>
-                        </Border>
+                        <TextBlock Margin="0,22,0,0" FontSize="18" FontWeight="SemiBold" Text="开源与许可" />
+                        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="22"
+                                   Text="本工具由 fenglinbei 开源，采用 Apache License 2.0。你可以查看源码，并按许可证约定使用、修改和分享。完整条款见安装目录中的 LICENSE，版权及第三方声明见 NOTICE 和 THIRD-PARTY-NOTICES.md。" />
+                        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Text="开源页面：https://github.com/fenglinbei/SteamSentinel" />
+                        <TextBlock Margin="0,8,0,0" Foreground="#667085" Text="Copyright © 2026 fenglinbei" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

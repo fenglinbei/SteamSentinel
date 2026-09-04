@@ -2,17 +2,21 @@
 param(
     [string]$OutputRoot,
     [switch]$ReplaceExisting,
-    [switch]$SkipInstaller
+    [switch]$SkipInstaller,
+    [string]$SigningThumbprint,
+    [string]$SignToolPath
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'code-signing.ps1')
+$signingProfile = Get-ReleaseSigningProfile $SigningThumbprint $SignToolPath
 $solutionRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $workspaceRoot = (Resolve-Path -LiteralPath (Join-Path $solutionRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $workspaceRoot 'outputs'
 }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
-$version = '0.1.4'
+$version = '0.1.10'
 $packageName = "SteamSentinel-$version-win-x64"
 $packageDir = Join-Path $OutputRoot $packageName
 $archivePath = Join-Path $OutputRoot ($packageName + '.zip')
@@ -64,6 +68,10 @@ Invoke-DotNet publish (Join-Path $solutionRoot 'SteamSentinel.ArchiveWorker\Stea
 Invoke-DotNet publish (Join-Path $solutionRoot 'SteamSentinel.Broker\SteamSentinel.Broker.csproj') @publishArgs '-o' $runtimeStage
 
 Copy-Item -Path (Join-Path $runtimeStage '*') -Destination $packageDir -Recurse
+Sign-ReleaseFiles $signingProfile $packageDir @('SteamSentinel.exe', 'SteamSentinel.dll', 'SteamSentinel.Core.dll',
+    'SteamSentinel.ArchiveWorker.exe', 'SteamSentinel.ArchiveWorker.dll', 'SteamSentinel.Broker.exe', 'SteamSentinel.Broker.dll')
+$signatureStatus = Write-ReleaseSigningInfo $signingProfile $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'SteamSentinel.App\Assets') -Destination (Join-Path $packageDir 'Assets') -Recurse
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'README.md') -Destination (Join-Path $packageDir 'README.md')
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'CHANGELOG.md') -Destination (Join-Path $packageDir 'CHANGELOG.md')
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'LICENSE') -Destination $packageDir
@@ -74,6 +82,13 @@ Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\THREAT-MODEL.md') -Destina
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\TEST-EVIDENCE.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\RELEASE-CHECKLIST.md') -Destination $packageDir
 Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\GROUP-TEST-GUIDE.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\SAMPLE-COVERAGE-0.1.5.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\PASSWORD-REGRESSION-0.1.6.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\INSTALLATION-REGRESSION-0.1.7.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\WORKER-STARTUP-0.1.8.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\SIGNING.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\ROADMAP.md') -Destination $packageDir
+Copy-Item -LiteralPath (Join-Path $solutionRoot 'docs\ICONS.md') -Destination $packageDir
 
 $dotnetRoot = Split-Path -Parent (Get-Command dotnet).Source
 $sdkVersion = (& dotnet --version).Trim()
@@ -84,10 +99,10 @@ Copy-Item -LiteralPath (Join-Path $dotnetRoot "sdk\$sdkVersion\Sdks\Microsoft.NE
 $versionLines = @(
     'Product=SteamSentinel',
     "Version=$version",
-    'Rules=2026.09.03.3',
+    'Rules=2026.09.04.1',
     'Runtime=win-x64 self-contained .NET 10',
     ('BuiltAtUtc=' + [DateTimeOffset]::UtcNow.ToString('O')),
-    'SignatureStatus=UNSIGNED GROUP PREVIEW BUILD'
+    "SignatureStatus=$signatureStatus"
 )
 [IO.File]::WriteAllLines((Join-Path $packageDir 'VERSION.txt'), $versionLines, [Text.UTF8Encoding]::new($false))
 
@@ -103,8 +118,8 @@ $hashLines = Get-ChildItem -LiteralPath $packageDir -Recurse -File |
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($packageDir, $archivePath, [IO.Compression.CompressionLevel]::Optimal, $true)
 
-Get-ChildItem -LiteralPath $solutionRoot -Recurse -File |
-    Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
+Get-ChildItem -LiteralPath $solutionRoot -Recurse -Force -File |
+    Where-Object { $_.FullName -notmatch '[\\/](bin|obj|\.git)[\\/]' -and $_.Extension -notin @('.pfx', '.p12', '.key') } |
     ForEach-Object {
         $relative = $_.FullName.Substring($solutionRoot.Length).TrimStart('\', '/')
         $destination = Join-Path $sourceStage $relative
@@ -126,7 +141,9 @@ if (-not $SkipInstaller) {
         throw 'Inno Setup 6 compiler was not found. Install it or use -SkipInstaller for development-only builds.'
     }
     $installerScript = Join-Path $solutionRoot 'installer\SteamSentinel.iss'
-    & $iscc "/DPayloadDir=$packageDir" "/DOutputDir=$OutputRoot" "/DAppVersion=$version" $installerScript
+    $signArgs = @(Get-InnoSigningArguments $signingProfile)
+    if ($null -ne $signingProfile) { New-Item -ItemType Directory -Force -Path (Join-Path $OutputRoot 'signing-cache\SteamSentinel') | Out-Null }
+    & $iscc "/DPayloadDir=$packageDir" "/DOutputDir=$OutputRoot" "/DAppVersion=$version" @signArgs $installerScript
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $setupPath)) {
         throw "Installer compilation failed with exit code $LASTEXITCODE"
     }

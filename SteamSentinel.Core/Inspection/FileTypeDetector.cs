@@ -8,6 +8,7 @@ public enum DetectedFileType
     Unknown,
     Empty,
     PortableExecutable,
+    CompoundDocument,
     Zip,
     Rar,
     SevenZip,
@@ -40,7 +41,7 @@ public sealed record FileTypeResult(
 
 public static class FileTypeDetector
 {
-    public static async Task<FileTypeResult> DetectAsync(string path, CancellationToken cancellationToken = default)
+    public static async Task<FileTypeResult> DetectAsync(string path, CancellationToken cancellationToken = default, string? displayPath = null)
     {
         byte[] head = new byte[64 * 1024];
         int read;
@@ -55,7 +56,7 @@ public static class FileTypeDetector
             read = await stream.ReadAsync(head, cancellationToken);
         }
 
-        return Detect(head.AsSpan(0, read), Path.GetExtension(path));
+        return Detect(head.AsSpan(0, read), Path.GetExtension(displayPath ?? path));
     }
 
     public static FileTypeResult Detect(ReadOnlySpan<byte> head, string? extension)
@@ -80,6 +81,7 @@ public static class FileTypeDetector
         }
 
         if (StartsWith(data, "MZ"u8)) return DetectedFileType.PortableExecutable;
+        if (StartsWith(data, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])) return DetectedFileType.CompoundDocument;
         if (StartsWith(data, [0x50, 0x4B, 0x03, 0x04]) ||
             StartsWith(data, [0x50, 0x4B, 0x05, 0x06]) ||
             StartsWith(data, [0x50, 0x4B, 0x07, 0x08])) return DetectedFileType.Zip;
@@ -130,7 +132,8 @@ public static class FileTypeDetector
         if (string.IsNullOrEmpty(extension)) return false;
         return type switch
         {
-            DetectedFileType.PortableExecutable => extension is not (".exe" or ".dll" or ".scr" or ".com" or ".cpl" or ".sys" or ".msi"),
+            DetectedFileType.PortableExecutable => extension is not (".exe" or ".dll" or ".scr" or ".com" or ".cpl" or ".sys" or ".pyd" or ".safe_disabled"),
+            DetectedFileType.CompoundDocument => extension is not (".msi" or ".msp" or ".doc" or ".xls" or ".ppt" or ".msg"),
             DetectedFileType.Zip => extension is not (".zip" or ".zipx" or ".jar" or ".docx" or ".xlsx" or ".pptx" or ".nupkg"),
             DetectedFileType.Rar => extension != ".rar",
             DetectedFileType.SevenZip => extension != ".7z",
@@ -144,6 +147,7 @@ public static class FileTypeDetector
     private static string? ExpectedExtension(DetectedFileType type) => type switch
     {
         DetectedFileType.PortableExecutable => ".exe/.dll",
+        DetectedFileType.CompoundDocument => ".msi/.msp/复合文档",
         DetectedFileType.Zip => ".zip",
         DetectedFileType.Rar => ".rar",
         DetectedFileType.SevenZip => ".7z",
@@ -160,6 +164,7 @@ public static class FileTypeDetector
     private static string Label(DetectedFileType type) => type switch
     {
         DetectedFileType.PortableExecutable => "Windows PE 可执行文件",
+        DetectedFileType.CompoundDocument => "OLE 结构化安装包或复合文档",
         DetectedFileType.Zip => "ZIP 压缩包",
         DetectedFileType.Rar => "RAR 压缩包",
         DetectedFileType.SevenZip => "7z 压缩包",

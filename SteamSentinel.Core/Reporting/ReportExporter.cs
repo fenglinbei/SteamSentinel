@@ -34,6 +34,17 @@ public static class ReportExporter
         text.AppendLine($"- 压缩包条目：{report.Metrics.ArchiveEntriesVisited}");
         text.AppendLine();
 
+        if (report.RootSummaries.Count > 0)
+        {
+            text.AppendLine("## 各扫描路径的结果");
+            text.AppendLine();
+            text.AppendLine("| 路径 | 已知威胁数 | 可处置发现数 | 覆盖状态 |");
+            text.AppendLine("|---|---:|---:|---|");
+            foreach (ScanRootSummary root in report.RootSummaries)
+                text.AppendLine($"| {Escape(root.Path)} | {root.KnownThreats} | {root.ActionableFindings} | {CoverageLabel(root.Coverage)} |");
+            text.AppendLine();
+        }
+
         if (report.CoverageNotes.Count > 0)
         {
             text.AppendLine("## 覆盖限制");
@@ -62,8 +73,10 @@ public static class ReportExporter
             text.AppendLine($"- 说明：{Escape(finding.Description)}");
             text.AppendLine($"- 目标：`{Escape(finding.Target)}`");
             text.AppendLine($"- SHA-256：`{Escape(finding.Sha256 ?? "未计算/不适用")}`");
+            text.AppendLine($"- 命中内容位置：`{Escape(finding.ContentPath ?? finding.Target)}`");
+            text.AppendLine($"- 隔离目标 SHA-256：`{Escape(finding.TargetSha256 ?? "未计算/不适用")}`");
             text.AppendLine($"- 证据：{Escape(finding.Evidence)}");
-            text.AppendLine($"- 自动处置资格：{(finding.CanRemediate ? "有（仍需用户确认预览）" : "无，仅复核")}");
+            text.AppendLine($"- 处置资格：{(finding.CanRemediate ? "可选中处置，仍需确认预览" : "仅复核")}");
             text.AppendLine();
         }
 

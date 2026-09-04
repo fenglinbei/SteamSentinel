@@ -21,7 +21,10 @@ internal sealed class ArchiveWorkerClient
         CancellationToken cancellationToken)
     {
         string workerPath = _workerPathOverride ?? Path.Combine(AppContext.BaseDirectory, "SteamSentinel.ArchiveWorker.exe");
-        if (!File.Exists(workerPath)) throw new FileNotFoundException("缺少隔离内容扫描组件。", workerPath);
+        if (!File.Exists(workerPath)) throw new WorkerFailureException(WorkerStage.Preflight, null, "缺少隔离内容扫描组件。", new FileNotFoundException(null, workerPath));
+        string workerAssembly = Path.ChangeExtension(workerPath, ".dll");
+        if (!File.Exists(workerAssembly))
+            throw new WorkerFailureException(WorkerStage.Preflight, null, "缺少扫描组件 DLL，不能开始内容检查。", new FileNotFoundException(null, workerAssembly));
         string workerRoot = Path.GetFullPath(AppPaths.WorkerTemporaryRoot);
         Directory.CreateDirectory(workerRoot);
         if (Validation.ContainsReparsePoint(workerRoot))
@@ -29,14 +32,48 @@ internal sealed class ArchiveWorkerClient
         string workingDirectory = Path.Combine(workerRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workingDirectory);
 
-        using JobObject job = new();
-        using RestrictedProcess worker = RestrictedProcess.Start(workerPath, workingDirectory, job);
+        try
+        {
+            using JobObject job = new();
+            using RestrictedProcess worker = RestrictedProcess.Start(workerPath, workingDirectory, job);
+            return await RunProtocolAsync(worker, options, passwordCallback, progress, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (WorkerFailureException) { throw; }
+        catch (Exception ex)
+        {
+            throw new WorkerFailureException(WorkerStage.RestrictedStart, null, ex.Message, ex);
+        }
+        finally
+        {
+            // Process/Job handles must be closed before removing the child's working directory.
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    if (Directory.Exists(workingDirectory) && !Validation.ContainsReparsePoint(workingDirectory))
+                        Directory.Delete(workingDirectory, recursive: true);
+                    break;
+                }
+                catch (IOException) { await Task.Delay(50 * (attempt + 1)).ConfigureAwait(false); }
+                catch (UnauthorizedAccessException) { break; }
+            }
+        }
+    }
 
+    private static async Task<ScanReport> RunProtocolAsync(
+        RestrictedProcess worker, ScanOptions options,
+        Func<ArchivePasswordRequest, CancellationToken, Task<ArchivePasswordResponse>> passwordCallback,
+        IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+    {
         using CancellationTokenRegistration registration = cancellationToken.Register(() =>
         {
             try { worker.Kill(); } catch { }
         });
-        Task<string> errorTask = worker.StandardError.ReadToEndAsync(cancellationToken);
+        using CancellationTokenSource errorCancellation = new();
+        BoundedWorkerError errors = new();
+        Task errorTask = errors.DrainAsync(worker.StandardError, errorCancellation.Token);
+        WorkerStage stage = WorkerStage.Handshake;
 
         try
         {
@@ -54,12 +91,15 @@ internal sealed class ArchiveWorkerClient
             WorkerMessage? ready = string.IsNullOrWhiteSpace(readyLine)
                 ? null
                 : JsonSerializer.Deserialize<WorkerMessage>(readyLine, JsonFile.Options);
+            if (ready is null)
+                throw new InvalidOperationException("扫描组件在安全握手前关闭了输出通道，未发送扫描路径。");
             if (ready?.Type != WorkerMessageTypes.Ready ||
                 ready.Containment is not (nameof(ProcessIntegrityLevel.Low) or nameof(ProcessIntegrityLevel.Untrusted)))
             {
                 throw new UnauthorizedAccessException("内容扫描工作进程未运行在 Low Integrity 隔离级别，已拒绝发送扫描路径。");
             }
 
+            stage = WorkerStage.Scanning;
             await WriteAsync(worker, new WorkerMessage { Type = WorkerMessageTypes.Start, Options = options }, cancellationToken);
             ScanReport? report = null;
             string? failure = null;
@@ -96,15 +136,33 @@ internal sealed class ArchiveWorkerClient
                 if (report is not null || failure is not null) break;
             }
 
-            await worker.WaitForExitAsync(cancellationToken);
-            string error = await errorTask;
-            if (report is null)
+            stage = WorkerStage.Exit;
+            using CancellationTokenSource exitTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            exitTimeout.CancelAfter(TimeSpan.FromSeconds(5));
+            await worker.WaitForExitAsync(exitTimeout.Token);
+            await errorTask.WaitAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            if (report is null || worker.ExitCode != 0)
             {
-                throw new InvalidOperationException(failure ?? (string.IsNullOrWhiteSpace(error)
-                    ? $"内容扫描工作进程异常退出：{worker.ExitCode}"
-                    : error.Trim()));
+                throw new InvalidOperationException(failure ?? "扫描组件没有正常返回完整结果。");
             }
             return report;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            int? exitCode = null;
+            try
+            {
+                // EOF can precede the process signal briefly. Do not mistake our later Kill for its exit code.
+                using CancellationTokenSource settle = new(TimeSpan.FromMilliseconds(350));
+                await worker.WaitForExitAsync(settle.Token).ConfigureAwait(false);
+                exitCode = worker.ExitCode;
+                try { await errorTask.WaitAsync(TimeSpan.FromMilliseconds(200)).ConfigureAwait(false); } catch { }
+            }
+            catch { }
+            string detail = ex is OperationCanceledException ? "扫描组件没有在限定时间内正常退出。" : ex.Message;
+            if (!string.IsNullOrWhiteSpace(errors.Text)) detail += "\n组件错误输出：" + errors.Text;
+            throw new WorkerFailureException(stage, exitCode, detail, ex);
         }
         finally
         {
@@ -118,12 +176,31 @@ internal sealed class ArchiveWorkerClient
                 }
             }
             catch { }
-            try
+            errorCancellation.Cancel();
+            try { await errorTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); } catch { }
+        }
+    }
+
+    internal sealed class BoundedWorkerError
+    {
+        private readonly StringBuilder _text = new();
+        private readonly object _sync = new();
+        public string Text { get { lock (_sync) return _text.ToString(); } }
+
+        internal async Task DrainAsync(TextReader reader, CancellationToken cancellationToken)
+        {
+            char[] buffer = new char[1024];
+            while (true)
             {
-                if (Directory.Exists(workingDirectory) && !Validation.ContainsReparsePoint(workingDirectory))
-                    Directory.Delete(workingDirectory, recursive: true);
+                int count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+                if (count == 0) return;
+                lock (_sync)
+                {
+                    int keep = Math.Min(count, 4096 - _text.Length);
+                    if (keep > 0) _text.Append(buffer, 0, keep);
+                }
+                // Continue draining after the cap so a noisy worker cannot block on a full pipe.
             }
-            catch { }
         }
     }
 
