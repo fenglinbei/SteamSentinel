@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -67,12 +68,46 @@ internal static partial class Program
         string fixtureDir = Path.Combine(directory, "fixtures"); Directory.CreateDirectory(fixtureDir);
         foreach (string file in Directory.EnumerateFiles(AppContext.BaseDirectory))
             File.Copy(file, Path.Combine(fixtureDir, Path.GetFileName(file)), true);
+        Dictionary<string, string> fixturePaths = new(StringComparer.Ordinal);
         string Fixture(string mode)
         {
+            if (fixturePaths.TryGetValue(mode, out string? existing)) return existing;
             string path = Path.Combine(fixtureDir, "SteamSentinelFixture-" + mode + ".exe");
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.exe"), path, true);
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.dll"), Path.ChangeExtension(path, ".dll"), true);
+            // Reuse immutable fixture images; process exit can precede release of their image mappings.
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.exe"), path);
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.dll"), Path.ChangeExtension(path, ".dll"));
+            fixturePaths.Add(mode, path);
             return path;
+        }
+        static async Task<bool> FixtureExitedAsync(string path)
+        {
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(3));
+            Process[] processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(path));
+            try
+            {
+                foreach (Process process in processes)
+                {
+                    try
+                    {
+                        if (process.HasExited) continue;
+                        string? imagePath = process.MainModule?.FileName;
+                        if (imagePath is null)
+                        {
+                            if (process.HasExited) continue;
+                            return false;
+                        }
+                        if (!string.Equals(imagePath, path, StringComparison.OrdinalIgnoreCase)) continue;
+                        await process.WaitForExitAsync(timeout.Token);
+                    }
+                    catch (OperationCanceledException) { return false; }
+                    catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+                    {
+                        if (!process.HasExited) return false;
+                    }
+                }
+                return true;
+            }
+            finally { foreach (Process process in processes) process.Dispose(); }
         }
         ScanOptions options = new() { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false };
         static Task<ArchivePasswordResponse> NoPassword(ArchivePasswordRequest request, CancellationToken _) => Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false));
@@ -104,9 +139,11 @@ internal static partial class Program
         using (CancellationTokenSource cancel = new(TimeSpan.FromMilliseconds(250)))
         {
             bool cancelled = false;
-            try { await new ArchiveWorkerClient(Fixture("hang")).RunAsync(options, NoPassword, null, cancel.Token); }
+            string hangingFixture = Fixture("hang");
+            try { await new ArchiveWorkerClient(hangingFixture).RunAsync(options, NoPassword, null, cancel.Token); }
             catch (OperationCanceledException) { cancelled = true; }
-            Check("握手前取消仍返回取消且不等待完整超时", cancelled);
+            bool exited = await FixtureExitedAsync(hangingFixture);
+            Check("握手前取消仍返回取消且不等待完整超时", cancelled && exited);
         }
         WorkerFailureException? timedOut = null;
         using (CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15)))
