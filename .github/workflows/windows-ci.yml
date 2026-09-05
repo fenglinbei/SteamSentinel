@@ -47,7 +47,7 @@ jobs:
             throw 'Application manifest version drifted from Directory.Build.props.'
           }
           $installer = Get-Content -LiteralPath 'installer/SteamSentinel.iss' -Raw
-          if ($installer -notmatch ('(?m)^#define AppVersion "' + [regex]::Escape($version) + '"$')) {
+          if ($installer -notmatch ('(?m)^#define AppVersion "' + [regex]::Escape($version) + '"\r?$')) {
             throw 'Installer default version drifted from Directory.Build.props.'
           }
 
