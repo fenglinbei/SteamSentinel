@@ -73,15 +73,20 @@ public static class FileOccupancy
                         return new()
                         {
                             Status = processes.Count > 0 ? FileOccupancyStatus.LocksReported : partial ? FileOccupancyStatus.Unknown : FileOccupancyStatus.NoLocksReported,
-                            Processes = processes, Truncated = partial || count > MaximumProcesses,
+                            Processes = processes,
+                            Truncated = partial || count > MaximumProcesses,
                             Diagnostic = "Restart Manager 只读快照，未关闭进程或句柄。" +
                                 (partial ? "目录查询仅覆盖有限文件，不包含目录句柄。" : "未列出进程不等于文件可隔离。")
                         };
                     }
                 }
                 if (error != 0) return NativeError("RmGetList", error);
-                return new() { Status = partial ? FileOccupancyStatus.Unknown : FileOccupancyStatus.NoLocksReported,
-                    Truncated = partial, Diagnostic = "Restart Manager 未报告占用，不保证文件可隔离，目录句柄不在覆盖范围。" };
+                return new()
+                {
+                    Status = partial ? FileOccupancyStatus.Unknown : FileOccupancyStatus.NoLocksReported,
+                    Truncated = partial,
+                    Diagnostic = "Restart Manager 未报告占用，不保证文件可隔离，目录句柄不在覆盖范围。"
+                };
             }
             finally { _ = RmEndSession(session); }
         }

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -26,9 +27,9 @@ internal static class UiPreview
                 app.InitializeComponent();
                 ArchivePasswordRequest request = new("preview", "C:\\示例内容\\外层加密包.rar!/" +
                     string.Concat(Enumerable.Repeat("较长的成员目录/", 16)) + "内部加密包.zip",
-                    new string('A', 64), "ZIP 压缩包", 2, null, "已尝试本次保存的密码，仍未解开这一层。内层可能使用不同密码，也不能排除内容损坏或格式兼容问题。",
+                    new string('A', 64), "ZIP 压缩包", 2, null, "已尝试本次暂存且适用的密码，仍未解开这一层。内层可能使用不同密码，也不能排除内容损坏或格式兼容问题。",
                     ArchivePasswordReuseScope.Session, ArchivePasswordPromptKind.CachedPasswordFailed);
-                foreach ((string name, int width, int height) in new[] { ("password-normal", 596, 554), ("password-small", 416, 274) })
+                foreach ((string name, int width, int height) in new[] { ("password-normal", 596, 554), ("password-small", 420, 340) })
                 {
                     PasswordDialog dialog = new(request);
                     Capture(dialog, name, width, height, output);
@@ -38,12 +39,63 @@ internal static class UiPreview
                 report.Findings.Add(new Finding { IsKnownMalware = true, Severity = FindingSeverity.Critical });
                 typeof(MainWindow).GetMethod("UpdateSummary", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [report]);
                 Capture(window, "main-partial-threat", 980, 680, output);
+                Capture(window, "main-small-workarea", 940, 500, output);
+                foreach ((int width, int height) in UiLayoutFixtures.Viewports)
+                {
+                    MainWindow populated = UiLayoutFixtures.CreateThreatWindow();
+                    string viewport = $"{width}x{height}";
+                    Capture(populated, "layout-risk-" + viewport, width, height, output);
+                    ((TabControl)populated.FindName("ResultTabs")).SelectedIndex = 1;
+                    Capture(populated, "layout-coverage-" + viewport, width, height, output);
+                    ((TabControl)populated.FindName("ResultTabs")).SelectedIndex = 2;
+                    Capture(populated, "layout-results-" + viewport, width, height, output);
+                    ((TabControl)populated.FindName("MainTabs")).SelectedIndex = 1;
+                    Capture(populated, "layout-quarantine-" + viewport, width, height, output);
+                    populated.Close();
+                }
+                foreach ((int width, int height) in new[] { (1148, 780), (784, 460) })
+                {
+                    MainWindow information = new();
+                    UiLayoutFixtures.PopulateInformationWindow(information);
+                    Capture(information, $"visual-information-{width}x{height}", width, height, output);
+                    ((TabControl)information.FindName("ResultTabs")).SelectedIndex = 1;
+                    Capture(information, $"visual-coverage-{width}x{height}", width, height, output);
+                    ((TabControl)information.FindName("MainTabs")).SelectedIndex = 1;
+                    Capture(information, $"visual-quarantine-{width}x{height}", width, height, output);
+                    information.Close();
+                }
+                foreach ((int width, int height) in new[] { (760, 520), (600, 420), (440, 360) })
+                {
+                    RemediationPreviewWindow longPreview = new(UiLayoutFixtures.CreateBatch());
+                    ((TabControl)longPreview.FindName("PreviewTabs")).SelectedIndex = 0;
+                    ((DataGrid)longPreview.FindName("PreviewActionsGrid")).SelectedIndex = 0;
+                    Capture(longPreview, $"layout-preview-{width}x{height}", width, height, output);
+                    ((TabControl)longPreview.FindName("PreviewTabs")).SelectedIndex = 1;
+                    ((DataGrid)longPreview.FindName("PreviewOmittedGrid")).SelectedIndex = 0;
+                    Capture(longPreview, $"layout-preview-omitted-{width}x{height}", width, height, output);
+                    longPreview.Close();
+                }
+                PasswordDialog longPassword = new(UiLayoutFixtures.CreatePasswordRequest());
+                Capture(longPassword, "layout-password-420x340", 420, 340, output);
+                ((Expander)longPassword.FindName("PasswordDetailsExpander")).IsExpanded = true;
+                Capture(longPassword, "layout-password-expanded-420x340", 420, 340, output);
+                longPassword.Close();
                 MainWindow coverageWindow = new();
                 ScanReport coverageReport = new() { Mode = ScanMode.Quick, Coverage = ScanCoverage.Partial, CompletedAtUtc = DateTimeOffset.UtcNow };
-                for (int i = 0; i < 6500; i++) coverageReport.Findings.Add(new() { RuleId = "QUICK-MEDIA-STRUCTURE", Category = FindingCategory.Coverage,
-                    Target = @"C:\示例内容\视频" + i + ".mp4", Description = "视频已检查格式、顶层结构与尾随数据，未做整文件哈希比对。" });
-                coverageReport.Findings.Add(new() { RuleId = "ARCHIVE-PASSWORD-FAILED", Category = FindingCategory.Coverage,
-                    Target = @"C:\示例内容\压缩包.rar", Description = "内层密码未能解开，尚未读取内部内容。" });
+                for (int i = 0; i < 6500; i++) coverageReport.Findings.Add(new()
+                {
+                    RuleId = "QUICK-MEDIA-STRUCTURE",
+                    Category = FindingCategory.Coverage,
+                    Target = @"C:\示例内容\视频" + i + ".mp4",
+                    Description = "视频已检查格式、顶层结构与尾随数据，未做整文件哈希比对。"
+                });
+                coverageReport.Findings.Add(new()
+                {
+                    RuleId = "ARCHIVE-PASSWORD-FAILED",
+                    Category = FindingCategory.Coverage,
+                    Target = @"C:\示例内容\压缩包.rar",
+                    Description = "内层密码未能解开，尚未读取内部内容。"
+                });
                 typeof(MainWindow).GetField("_lastReport", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(coverageWindow, coverageReport);
                 typeof(MainWindow).GetMethod("PopulateFindings", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(coverageWindow, [coverageReport]);
                 typeof(MainWindow).GetMethod("UpdateSummary", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(coverageWindow, [coverageReport]);
@@ -154,26 +206,7 @@ internal static class UiPreview
 
     private static void Capture(Window window, string name, int width, int height, string output)
     {
-        FrameworkElement content = (FrameworkElement)window.Content;
-        content.DataContext = window.DataContext;
-        window.Content = null;
-        System.Windows.Controls.Border host = new()
-        {
-            Width = width,
-            Height = height,
-            Background = window.Background ?? Brushes.White,
-            Child = content
-        };
-        host.Measure(new Size(width, height));
-        host.Arrange(new Rect(0, 0, width, height));
-        host.UpdateLayout();
-        RenderTargetBitmap bitmap = new(width, height, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(host);
-        PngBitmapEncoder encoder = new();
-        encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using FileStream stream = File.Create(Path.Combine(output, name + ".png"));
-        encoder.Save(stream);
-        host.Child = null;
-        window.Content = content;
+        using UiLayoutHarness layout = new(window, width, height);
+        layout.Save(name, output);
     }
 }

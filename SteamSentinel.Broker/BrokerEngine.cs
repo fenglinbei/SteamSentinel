@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Win32;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
@@ -11,19 +14,38 @@ namespace SteamSentinel.Broker;
 
 internal sealed partial class BrokerEngine
 {
+    internal const string DirectoryRollbackSafetyMessage =
+        "为防原目录父路径在管理员回滚期间被替换，当前版本不自动恢复整目录；隔离副本保持不变。请保留隔离并由受信任的救援环境人工核对，勿为清理事件而恢复可疑内容。";
+    private const int MaximumManifestBytes = 1024 * 1024;
     private readonly RuleSet _rules = RuleLoader.LoadEmbedded();
     private readonly SteamLayout _steamLayout = SteamLocator.Discover();
+    private readonly IIncidentTrustStore _incidentTrustStore;
+    private readonly IIncidentStateSecurity _incidentStateSecurity;
     private RemediationRunResult _result = null!;
     private QuarantineManifest _manifest = null!;
     private string _incidentRoot = string.Empty;
     private string _manifestPath = string.Empty;
     private bool _persistOwnManifest;
+    private string _requestedBySid = string.Empty;
     private RemediationVerification _verification = null!;
+
+    internal BrokerEngine() : this(new RegistryIncidentTrustStore(), new WindowsIncidentStateSecurity()) { }
+
+    internal BrokerEngine(IIncidentTrustStore incidentTrustStore) :
+        this(incidentTrustStore, new WindowsIncidentStateSecurity())
+    { }
+
+    internal BrokerEngine(IIncidentTrustStore incidentTrustStore, IIncidentStateSecurity incidentStateSecurity)
+    {
+        _incidentTrustStore = incidentTrustStore ?? throw new ArgumentNullException(nameof(incidentTrustStore));
+        _incidentStateSecurity = incidentStateSecurity ?? throw new ArgumentNullException(nameof(incidentStateSecurity));
+    }
 
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default)
     {
         ValidatePlan(plan);
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
+        _requestedBySid = plan.RequestedBySid;
         _result = new RemediationRunResult { PlanId = plan.PlanId };
         _contentProofs.Clear();
         _verification = new(new WindowsRemediationStateProbe(async (script, token) =>
@@ -36,14 +58,16 @@ internal sealed partial class BrokerEngine
         {
             _incidentRoot = Path.Combine(AppPaths.QuarantineRoot, _result.IncidentId.ToString("D"));
             _manifestPath = Path.Combine(_incidentRoot, "manifest.json");
-            Directory.CreateDirectory(_incidentRoot);
+            MachineStateSecurity.PrepareIncidentDirectory(_incidentRoot, plan.RequestedBySid);
             _manifest = new QuarantineManifest
             {
                 IncidentId = _result.IncidentId,
-                PlanId = plan.PlanId
+                PlanId = plan.PlanId,
+                TrustId = Guid.NewGuid(),
+                RequestedBySid = plan.RequestedBySid
             };
             _result.ManifestPath = _manifestPath;
-            await PersistManifestAsync(cancellationToken);
+            await InitializeManifestAsync(cancellationToken);
         }
 
         foreach (RemediationAction action in plan.Actions)
@@ -59,6 +83,17 @@ internal sealed partial class BrokerEngine
             {
                 ValidateAction(action);
                 actionResult.Message = await ExecuteActionAsync(action, cancellationToken);
+                if (_persistOwnManifest)
+                {
+                    bool confirmedRecord = false;
+                    foreach (QuarantineRecord record in _manifest.Records.Where(record => record.ActionId == action.ActionId))
+                    {
+                        if (record.MutationConfirmed) continue;
+                        record.MutationConfirmed = true;
+                        confirmedRecord = true;
+                    }
+                    if (confirmedRecord) await PersistManifestAsync(cancellationToken);
+                }
                 actionResult.Success = true;
             }
             catch (Exception ex)
@@ -89,15 +124,29 @@ internal sealed partial class BrokerEngine
     private void ValidatePlan(RemediationPlan plan)
     {
         if (plan.SchemaVersion != "1") throw new InvalidDataException("不支持的处置计划版本。");
+        if (plan.PlanId == Guid.Empty) throw new InvalidDataException("处置计划 ID 不能为空。");
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (plan.CreatedAtUtc > now.AddMinutes(2) || plan.ExpiresAtUtc < now ||
+        if (plan.CreatedAtUtc == default || plan.ExpiresAtUtc == default ||
+            plan.CreatedAtUtc > now.AddMinutes(2) || plan.ExpiresAtUtc < now ||
+            plan.ExpiresAtUtc <= plan.CreatedAtUtc ||
             plan.ExpiresAtUtc - plan.CreatedAtUtc > TimeSpan.FromHours(1))
         {
             throw new InvalidDataException("处置计划已过期或时间范围异常，请重新生成。");
         }
-        if (plan.Actions.Count is < 1 or > 64) throw new InvalidDataException("处置动作数量不在允许范围内。");
-        if (plan.RequestedBy.Length > 256 || plan.RequestedBySid.Length > 184)
+        if (plan.Actions is null || plan.Actions.Count is < 1 or > 64)
+            throw new InvalidDataException("处置动作数量不在允许范围内。");
+        if (string.IsNullOrWhiteSpace(plan.RequestedBy) || plan.RequestedBy.Length > 256 ||
+            string.IsNullOrWhiteSpace(plan.RequestedBySid) || plan.RequestedBySid.Length > 184)
             throw new InvalidDataException("处置计划请求者字段异常。");
+        SecurityIdentifier requester;
+        try { requester = new SecurityIdentifier(plan.RequestedBySid); }
+        catch (ArgumentException ex) { throw new InvalidDataException("处置计划请求者 SID 无效。", ex); }
+        string currentSid = WindowsIdentity.GetCurrent().User?.Value ?? string.Empty;
+        if (!requester.Value.Equals(currentSid, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("处置计划请求者与当前 Broker 身份不一致。");
+        if (plan.Actions.Any(action => action is null || action.ActionId == Guid.Empty) ||
+            plan.Actions.Select(action => action.ActionId).Distinct().Count() != plan.Actions.Count)
+            throw new InvalidDataException("处置动作 ID 为空或重复。");
         bool hasIncidentLifecycleAction = plan.Actions.Any(action =>
             action.Type is RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident);
         if (hasIncidentLifecycleAction && plan.Actions.Count != 1)
@@ -106,7 +155,8 @@ internal sealed partial class BrokerEngine
 
     private void ValidateAction(RemediationAction action)
     {
-        if (action.Target.Length > 32_768 || action.DisplayName.Length > 500)
+        if (string.IsNullOrWhiteSpace(action.Target) || action.Target.Length > 32_768 ||
+            action.DisplayName is null || action.DisplayName.Length > 500)
             throw new InvalidDataException("动作字段过长。");
 
         switch (action.Type)
@@ -231,7 +281,7 @@ internal sealed partial class BrokerEngine
             throw new InvalidOperationException("目标文件哈希已变化，已拒绝隔离。");
 
         string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
-        Directory.CreateDirectory(itemRoot);
+        MachineStateSecurity.PreparePayloadDirectory(itemRoot);
         string destination = Path.Combine(itemRoot, SafeName(Path.GetFileName(source)) + ".quarantined");
         QuarantineRecord record = new()
         {
@@ -244,6 +294,7 @@ internal sealed partial class BrokerEngine
         _manifest.Records.Add(record);
         await PersistManifestAsync(cancellationToken);
         await lease.CopyToAsync(destination, currentHash, cancellationToken);
+        MachineStateSecurity.ProtectPayloadFile(destination);
         lease.DeleteOnClose();
         return $"已隔离文件到 {destination}";
     }
@@ -257,7 +308,7 @@ internal sealed partial class BrokerEngine
         if (!currentFingerprint.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("目标目录内容在扫描后发生变化，已拒绝隔离。");
         string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
-        Directory.CreateDirectory(itemRoot);
+        MachineStateSecurity.PreparePayloadDirectory(itemRoot);
         string destination = Path.Combine(itemRoot, SafeName(Path.GetFileName(source)) + ".quarantined");
         QuarantineRecord record = new()
         {
@@ -270,20 +321,11 @@ internal sealed partial class BrokerEngine
         _manifest.Records.Add(record);
         await PersistManifestAsync(cancellationToken);
 
-        if (SameVolume(source, destination))
-        {
-            EnsureTreeHasNoReparsePoints(source);
-            string finalFingerprint = await DirectoryFingerprint.ComputeAsync(source, cancellationToken);
-            if (!finalFingerprint.Equals(currentFingerprint, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("目标目录在隔离前发生变化，已拒绝操作。");
-            Directory.Move(source, destination);
-            EnsureTreeHasNoReparsePoints(destination);
-        }
-        else
-        {
-            await CopyDirectoryVerifiedAsync(source, destination, currentFingerprint, cancellationToken);
-            await DeleteDirectorySnapshotAsync(source, currentFingerprint, cancellationToken);
-        }
+        // Always copy into a newly ACL-protected tree. A same-volume rename would preserve
+        // attacker-controlled source ACLs and make the elevated rollback input writable.
+        await CopyDirectoryVerifiedAsync(source, destination, currentFingerprint, cancellationToken);
+        MachineStateSecurity.EnsureProtectedSubtree(destination);
+        await DeleteDirectorySnapshotAsync(source, currentFingerprint, cancellationToken);
         return $"已隔离目录到 {destination}";
     }
 
@@ -315,7 +357,8 @@ internal sealed partial class BrokerEngine
             RegistryValueData = value.ToString(),
             RegistryValueKind = (int)kind,
             MutationConfirmed = false,
-            RelatedFilePath = action.RelatedFilePath, RelatedFileSha256 = action.RelatedFileSha256,
+            RelatedFilePath = action.RelatedFilePath,
+            RelatedFileSha256 = action.RelatedFileSha256,
             VerifiedContentRuleId = _contentProofs.GetValueOrDefault(action.ActionId)
         };
         _manifest.Records.Add(record);
@@ -343,11 +386,12 @@ internal sealed partial class BrokerEngine
         if (File.Exists(taskFile))
         {
             backup = Path.Combine(_incidentRoot, "tasks", action.ActionId.ToString("N") + ".xml");
-            Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
+            MachineStateSecurity.PreparePayloadDirectory(Path.GetDirectoryName(backup)!);
             await using SecureFileLease taskLease = SecureFileLease.Open(taskFile);
             string taskHash = await taskLease.ComputeSha256Async(cancellationToken);
             RequireTaskSnapshotHash(taskHash, action.ExpectedSha256);
             await taskLease.CopyToAsync(backup, taskHash, cancellationToken);
+            MachineStateSecurity.ProtectPayloadFile(backup);
             if (HasPersistenceBinding(action))
             {
                 string xml = await File.ReadAllTextAsync(backup, cancellationToken);
@@ -363,7 +407,8 @@ internal sealed partial class BrokerEngine
             TaskName = taskName,
             Sha256 = action.ExpectedSha256,
             MutationConfirmed = false,
-            RelatedFilePath = action.RelatedFilePath, RelatedFileSha256 = action.RelatedFileSha256,
+            RelatedFilePath = action.RelatedFilePath,
+            RelatedFileSha256 = action.RelatedFileSha256,
             VerifiedContentRuleId = _contentProofs.GetValueOrDefault(action.ActionId)
         });
         await PersistManifestAsync(cancellationToken);
@@ -385,10 +430,6 @@ internal sealed partial class BrokerEngine
         string operation = add ? "Add-MpPreference" : "Remove-MpPreference";
         string script = "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:STEAMSENTINEL_PATH_B64));" +
                         operation + " -ExclusionPath $p -ErrorAction Stop";
-        ProcessResult result = await RunEncodedPowerShellAsync(script,
-            new Dictionary<string, string> { ["STEAMSENTINEL_PATH_B64"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(path)) },
-            cancellationToken);
-        if (result.ExitCode != 0) throw new InvalidOperationException(result.Error);
         if (!add)
         {
             _manifest.Records.Add(new QuarantineRecord
@@ -400,6 +441,10 @@ internal sealed partial class BrokerEngine
             });
             await PersistManifestAsync(cancellationToken);
         }
+        ProcessResult result = await RunEncodedPowerShellAsync(script,
+            new Dictionary<string, string> { ["STEAMSENTINEL_PATH_B64"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(path)) },
+            cancellationToken);
+        if (result.ExitCode != 0) throw new InvalidOperationException(result.Error);
         return add ? "已恢复 Defender 排除项。" : "已移除 Defender 排除项。";
     }
 
@@ -419,11 +464,6 @@ internal sealed partial class BrokerEngine
         }
 
         string name = $"SteamSentinel-{_result.IncidentId:N}-{action.ActionId:N}";
-        string netsh = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "netsh.exe");
-        ProcessResult command = await RunProcessAsync(netsh,
-            ["advfirewall", "firewall", "add", "rule", $"name={name}", "dir=out", "action=block", "enable=yes", "profile=any", $"program={action.Target}"],
-            cancellationToken);
-        if (command.ExitCode != 0) throw new InvalidOperationException(command.Error);
         _manifest.Records.Add(new QuarantineRecord
         {
             ActionId = action.ActionId,
@@ -433,6 +473,11 @@ internal sealed partial class BrokerEngine
             Sha256 = action.ExpectedSha256
         });
         await PersistManifestAsync(cancellationToken);
+        string netsh = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "netsh.exe");
+        ProcessResult command = await RunProcessAsync(netsh,
+            ["advfirewall", "firewall", "add", "rule", $"name={name}", "dir=out", "action=block", "enable=yes", "profile=any", $"program={action.Target}"],
+            cancellationToken);
+        if (command.ExitCode != 0) throw new InvalidOperationException(command.Error);
         return $"已添加出站阻断规则 {name}";
     }
 
@@ -487,13 +532,7 @@ internal sealed partial class BrokerEngine
         Guid incidentId = Guid.Parse(action.IncidentId ?? action.Target);
         string incidentRoot = GetIncidentRoot(incidentId);
         string manifestPath = Path.Combine(incidentRoot, "manifest.json");
-        if (Validation.ContainsReparsePoint(incidentRoot))
-            throw new UnauthorizedAccessException("隔离事件包含重解析点，拒绝回滚。");
-        QuarantineManifest manifest = await JsonFile.ReadAsync<QuarantineManifest>(manifestPath, cancellationToken);
-        if (manifest.SchemaVersion != "1" || manifest.IncidentId != incidentId)
-            throw new InvalidDataException("隔离清单身份与目录不一致。");
-        if (manifest.Records.Count > 64 || manifest.Records.Select(record => record.ActionId).Distinct().Count() != manifest.Records.Count)
-            throw new InvalidDataException("隔离清单记录数量或动作 ID 异常。");
+        QuarantineManifest manifest = await LoadTrustedManifestAsync(incidentId, incidentRoot, manifestPath, cancellationToken);
         foreach (QuarantineRecord record in manifest.Records)
             ValidateQuarantineRecord(record, incidentRoot, incidentId);
         foreach (QuarantineRecord record in manifest.Records)
@@ -502,7 +541,7 @@ internal sealed partial class BrokerEngine
         foreach (QuarantineRecord record in manifest.Records.AsEnumerable().Reverse())
         {
             if (record.RolledBack) continue;
-            if (record.MutationConfirmed == false) throw new InvalidOperationException("上次配置操作的完成状态不确定，请人工核对，未自动覆盖当前配置。");
+            if (!record.MutationConfirmed) throw new InvalidOperationException("上次处置操作的完成状态不确定，请人工核对；未自动恢复或覆盖当前状态。");
             switch (record.Type)
             {
                 case RemediationActionType.QuarantineFile:
@@ -541,36 +580,40 @@ internal sealed partial class BrokerEngine
                     break;
             }
             record.RolledBack = true;
-            await JsonFile.WriteAtomicAsync(manifestPath, manifest, cancellationToken);
+            await PersistTrustedManifestAsync(manifestPath, manifest, cancellationToken);
         }
         return $"隔离事件 {incidentId:D} 已回滚。";
     }
 
-    private static async Task<string> DeleteIncidentAsync(RemediationAction action, CancellationToken cancellationToken)
+    private async Task<string> DeleteIncidentAsync(RemediationAction action, CancellationToken cancellationToken)
     {
         Guid incidentId = Guid.Parse(action.IncidentId ?? action.Target);
         string incidentRoot = GetIncidentRoot(incidentId);
         if (!Directory.Exists(incidentRoot)) return "隔离事件已不存在。";
-        string manifest = Path.Combine(incidentRoot, "manifest.json");
-        if (!File.Exists(manifest)) throw new InvalidDataException("隔离目录缺少 manifest.json，拒绝删除。");
-        QuarantineManifest manifestData = await JsonFile.ReadAsync<QuarantineManifest>(manifest, cancellationToken);
-        if (manifestData.SchemaVersion != "1" || manifestData.IncidentId != incidentId)
-            throw new InvalidDataException("隔离清单身份与目录不一致。");
-        if (manifestData.Records.Any(record => !record.RolledBack))
-        {
-            DateTimeOffset currentBootTime = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
-            if (currentBootTime <= manifestData.MachineBootTimeUtc.AddMinutes(1))
-                throw new InvalidOperationException("含隔离内容的事件必须在至少一次系统重启后才能永久删除。");
-        }
-        if (Validation.ContainsReparsePoint(incidentRoot)) throw new UnauthorizedAccessException("隔离事件包含重解析点，拒绝删除。");
+        string manifestPath = Path.Combine(incidentRoot, "manifest.json");
+        QuarantineManifest manifestData = await LoadTrustedManifestAsync(
+            incidentId, incidentRoot, manifestPath, cancellationToken);
+        EnsureIncidentDeletionAllowed(manifestData);
         DeleteDirectoryContentsExact(incidentRoot);
         Directory.Delete(incidentRoot, recursive: false);
+        _incidentTrustStore.Delete(incidentId);
         return $"隔离事件 {incidentId:D} 已永久删除。";
+    }
+
+    internal static void EnsureIncidentDeletionAllowed(QuarantineManifest manifest)
+    {
+        if (manifest.Records.Any(record => !record.RolledBack))
+        {
+            throw new InvalidOperationException(
+                "该事件仍有活动隔离记录。当前 Broker 不接受可由普通进程伪造的“干净复扫”作为永久删除授权；" +
+                "请保留隔离，不要为了删除事件而回滚可疑样本。仅所有记录原本就已安全回滚的空事件可以清理。");
+        }
     }
 
     private async Task RestoreFileAsync(QuarantineRecord record, CancellationToken cancellationToken)
     {
-        if (record.QuarantinedPath is null || !File.Exists(record.QuarantinedPath)) return;
+        if (record.QuarantinedPath is null || !File.Exists(record.QuarantinedPath))
+            throw new FileNotFoundException("隔离文件副本缺失，不能把该记录标记为已回滚；请保留事件记录并人工核对。", record.QuarantinedPath);
         if (File.Exists(record.OriginalTarget) || Directory.Exists(record.OriginalTarget))
             throw new IOException($"原位置已被占用，拒绝覆盖：{record.OriginalTarget}");
         if (!IsAllowedFileTarget(record.OriginalTarget, record.Sha256) ||
@@ -586,28 +629,12 @@ internal sealed partial class BrokerEngine
         lease.DeleteOnClose();
     }
 
-    private async Task RestoreDirectoryAsync(QuarantineRecord record, CancellationToken cancellationToken)
+    private static Task RestoreDirectoryAsync(QuarantineRecord record, CancellationToken cancellationToken)
     {
-        if (record.QuarantinedPath is null || !Directory.Exists(record.QuarantinedPath)) return;
-        if (File.Exists(record.OriginalTarget) || Directory.Exists(record.OriginalTarget))
-            throw new IOException($"原位置已被占用，拒绝覆盖：{record.OriginalTarget}");
-        if (!IsAllowedDirectoryTarget(record.OriginalTarget) ||
-            Validation.ContainsReparsePoint(Path.GetDirectoryName(record.OriginalTarget)!))
-            throw new UnauthorizedAccessException("目录原位置不在允许范围或父目录包含重解析点。");
-        string fingerprint = await DirectoryFingerprint.ComputeAsync(record.QuarantinedPath, cancellationToken);
-        if (!fingerprint.Equals(record.Sha256, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("隔离目录指纹与清单不一致。");
-        if (!Directory.Exists(Path.GetDirectoryName(record.OriginalTarget)!))
-            throw new DirectoryNotFoundException("目录原位置的父目录已不存在，请人工核对后恢复。");
-        if (SameVolume(record.QuarantinedPath, record.OriginalTarget))
-        {
-            Directory.Move(record.QuarantinedPath, record.OriginalTarget);
-        }
-        else
-        {
-            await CopyDirectoryVerifiedAsync(record.QuarantinedPath, record.OriginalTarget, fingerprint, cancellationToken);
-            await DeleteDirectorySnapshotAsync(record.QuarantinedPath, fingerprint, cancellationToken);
-        }
+        if (record.QuarantinedPath is null || !Directory.Exists(record.QuarantinedPath))
+            throw new DirectoryNotFoundException("隔离目录副本缺失，不能把该记录标记为已回滚；请保留事件记录并人工核对。");
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException(DirectoryRollbackSafetyMessage);
     }
 
     private static void RestoreRegistryValue(QuarantineRecord record)
@@ -624,7 +651,8 @@ internal sealed partial class BrokerEngine
 
     private static async Task RestoreScheduledTaskAsync(QuarantineRecord record, CancellationToken cancellationToken)
     {
-        if (record.QuarantinedPath is null || !File.Exists(record.QuarantinedPath) || record.TaskName is null) return;
+        if (record.QuarantinedPath is null || !File.Exists(record.QuarantinedPath) || record.TaskName is null)
+            throw new FileNotFoundException("计划任务隔离快照缺失，不能自动回滚；请保留事件记录并人工核对。", record.QuarantinedPath);
         if (!Validation.TryNormalizeScheduledTaskName(record.TaskName, out string normalizedTask))
             throw new InvalidDataException("隔离清单中的计划任务名称无效。");
         string tasksRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "Tasks");
@@ -806,14 +834,14 @@ internal sealed partial class BrokerEngine
         if (File.Exists(destination) || Directory.Exists(destination))
             throw new IOException("目录隔离目标已存在。");
 
-        Directory.CreateDirectory(destination);
+        MachineStateSecurity.PreparePayloadDirectory(destination);
         bool completed = false;
         try
         {
             foreach (DirectoryFingerprintEntry entry in snapshot.Entries.Where(entry => entry.IsDirectory))
             {
                 string targetDirectory = ResolveSnapshotPath(destination, entry.RelativePath);
-                Directory.CreateDirectory(targetDirectory);
+                MachineStateSecurity.PreparePayloadDirectory(targetDirectory);
             }
             foreach (DirectoryFingerprintEntry entry in snapshot.Entries.Where(entry => !entry.IsDirectory))
             {
@@ -827,6 +855,7 @@ internal sealed partial class BrokerEngine
                 if (!sourceHash.Equals(entry.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException($"目录文件在复制前发生变化：{entry.RelativePath}");
                 await lease.CopyToAsync(targetFile, sourceHash, cancellationToken);
+                MachineStateSecurity.ProtectPayloadFile(targetFile);
             }
 
             string sourceAfter = await DirectoryFingerprint.ComputeAsync(source, cancellationToken);
@@ -878,9 +907,9 @@ internal sealed partial class BrokerEngine
             string directory = ResolveSnapshotPath(source, entry.RelativePath);
             if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
                 throw new UnauthorizedAccessException("目录删除阶段发现重解析点，已停止。");
-            Directory.Delete(directory, recursive: false);
+            SecureDirectoryDeletion.DeleteEmpty(directory);
         }
-        Directory.Delete(source, recursive: false);
+        SecureDirectoryDeletion.DeleteEmpty(source);
     }
 
     private static string ResolveSnapshotPath(string root, string relative)
@@ -931,9 +960,6 @@ internal sealed partial class BrokerEngine
         return [.. entries];
     }
 
-    private static bool SameVolume(string left, string right) =>
-        string.Equals(Path.GetPathRoot(Path.GetFullPath(left)), Path.GetPathRoot(Path.GetFullPath(right)), StringComparison.OrdinalIgnoreCase);
-
     private static string SafeName(string name)
     {
         string safe = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
@@ -949,8 +975,116 @@ internal sealed partial class BrokerEngine
         return incident;
     }
 
+    private async Task InitializeManifestAsync(CancellationToken cancellationToken)
+    {
+        byte[] content = SerializeManifest(_manifest);
+        string sha256 = Convert.ToHexString(SHA256.HashData(content));
+        _incidentTrustStore.RegisterPending(_manifest, sha256);
+        await WriteManifestAtomicAsync(_manifestPath, content, _manifest.RequestedBySid, cancellationToken);
+        _incidentTrustStore.CommitManifestUpdate(_manifest.IncidentId, sha256);
+    }
+
     private Task PersistManifestAsync(CancellationToken cancellationToken) =>
-        JsonFile.WriteAtomicAsync(_manifestPath, _manifest, cancellationToken);
+        PersistTrustedManifestAsync(_manifestPath, _manifest, cancellationToken);
+
+    private async Task PersistTrustedManifestAsync(
+        string manifestPath,
+        QuarantineManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        byte[] content = SerializeManifest(manifest);
+        string sha256 = Convert.ToHexString(SHA256.HashData(content));
+        _incidentTrustStore.BeginManifestUpdate(manifest.IncidentId, sha256);
+        await WriteManifestAtomicAsync(manifestPath, content, manifest.RequestedBySid, cancellationToken);
+        _incidentTrustStore.CommitManifestUpdate(manifest.IncidentId, sha256);
+    }
+
+    internal async Task<QuarantineManifest> LoadTrustedManifestAsync(
+        Guid incidentId,
+        string incidentRoot,
+        string manifestPath,
+        CancellationToken cancellationToken,
+        string? requestedBySidForTest = null)
+    {
+        IncidentTrustRecord trust = _incidentTrustStore.GetRequired(incidentId);
+        _incidentStateSecurity.EnsureProtectedPath(incidentRoot);
+        _incidentStateSecurity.EnsureProtectedPath(manifestPath);
+        QuarantineManifest manifest;
+        string actualSha256;
+        await using (SecureFileLease lease = SecureFileLease.Open(manifestPath))
+        {
+            if (lease.Length is <= 0 or > MaximumManifestBytes)
+                throw new InvalidDataException("隔离清单大小异常。");
+            actualSha256 = await lease.ComputeSha256Async(cancellationToken);
+            if (!trust.AcceptsManifestHash(actualSha256))
+                throw new UnauthorizedAccessException("隔离清单与 Broker 受保护可信索引不一致，已拒绝管理员生命周期操作。");
+            manifest = await lease.ReadJsonAsync<QuarantineManifest>(cancellationToken);
+        }
+
+        if (manifest.SchemaVersion != "1" || !trust.MatchesIdentity(manifest) || manifest.IncidentId != incidentId)
+            throw new InvalidDataException("隔离清单身份与受保护可信索引不一致。");
+        string expectedRequester = requestedBySidForTest ?? _requestedBySid;
+        if (!manifest.RequestedBySid.Equals(expectedRequester, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("隔离事件不属于当前 UAC 请求者。");
+        if (manifest.Records is null || manifest.Records.Count > 64 ||
+            manifest.Records.Any(record => record is null || record.ActionId == Guid.Empty) ||
+            manifest.Records.Select(record => record.ActionId).Distinct().Count() != manifest.Records.Count)
+        {
+            throw new InvalidDataException("隔离清单记录数量或动作 ID 异常。");
+        }
+
+        // The registry keeps both committed and pending hashes. If a broker crashed after the
+        // atomic file replacement, accepting only that pre-authorized pending hash recovers safely.
+        if (!actualSha256.Equals(trust.ManifestSha256, StringComparison.OrdinalIgnoreCase))
+            _incidentTrustStore.CommitManifestUpdate(incidentId, actualSha256);
+        _incidentStateSecurity.EnsureProtectedSubtree(incidentRoot);
+        return manifest;
+    }
+
+    private static byte[] SerializeManifest(QuarantineManifest manifest)
+    {
+        byte[] content = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonFile.Options);
+        if (content.Length is <= 0 or > MaximumManifestBytes)
+            throw new InvalidDataException("隔离清单大小异常。");
+        return content;
+    }
+
+    private static async Task WriteManifestAtomicAsync(
+        string path,
+        byte[] content,
+        string requestedBySid,
+        CancellationToken cancellationToken)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string directory = Path.GetDirectoryName(fullPath)
+            ?? throw new InvalidOperationException("隔离清单没有父目录。");
+        MachineStateSecurity.EnsureProtectedPath(directory);
+        string temporary = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await using (FileStream stream = new(
+                             temporary,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             bufferSize: 64 * 1024,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await stream.WriteAsync(content, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, fullPath, overwrite: true);
+            MachineStateSecurity.ProtectManifestFile(fullPath, requestedBySid);
+        }
+        finally
+        {
+            if (File.Exists(temporary) && !Validation.ContainsReparsePoint(temporary))
+            {
+                try { File.Delete(temporary); } catch { }
+            }
+        }
+    }
 
     private static async Task<ProcessResult> RunEncodedPowerShellAsync(
         string fixedScript,

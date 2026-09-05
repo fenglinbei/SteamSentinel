@@ -50,6 +50,7 @@ public partial class MainWindow
         };
         ActivityDetailText.Text = _activityHint;
         ActivityPanel.Visibility = Visibility.Visible;
+        UpdateCompactHeader();
         _activityClock.Restart();
         _activityTimer ??= new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
             (_, _) => RefreshActivityElapsed(), Dispatcher);
@@ -82,6 +83,7 @@ public partial class MainWindow
         ActivityRotation.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty, null);
         ActivityProgressBar.IsIndeterminate = false;
         ActivityPanel.Visibility = Visibility.Collapsed;
+        UpdateCompactHeader();
         ScanProgressBar.IsIndeterminate = false;
     }
 
@@ -107,8 +109,13 @@ public partial class MainWindow
         });
         ScanOptions options = new()
         {
-            Mode = ScanMode.Quick, IncludeSystem = true, IncludeSteam = true, IncludeWorkshop = false,
-            IncludeRelatedContent = false, UseAmsi = false, InspectArchives = false
+            Mode = ScanMode.Quick,
+            IncludeSystem = true,
+            IncludeSteam = true,
+            IncludeWorkshop = false,
+            IncludeRelatedContent = false,
+            UseAmsi = false,
+            InspectArchives = false
         };
         runner ??= (settings, reporter, cancellation) => _coordinator.RunAsync(settings, progress: reporter, cancellationToken: cancellation);
         return await Task.Run(() => runner(options, progress, token), token);

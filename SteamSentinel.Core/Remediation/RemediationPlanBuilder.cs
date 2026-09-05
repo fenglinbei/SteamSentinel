@@ -199,11 +199,18 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
 
     private static RemediationAction BoundAction(Finding finding, RemediationActionType type, string label) => new()
     {
-        Type = type, DisplayName = label, Target = finding.Target, ExpectedSha256 = finding.Sha256,
-        ProcessId = finding.ProcessId, ProcessStartedAtUtc = finding.ProcessStartedAtUtc,
-        RelatedFilePath = finding.RelatedFilePath, RelatedFileSha256 = finding.RelatedFileSha256,
-        ConfigurationKind = finding.ConfigurationKind, ConfigurationSnapshot = finding.ConfigurationSnapshot,
-        IsKnownMalware = finding.IsKnownMalware, ConfidenceScore = finding.Score
+        Type = type,
+        DisplayName = label,
+        Target = finding.Target,
+        ExpectedSha256 = finding.Sha256,
+        ProcessId = finding.ProcessId,
+        ProcessStartedAtUtc = finding.ProcessStartedAtUtc,
+        RelatedFilePath = finding.RelatedFilePath,
+        RelatedFileSha256 = finding.RelatedFileSha256,
+        ConfigurationKind = finding.ConfigurationKind,
+        ConfigurationSnapshot = finding.ConfigurationSnapshot,
+        IsKnownMalware = finding.IsKnownMalware,
+        ConfidenceScore = finding.Score
     };
 
     private static async Task<RemediationAction> CreateDirectoryActionAsync(

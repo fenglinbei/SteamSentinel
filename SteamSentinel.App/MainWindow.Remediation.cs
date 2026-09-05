@@ -41,9 +41,16 @@ public partial class MainWindow
                 {
                     return await _workerClient.RunAsync(new ScanOptions
                     {
-                        Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-                        CustomRoots = paths.ToList(), InspectArchives = false, UseAmsi = amsi, HashEveryFile = true,
-                        MaximumFiles = 2000, MaximumContentBytes = RemediationBatchPlanner.PreparationBatchBytes,
+                        Mode = ScanMode.Custom,
+                        IncludeSystem = false,
+                        IncludeSteam = false,
+                        IncludeWorkshop = false,
+                        CustomRoots = paths.ToList(),
+                        InspectArchives = false,
+                        UseAmsi = amsi,
+                        HashEveryFile = true,
+                        MaximumFiles = 2000,
+                        MaximumContentBytes = RemediationBatchPlanner.PreparationBatchBytes,
                         ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot, AppPaths.WorkerTemporaryRoot, AppContext.BaseDirectory]
                     }, RequestPasswordAsync, progress, token);
                 }
@@ -70,6 +77,12 @@ public partial class MainWindow
             // Legacy exports retain the single-plan fields only for truly single-plan sessions.
             if (batch.Plans.Count == 1) { _casePlan = batch.Plans[0]; _caseResult = batch.Results.FirstOrDefault(); }
             UpdateBatchResults();
+            if (_remediationClient.HasUnresolvedExecution)
+            {
+                HeaderStatusText.Text = "管理员操作尚未返回确定结果";
+                HeaderDetailText.Text = "已暂停后续处置与复查，可导出记录。点击重新检查可读取迟到的结果。";
+                return;
+            }
             await RunBatchFollowUpAsync(batch, original);
             if (_closeWhenIdle) return;
             HeaderStatusText.Text = batch.Interruption is not null || batch.Targets.Any(t => t.Status != "已完成") ? "处置尚未全部完成" : "所选动作已完成，请查看复查结果";
@@ -80,8 +93,7 @@ public partial class MainWindow
                 details += "\nSteam 恢复文件已准备，请从原快捷方式启动官方客户端补全组件，必要时使用官方安装包覆盖安装。";
             details += "\n\n请重启后复扫。仍在订阅的工坊项目可能重新下载，涉及窃密时请从可信设备处理账户安全。";
             HideActivity();
-            MessageBox.Show(this, details, "处置与复查结果", MessageBoxButton.OK,
-                batch.Interruption is not null || batch.Targets.Any(t => t.Status != "已完成") ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            new TextDetailsWindow(HeaderStatusText.Text, details) { Owner = this }.ShowDialog();
             FooterText.Text = "逐项结果在“处置结果”，导出完整记录包可保留所有批次、原扫描范围复查及系统复查。";
             await RefreshQuarantineItemsAsync();
         }
@@ -143,7 +155,7 @@ public partial class MainWindow
             finally { _scanCancellation.Dispose(); _scanCancellation = null; CancelScanButton.IsEnabled = false; }
             if (_closeWhenIdle) { BatchFollowUpText.Text = string.Join("\n", messages) + "\n系统与 Steam 复查未进行，窗口正在关闭。"; return; }
         }
-        else messages.Add("原扫描范围：没有可重放的内容扫描设置，未执行内容复扫，请手动扫描原目录。");
+        else messages.Add("原扫描范围：无法恢复原内容扫描设置，本次未复查原目录，请手动重新扫描。");
         _operationCommitted = true;
         try
         {
@@ -166,11 +178,11 @@ public partial class MainWindow
     }
 
     internal static string ContentFollowUpSummary(ScanReport report) => "原扫描范围：" +
-        (report.Findings.Any(f => f.CanRemediate || f.IsKnownMalware) ? "仍有可处置或已知威胁项，请查看风险列表。" : "已检查内容未发现可处置或已知威胁项。") +
-        (report.Coverage != ScanCoverage.Complete ? "仍有未检查内容，不代表全部清除。" : "结论仅适用于支持范围。");
+        (report.Findings.Any(f => f.CanRemediate || f.IsKnownMalware) ? "仍有可处置的项目或已知威胁，请查看“风险与提示”。" : "在已完成的内容检查中，未发现可处置的项目或已知威胁。") +
+        (report.Coverage != ScanCoverage.Complete ? "仍有未检查内容，不代表全部清除。" : "结论仅适用于本次已完成的检查范围，不代表电脑绝对安全。");
     internal static string SystemFollowUpSummary(ScanReport report) => "系统与 Steam：" +
         (report.Findings.Any(f => f.IsKnownMalware && f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam)
-            ? "仍有活动威胁或篡改证据，请导出记录进一步处理。" : "已检查部分未发现已知活动威胁。") +
+            ? "仍有活动威胁或篡改证据，请导出记录进一步处理。" : "在已完成的检查中，未发现已知活动威胁。") +
         (report.Findings.Any(f => f.RuleId == "SECURITY-CONTROLS-DISABLED") ? "Windows 安全防护未完全开启，这是配置提示，不是样本复活。" : "") +
-        (report.Coverage != ScanCoverage.Complete ? "部分检查未覆盖。" : "");
+        (report.Coverage != ScanCoverage.Complete ? "仍有未完成的系统或 Steam 检查，请查看报告中的原因。" : "");
 }

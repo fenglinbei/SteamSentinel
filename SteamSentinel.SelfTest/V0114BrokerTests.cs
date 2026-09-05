@@ -61,7 +61,7 @@ internal static partial class Program
         RemediationActionResult lateUnknown = new() { Success = true };
         int sequence = 0;
         RemediationVerification uncertain = new(new V0114FixtureProbe((_, _) => Task.FromResult(new RemediationVerificationObservation
-            { Status = ++sequence == 1 ? RemediationVerificationStatus.NoResidual : RemediationVerificationStatus.Unknown })));
+        { Status = ++sequence == 1 ? RemediationVerificationStatus.NoResidual : RemediationVerificationStatus.Unknown })));
         await uncertain.ObserveAsync(file, lateUnknown, 1); await uncertain.ObserveAsync(file, lateUnknown, 2);
         Check("v0.1.14 第二次探测未知覆盖旧的无残留断言", lateUnknown.VerificationStatus == RemediationVerificationStatus.Unknown);
         RemediationActionResult timed = new(); Stopwatch timer = Stopwatch.StartNew();
@@ -84,9 +84,20 @@ internal static partial class Program
         RemediationVerificationStatus Security(string mode = "Normal", bool? antivirus = true, bool? realtime = true,
             bool? behavior = true, bool thirdParty = false, bool known = true, bool error = false, int profiles = 3, bool reboot = false)
         {
-            JsonElement state = JsonSerializer.SerializeToElement(new { Mode = mode, Antivirus = antivirus, Realtime = realtime, Behavior = behavior,
-                ThirdParty = thirdParty, ThirdPartyKnown = known, DefenderError = error, FirewallError = false,
-                FirewallCount = 3, FirewallEnabled = profiles, RebootRequired = reboot });
+            JsonElement state = JsonSerializer.SerializeToElement(new
+            {
+                Mode = mode,
+                Antivirus = antivirus,
+                Realtime = realtime,
+                Behavior = behavior,
+                ThirdParty = thirdParty,
+                ThirdPartyKnown = known,
+                DefenderError = error,
+                FirewallError = false,
+                FirewallCount = 3,
+                FirewallEnabled = profiles,
+                RebootRequired = reboot
+            });
             return WindowsRemediationStateProbe.AssessSecurity(state).Status;
         }
         Check("v0.1.14 实际安全状态全部开启才验证", Security() == RemediationVerificationStatus.Verified);
@@ -127,8 +138,18 @@ internal static partial class Program
         MethodInfo proveProcess = typeof(BrokerEngine).GetMethod("VerifyDirectProcessContentAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
         async Task<bool> AllowsDirectProcess(string path, string hash, string? relatedPath = null)
         {
-            RemediationAction action = new() { Type = RemediationActionType.StopProcess, Target = path, RelatedFilePath = relatedPath ?? path,
-                ExpectedSha256 = hash, RelatedFileSha256 = hash, ProcessId = 123456, ProcessStartedAtUtc = started, ConfidenceScore = 99, IsKnownMalware = false };
+            RemediationAction action = new()
+            {
+                Type = RemediationActionType.StopProcess,
+                Target = path,
+                RelatedFilePath = relatedPath ?? path,
+                ExpectedSha256 = hash,
+                RelatedFileSha256 = hash,
+                ProcessId = 123456,
+                ProcessStartedAtUtc = started,
+                ConfidenceScore = 99,
+                IsKnownMalware = false
+            };
             try
             {
                 await using SecureFileLease lease = SecureFileLease.Open(path);
@@ -148,9 +169,15 @@ internal static partial class Program
         }
         RemediationAction Binding(string path, string hash, int score = 99) => new()
         {
-            Type = RemediationActionType.RemoveRegistryValue, RelatedFilePath = path, RelatedFileSha256 = hash,
-            IsKnownMalware = false, ConfidenceScore = score, RegistryHive = "HKCU", RegistryView = "Default",
-            RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RegistryValueName = "InertFixture"
+            Type = RemediationActionType.RemoveRegistryValue,
+            RelatedFilePath = path,
+            RelatedFileSha256 = hash,
+            IsKnownMalware = false,
+            ConfidenceScore = score,
+            RegistryHive = "HKCU",
+            RegistryView = "Default",
+            RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run",
+            RegistryValueName = "InertFixture"
         };
         for (int index = 0; index < textFixtures.Length; index++)
         {

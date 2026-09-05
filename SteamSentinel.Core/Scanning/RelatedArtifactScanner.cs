@@ -45,32 +45,40 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             {
                 try
                 {
-                token.ThrowIfCancellationRequested();
-                if (!file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)) { AddCandidate(file, report); continue; }
-                byte[] bytes;
-                await using (FileStream stream = RelatedArtifactReader.Open(file))
-                {
-                    if (stream.Length > 1024 * 1024 || stream.Length > MaximumVerificationBytes - _relatedBytesHashed)
-                    { Note(report, "启动快捷方式超过单项或关联读取预算：" + file); continue; }
-                    bytes = new byte[checked((int)stream.Length)];
-                    await stream.ReadExactlyAsync(bytes, token);
-                }
-                _relatedBytesHashed += bytes.Length;
-                report.Metrics.BytesHashed += bytes.Length;
-                ShortcutInspection shortcut = ShortcutInspector.Inspect(bytes);
-                string command = shortcut.Target + " " + shortcut.Arguments;
-                foreach (string target in CommandTargets.Extract(command)) AddCandidate(target, report);
-                var bound = await MatchCoreAsync(command, report, token);
-                if (bound is null) continue;
-                string hash = Hashing.Sha256Bytes(bytes);
-                report.Findings.Add(new Finding
-                {
-                    RuleId = "PERSISTENCE-STARTUP-LINK", Category = FindingCategory.Persistence, Severity = FindingSeverity.Critical,
-                    Score = 95, Title = "启动快捷方式指向已确认的恶意组件", Description = "只读解析启动目录快捷方式，未启动目标。",
-                    Target = file, Sha256 = hash, RelatedFilePath = bound.Value.Path, RelatedFileSha256 = bound.Value.Hash,
-                    Evidence = ScriptSignals.Redact(command), CanRemediate = true,
-                    SuggestedActions = [SuggestedActionKind.QuarantineFile]
-                });
+                    token.ThrowIfCancellationRequested();
+                    if (!file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)) { AddCandidate(file, report); continue; }
+                    byte[] bytes;
+                    await using (FileStream stream = RelatedArtifactReader.Open(file))
+                    {
+                        if (stream.Length > 1024 * 1024 || stream.Length > MaximumVerificationBytes - _relatedBytesHashed)
+                        { Note(report, "启动快捷方式超过单项或关联读取预算：" + file); continue; }
+                        bytes = new byte[checked((int)stream.Length)];
+                        await stream.ReadExactlyAsync(bytes, token);
+                    }
+                    _relatedBytesHashed += bytes.Length;
+                    report.Metrics.BytesHashed += bytes.Length;
+                    ShortcutInspection shortcut = ShortcutInspector.Inspect(bytes);
+                    string command = shortcut.Target + " " + shortcut.Arguments;
+                    foreach (string target in CommandTargets.Extract(command)) AddCandidate(target, report);
+                    var bound = await MatchCoreAsync(command, report, token);
+                    if (bound is null) continue;
+                    string hash = Hashing.Sha256Bytes(bytes);
+                    report.Findings.Add(new Finding
+                    {
+                        RuleId = "PERSISTENCE-STARTUP-LINK",
+                        Category = FindingCategory.Persistence,
+                        Severity = FindingSeverity.Critical,
+                        Score = 95,
+                        Title = "启动快捷方式指向已确认的恶意组件",
+                        Description = "只读解析启动目录快捷方式，未启动目标。",
+                        Target = file,
+                        Sha256 = hash,
+                        RelatedFilePath = bound.Value.Path,
+                        RelatedFileSha256 = bound.Value.Hash,
+                        Evidence = ScriptSignals.Redact(command),
+                        CanRemediate = true,
+                        SuggestedActions = [SuggestedActionKind.QuarantineFile]
+                    });
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
                 { notes.Add("启动目录文件无法读取：" + file); }
@@ -100,34 +108,46 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
     {
         foreach ((RegistryHive hive, RegistryView view) in new[] { (RegistryHive.CurrentUser, RegistryView.Default),
             (RegistryHive.LocalMachine, RegistryView.Registry64), (RegistryHive.LocalMachine, RegistryView.Registry32) })
-        foreach (string keyPath in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
-        {
-            try
+            foreach (string keyPath in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
             {
-                using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
-                using RegistryKey? key = baseKey.OpenSubKey(keyPath);
-                if (key is null) continue;
-                foreach (string name in key.GetValueNames().Take(1024))
+                try
                 {
-                    token.ThrowIfCancellationRequested();
-                    string command = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames)?.ToString() ?? "";
-                    var match = await MatchCoreAsync(command, report, token);
-                    if (match is null) continue;
-                    bool allowed = CanCloseEntry(match.Value.Path, match.Value.Hash, command, allowPatcher: true);
-                    AddCurrent(new Finding
+                    using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using RegistryKey? key = baseKey.OpenSubKey(keyPath);
+                    if (key is null) continue;
+                    foreach (string name in key.GetValueNames().Take(1024))
                     {
-                        RuleId = "PERSISTENCE-RUN-BOUND", Category = FindingCategory.Persistence, Severity = FindingSeverity.Critical,
-                        Score = ProofScore(match.Value.Path, match.Value.Hash), Title = "启动项关联已验证的风险文件", Description = "名称可能变化，按实际目标与文件哈希确认，未知哈希不标记为已知恶意。",
-                        Target = command, RegistryHive = hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM", RegistryView = view.ToString(),
-                        RegistryKey = keyPath, RegistryValueName = name, RelatedFilePath = match.Value.Path, RelatedFileSha256 = match.Value.Hash,
-                        ConfigurationSnapshot = command, Evidence = ScriptSignals.Redact(command), IsKnownMalware = _known.ContainsKey(match.Value.Hash), CanRemediate = allowed,
-                        SuggestedActions = allowed ? [SuggestedActionKind.RemoveRegistryValue] : [SuggestedActionKind.ReviewOnly]
-                    }, report);
+                        token.ThrowIfCancellationRequested();
+                        string command = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames)?.ToString() ?? "";
+                        var match = await MatchCoreAsync(command, report, token);
+                        if (match is null) continue;
+                        bool allowed = CanCloseEntry(match.Value.Path, match.Value.Hash, command, allowPatcher: true);
+                        AddCurrent(new Finding
+                        {
+                            RuleId = "PERSISTENCE-RUN-BOUND",
+                            Category = FindingCategory.Persistence,
+                            Severity = FindingSeverity.Critical,
+                            Score = ProofScore(match.Value.Path, match.Value.Hash),
+                            Title = "启动项关联已验证的风险文件",
+                            Description = "名称可能变化，按实际目标与文件哈希确认，未知哈希不标记为已知恶意。",
+                            Target = command,
+                            RegistryHive = hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM",
+                            RegistryView = view.ToString(),
+                            RegistryKey = keyPath,
+                            RegistryValueName = name,
+                            RelatedFilePath = match.Value.Path,
+                            RelatedFileSha256 = match.Value.Hash,
+                            ConfigurationSnapshot = command,
+                            Evidence = ScriptSignals.Redact(command),
+                            IsKnownMalware = _known.ContainsKey(match.Value.Hash),
+                            CanRemediate = allowed,
+                            SuggestedActions = allowed ? [SuggestedActionKind.RemoveRegistryValue] : [SuggestedActionKind.ReviewOnly]
+                        }, report);
+                    }
                 }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+                { report.CoverageNotes.Add("关联启动项未完整读取：" + ex.Message); report.Coverage = ScanCoverage.Partial; }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-            { report.CoverageNotes.Add("关联启动项未完整读取：" + ex.Message); report.Coverage = ScanCoverage.Partial; }
-        }
     }
 
     private async Task CollectTasksAsync(ScanReport report, CancellationToken token)
@@ -151,10 +171,20 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                     bool allowed = CanCloseEntry(match.Value.Path, match.Value.Hash, command, allowPatcher: true);
                     AddCurrent(new Finding
                     {
-                        RuleId = "PERSISTENCE-TASK-BOUND", Category = FindingCategory.Persistence, Severity = FindingSeverity.Critical,
-                        Score = ProofScore(match.Value.Path, match.Value.Hash), Title = "计划任务关联已验证的风险文件", Description = "任务配置与目标文件分别核对哈希，仅支持管理员组件可独立复核的内容证据。",
-                        Target = task, Sha256 = snapshot.Sha256, RelatedFilePath = match.Value.Path, RelatedFileSha256 = match.Value.Hash,
-                        ConfigurationSnapshot = string.Join("\n", snapshot.Invocations), Evidence = ScriptSignals.Redact(command), IsKnownMalware = _known.ContainsKey(match.Value.Hash), CanRemediate = allowed,
+                        RuleId = "PERSISTENCE-TASK-BOUND",
+                        Category = FindingCategory.Persistence,
+                        Severity = FindingSeverity.Critical,
+                        Score = ProofScore(match.Value.Path, match.Value.Hash),
+                        Title = "计划任务关联已验证的风险文件",
+                        Description = "任务配置与目标文件分别核对哈希，仅支持管理员组件可独立复核的内容证据。",
+                        Target = task,
+                        Sha256 = snapshot.Sha256,
+                        RelatedFilePath = match.Value.Path,
+                        RelatedFileSha256 = match.Value.Hash,
+                        ConfigurationSnapshot = string.Join("\n", snapshot.Invocations),
+                        Evidence = ScriptSignals.Redact(command),
+                        IsKnownMalware = _known.ContainsKey(match.Value.Hash),
+                        CanRemediate = allowed,
                         SuggestedActions = allowed ? [SuggestedActionKind.RemoveScheduledTask] : [SuggestedActionKind.ReviewOnly]
                     }, report);
                     break;
@@ -186,11 +216,20 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                 bool allowed = CanCloseEntry(match.Value.Path, match.Value.Hash, command, allowPatcher: false);
                 AddCurrent(new Finding
                 {
-                    RuleId = "PERSISTENCE-SERVICE-BOUND", Category = FindingCategory.Persistence, Severity = FindingSeverity.Critical,
-                    Score = ProofScore(match.Value.Path, match.Value.Hash), Title = "服务启动链关联已验证的风险文件", Description = "仅已知恶意文件允许禁用此服务启动，不删除服务，也不操作驱动，其他证据仅供核对。",
-                    Target = name, ConfigurationSnapshot = command, ConfigurationKind = start.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    RelatedFilePath = match.Value.Path, RelatedFileSha256 = match.Value.Hash, Evidence = ScriptSignals.Redact(command),
-                    IsKnownMalware = _known.ContainsKey(match.Value.Hash), CanRemediate = allowed,
+                    RuleId = "PERSISTENCE-SERVICE-BOUND",
+                    Category = FindingCategory.Persistence,
+                    Severity = FindingSeverity.Critical,
+                    Score = ProofScore(match.Value.Path, match.Value.Hash),
+                    Title = "服务启动链关联已验证的风险文件",
+                    Description = "仅已知恶意文件允许禁用此服务启动，不删除服务，也不操作驱动，其他证据仅供核对。",
+                    Target = name,
+                    ConfigurationSnapshot = command,
+                    ConfigurationKind = start.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    RelatedFilePath = match.Value.Path,
+                    RelatedFileSha256 = match.Value.Hash,
+                    Evidence = ScriptSignals.Redact(command),
+                    IsKnownMalware = _known.ContainsKey(match.Value.Hash),
+                    CanRemediate = allowed,
                     SuggestedActions = allowed ? [SuggestedActionKind.DisableService] : [SuggestedActionKind.ReviewOnly]
                 }, report);
             }
@@ -210,9 +249,15 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             if (signals.Count == 0) continue;
             report.Findings.Add(new Finding
             {
-                RuleId = "HISTORY-CLICKFIX", Category = FindingCategory.Persistence, Severity = FindingSeverity.High, Score = 75,
-                Title = "运行历史中出现可疑验证执行链", Description = "历史记录不是当前仍在运行的证明，其他启动方式可能不留此记录。",
-                Target = "RunMRU/" + name, Evidence = string.Join("，", signals), CanRemediate = false,
+                RuleId = "HISTORY-CLICKFIX",
+                Category = FindingCategory.Persistence,
+                Severity = FindingSeverity.High,
+                Score = 75,
+                Title = "运行历史中出现可疑验证执行链",
+                Description = "历史记录不是当前仍在运行的证明，其他启动方式可能不留此记录。",
+                Target = "RunMRU/" + name,
+                Evidence = string.Join("，", signals),
+                CanRemediate = false,
                 SuggestedActions = [SuggestedActionKind.ReviewOnly]
             });
         }

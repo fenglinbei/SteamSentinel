@@ -63,9 +63,17 @@ public static class RelatedArtifactRelations
                 hash.Equals(FileHash(f), StringComparison.OrdinalIgnoreCase));
             if (file is null && known.Contains(hash)) file = new Finding
             {
-                RuleId = "RELATION-KNOWN-HASH", Category = FindingCategory.File, Severity = FindingSeverity.Critical, Score = 100,
-                Title = "隔离关联的已知恶意文件", Target = path, Sha256 = hash, TargetSha256 = hash,
-                IsKnownMalware = true, CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+                RuleId = "RELATION-KNOWN-HASH",
+                Category = FindingCategory.File,
+                Severity = FindingSeverity.Critical,
+                Score = 100,
+                Title = "隔离关联的已知恶意文件",
+                Target = path,
+                Sha256 = hash,
+                TargetSha256 = hash,
+                IsKnownMalware = true,
+                CanRemediate = true,
+                SuggestedActions = [SuggestedActionKind.QuarantineFile]
             };
             if (file is null) continue;
             result.Add(file);

@@ -106,7 +106,7 @@ internal sealed partial class BrokerEngine
     private static string TaskCommands(string xml)
     {
         using XmlReader reader = XmlReader.Create(new StringReader(xml), new XmlReaderSettings
-            { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 2 * 1024 * 1024 });
+        { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 2 * 1024 * 1024 });
         XDocument document = XDocument.Load(reader);
         if (document.Root?.Name.LocalName != "Task") throw new InvalidDataException("不是有效的任务 XML。");
         XElement[] commands = document.Root.Elements().Where(element => element.Name.LocalName == "Actions")
@@ -251,19 +251,30 @@ internal sealed partial class BrokerEngine
     }
 
     private static Dictionary<string, string> ConfigEnvironment(object value) => new()
-        { ["SS_CONFIG"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))) };
+    { ["SS_CONFIG"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))) };
 
     private static QuarantineRecord BoundRecord(RemediationAction action) => new()
     {
-        ActionId = action.ActionId, Type = action.Type, OriginalTarget = action.Target, Sha256 = action.ExpectedSha256,
-        RelatedFilePath = action.RelatedFilePath, RelatedFileSha256 = action.RelatedFileSha256,
-        ConfigurationKind = action.ConfigurationKind, ConfigurationSnapshot = action.ConfigurationSnapshot, MutationConfirmed = false
+        ActionId = action.ActionId,
+        Type = action.Type,
+        OriginalTarget = action.Target,
+        Sha256 = action.ExpectedSha256,
+        RelatedFilePath = action.RelatedFilePath,
+        RelatedFileSha256 = action.RelatedFileSha256,
+        ConfigurationKind = action.ConfigurationKind,
+        ConfigurationSnapshot = action.ConfigurationSnapshot,
+        MutationConfirmed = false
     };
 
     private static RemediationAction FromRecord(QuarantineRecord record) => new()
     {
-        ActionId = record.ActionId, Type = record.Type, Target = record.OriginalTarget, ExpectedSha256 = record.Sha256,
-        RelatedFilePath = record.RelatedFilePath, RelatedFileSha256 = record.RelatedFileSha256,
-        ConfigurationKind = record.ConfigurationKind, ConfigurationSnapshot = record.ConfigurationSnapshot
+        ActionId = record.ActionId,
+        Type = record.Type,
+        Target = record.OriginalTarget,
+        ExpectedSha256 = record.Sha256,
+        RelatedFilePath = record.RelatedFilePath,
+        RelatedFileSha256 = record.RelatedFileSha256,
+        ConfigurationKind = record.ConfigurationKind,
+        ConfigurationSnapshot = record.ConfigurationSnapshot
     };
 }

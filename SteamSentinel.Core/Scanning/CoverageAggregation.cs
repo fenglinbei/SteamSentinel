@@ -16,7 +16,8 @@ public static class CoverageAggregation
     public static void Add(ScanReport report, string ruleId, string root, string example)
     {
         report.Coverage = ScanCoverage.Partial;
-        if (ruleId is not ("CONTENT-BYTE-BUDGET" or "QUICK-FILE-SIZE" or "QUICK-MEDIA-STRUCTURE"))
+        if (ruleId is not ("CONTENT-BYTE-BUDGET" or "QUICK-FILE-SIZE" or "QUICK-MEDIA-STRUCTURE" or
+            "QUICK-CONTENT-NOT-HASHED"))
             throw new ArgumentException("This coverage reason requires an individual record.", nameof(ruleId));
         if (string.IsNullOrWhiteSpace(root) || root.Length > CoverageAggregate.MaximumRootCharacters)
             throw new ScanResourceLimitException("覆盖补查根路径超过安全长度，已保留此前结果，不能静默截断补查目标。");

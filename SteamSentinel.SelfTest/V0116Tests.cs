@@ -17,8 +17,16 @@ internal static partial class Program
         string file = Path.Combine(directory, "inert.bin"); await File.WriteAllBytesAsync(file, new byte[1024 * 1024]);
         string hash = await Hashing.Sha256FileAsync(file);
         Finding FindingFor(string path, string? identity = null, string? content = null) => new()
-        { Target = path, Sha256 = identity ?? hash, TargetSha256 = identity ?? hash, ContentPath = content,
-            Score = 95, RuleId = "INERT-TEST", CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile] };
+        {
+            Target = path,
+            Sha256 = identity ?? hash,
+            TargetSha256 = identity ?? hash,
+            ContentPath = content,
+            Score = 95,
+            RuleId = "INERT-TEST",
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
+        };
         Finding[] duplicates = Enumerable.Range(0, 200).Select(i => FindingFor(file, content: file + "!/inner-" + i)).ToArray();
         RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(new()).ExpandAsync(duplicates, new() { Findings = duplicates.ToList() });
         Check("0.1.16 总核验额度使用 long 型 4 GiB，保留单文件限制", RelatedArtifactScanner.MaximumVerificationBytes == 4294967296L);
@@ -43,8 +51,17 @@ internal static partial class Program
         Check("0.1.16 单文件256MiB限制仍拒绝超限文件并释放句柄", largeExpansion.Findings.All(f => !f.CanRemediate) && largeExpansion.Notes.Any(n => n.Contains("单文件 256 MiB")));
         using (FileStream largeUnlocked = File.Open(large, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Check("0.1.16 超限路径不残留占用", largeUnlocked.CanWrite);
 
-        ScanOptions originalSettings = new() { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false,
-            IncludeWorkshop = false, InspectArchives = true, HashEveryFile = true, CustomRoots = [directory], UseAmsi = false };
+        ScanOptions originalSettings = new()
+        {
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            InspectArchives = true,
+            HashEveryFile = true,
+            CustomRoots = [directory],
+            UseAmsi = false
+        };
         ScanReport report = new() { Findings = duplicates.ToList(), ContentScanSettings = originalSettings };
         RemediationBatchSession one = await new RemediationBatchPlanner(new()).PrepareAsync(duplicates, report, false,
             (_, _) => Task.FromResult(new ScanReport { ContentScanSettings = new() { InspectArchives = false, CustomRoots = [file] } }));
@@ -72,19 +89,41 @@ internal static partial class Program
         Check("0.1.16 七十个目标自动拆批且无遗漏", packed.Plans.Count == 2 && packed.Plans.All(p => p.Actions.Count <= 64) &&
             packed.Targets.Count == 70 && packed.Targets.All(t => t.ActionIds.Count == 1 && t.MissingActions.Count == 0) && packed.Plans.Sum(p => p.Actions.Count) == 70);
         Finding relatedFile = many[0];
-        Finding process = new() { Target = file, RelatedFilePath = relatedFile.Target, ProcessId = 123456,
-            SuggestedActions = [SuggestedActionKind.StopHostProcess], CanRemediate = true };
-        Finding shared = new() { Target = file, RelatedFilePath = many[1].Target, ProcessId = 123456,
-            SuggestedActions = [SuggestedActionKind.StopHostProcess], CanRemediate = true };
+        Finding process = new()
+        {
+            Target = file,
+            RelatedFilePath = relatedFile.Target,
+            ProcessId = 123456,
+            SuggestedActions = [SuggestedActionKind.StopHostProcess],
+            CanRemediate = true
+        };
+        Finding shared = new()
+        {
+            Target = file,
+            RelatedFilePath = many[1].Target,
+            ProcessId = 123456,
+            SuggestedActions = [SuggestedActionKind.StopHostProcess],
+            CanRemediate = true
+        };
         Check("0.1.16 共享宿主进程及两个文件始终同组", RemediationBatchPlanner.DependencyGroups([relatedFile, process, shared, many[1]]).Count == 1);
         Finding parent = new() { Target = directory, CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineDirectory] };
         Check("0.1.16 父目录与其内文件不跨批拆开", RemediationBatchPlanner.DependencyGroups([parent, many[2]]).Count == 1);
 
         int calls = 0;
         RemediationRunResult Success(RemediationPlan plan) => new()
-        { PlanId = plan.PlanId, Success = true, VerificationStatus = RemediationVerificationStatus.Verified,
-            Actions = plan.Actions.Select(a => new RemediationActionResult { ActionId = a.ActionId, Target = a.Target, Type = a.Type, Success = true,
-                VerificationStatus = RemediationVerificationStatus.NoResidual }).ToList() };
+        {
+            PlanId = plan.PlanId,
+            Success = true,
+            VerificationStatus = RemediationVerificationStatus.Verified,
+            Actions = plan.Actions.Select(a => new RemediationActionResult
+            {
+                ActionId = a.ActionId,
+                Target = a.Target,
+                Type = a.Type,
+                Success = true,
+                VerificationStatus = RemediationVerificationStatus.NoResidual
+            }).ToList()
+        };
         await RemediationBatchPlanner.ExecuteAsync(packed, p => { calls++; return Task.FromResult(Success(p)); });
         Check("0.1.16 全批模拟执行逐项成功且没有运行Broker", calls == 2 && packed.Targets.All(t => t.Status == "已完成") && packed.Results.Count == 2);
         bool refused = false;

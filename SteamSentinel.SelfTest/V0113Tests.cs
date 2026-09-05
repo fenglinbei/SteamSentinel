@@ -22,8 +22,17 @@ internal static partial class Program
             file.Position = 12 * 1024 * 1024; await file.WriteAsync(Encoding.UTF8.GetBytes("SupportMessages HelpFrontPage steamhelper"));
             file.Position = 30 * 1024 * 1024; await file.WriteAsync(Encoding.Unicode.GetBytes("bSupportPopupMessage"));
         }
-        ScanOptions options = new() { Mode = ScanMode.Full, IncludeSteam = false, IncludeSystem = false,
-            IncludeWorkshop = false, UseAmsi = false, InspectArchives = true, HashEveryFile = true, CustomRoots = [fixture] };
+        ScanOptions options = new()
+        {
+            Mode = ScanMode.Full,
+            IncludeSteam = false,
+            IncludeSystem = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            InspectArchives = true,
+            HashEveryFile = true,
+            CustomRoots = [fixture]
+        };
         ScanReport strings = await new ScanCoordinator(new RuleSet()).RunAsync(options);
         Check("32 MiB 分块分析保留跨块与双编码组合命中", strings.Findings.Any(f => f.RuleId == "HEUR-STEAM-UI-PATCHER" && f.CanRemediate));
         Check("分块分析保留完整外层哈希绑定", strings.Findings.All(f => f.TargetSha256?.Length == 64));
@@ -35,8 +44,15 @@ internal static partial class Program
             await file.WriteAsync(Encoding.UTF8.GetBytes("Invoke-WebRequest https://example.invalid"));
             file.Position = 2 * 1024 * 1024; await file.WriteAsync(Encoding.Unicode.GetBytes("Start-Process steamprocess Add-MpPreference"));
         }
-        ScanReport scriptReport = await new ScanCoordinator(new RuleSet()).RunAsync(new ScanOptions { Mode = ScanMode.Custom,
-            IncludeSteam = false, IncludeSystem = false, IncludeWorkshop = false, UseAmsi = false, CustomRoots = [script] });
+        ScanReport scriptReport = await new ScanCoordinator(new RuleSet()).RunAsync(new ScanOptions
+        {
+            Mode = ScanMode.Custom,
+            IncludeSteam = false,
+            IncludeSystem = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            CustomRoots = [script]
+        });
         Check("脚本链信号跨窗口累积，不仅检查文件开头", scriptReport.Findings.Any(f => f.RuleId == "HEUR-STEAM-DEPLOYMENT-CHAIN"));
 
         ScanReport many = new() { ContentScanSettings = options };
@@ -74,8 +90,11 @@ internal static partial class Program
         try { new ScanResourceGuard().Check(excess); } catch (ScanResourceLimitException) { rejected = true; }
         Check("结果积累上限可控停止，不静默丢弃", rejected);
 
-        ScanReport partial = new() { ContentScanSettings = options,
-            WorkerDiagnostics = new("压缩包目录", "inert.zip!/inner.rar?token=secret", "读取目录", 500, 600, 400, DateTimeOffset.UtcNow, "OutOfMemoryException", "inert stack") };
+        ScanReport partial = new()
+        {
+            ContentScanSettings = options,
+            WorkerDiagnostics = new("压缩包目录", "inert.zip!/inner.rar?token=secret", "读取目录", 500, 600, 400, DateTimeOffset.UtcNow, "OutOfMemoryException", "inert stack")
+        };
         partial.Findings.Add(strings.Findings.First()); partial.Metrics.FilesVisited = 3;
         ScanReport preserved = ScanFailureReports.PreserveSystemResults(new() { Metrics = new() { ProcessesVisited = 7 } },
             ScanMode.Full, [], "fixture", new WorkerFailureException(WorkerStage.Scanning, 1, "inert OOM") { PartialReport = partial }, false);
@@ -93,25 +112,50 @@ internal static partial class Program
             Task.FromResult(new ArchivePasswordResponse(r.RequestId, true, null, false));
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
         string second = Path.Combine(directory, "large-second.dat"); File.Copy(fixture, second);
-        ScanReport lowLarge = await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions { Mode = ScanMode.Full,
-            IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false,
-            HashEveryFile = true, CustomRoots = [fixture, second, script] }, NoPassword, null, timeout.Token);
+        ScanReport lowLarge = await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions
+        {
+            Mode = ScanMode.Full,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            HashEveryFile = true,
+            CustomRoots = [fixture, second, script]
+        }, NoPassword, null, timeout.Token);
         Check("真实 Low Worker 连续分析两个 32 MiB 文件与分散脚本信号", lowLarge.Findings.Count(f => f.CanRemediate) == 3 && lowLarge.Metrics.FilesVisited == 3);
         Check("真实扫描保留内存诊断且仍在 1 GiB Job 内", lowLarge.WorkerDiagnostics is { PrivateBytes: > 0, PeakPrivateBytes: < 1024L * 1024 * 1024 });
         Console.WriteLine($"V0113_LARGE_PEAK_MIB={lowLarge.WorkerDiagnostics!.PeakPrivateBytes / 1024 / 1024}");
         string manyFiles = Path.Combine(directory, "many"); Directory.CreateDirectory(manyFiles);
         for (int i = 0; i < 6000; i++) await File.WriteAllTextAsync(Path.Combine(manyFiles, $"item-{i:D5}.dat"), "x");
-        ScanReport lowMany = await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions { Mode = ScanMode.Full,
-            IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false,
-            MaximumContentBytes = 0, CustomRoots = [manyFiles] }, NoPassword, null, timeout.Token);
+        ScanReport lowMany = await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions
+        {
+            Mode = ScanMode.Full,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            MaximumContentBytes = 0,
+            CustomRoots = [manyFiles]
+        }, NoPassword, null, timeout.Token);
         Check("真实 Low Worker 六千次覆盖缺口聚合完整交回", lowMany.Metrics.FilesVisited == 6000 &&
             lowMany.Findings.Count == 0 && lowMany.CoverageAggregates.Single().Count == 6000 && lowMany.Coverage == ScanCoverage.Partial &&
             lowMany.RootSummaries.Single().Coverage == ScanCoverage.Partial);
         Console.WriteLine($"V0113_MANY_PEAK_MIB={lowMany.WorkerDiagnostics!.PeakPrivateBytes / 1024 / 1024}");
         WorkerFailureException? limited = null;
-        try { await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions { Mode = ScanMode.Full, IncludeSystem = false,
-            IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false, MaximumContentBytes = 0, MaximumFiles = 2,
-            CustomRoots = Directory.EnumerateFiles(manyFiles).Take(3).ToList() }, NoPassword, null, timeout.Token); }
+        try
+        {
+            await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions
+            {
+                Mode = ScanMode.Full,
+                IncludeSystem = false,
+                IncludeSteam = false,
+                IncludeWorkshop = false,
+                UseAmsi = false,
+                MaximumContentBytes = 0,
+                MaximumFiles = 2,
+                CustomRoots = Directory.EnumerateFiles(manyFiles).Take(3).ToList()
+            }, NoPassword, null, timeout.Token);
+        }
         catch (WorkerFailureException ex) { limited = ex; }
         Check("真实跨根目录总文件上限保留前两项并说明未完成", limited?.PartialReport?.Metrics.FilesVisited == 2 &&
             limited.PartialReport.CoverageAggregates.Sum(a => a.Count) == 2 &&

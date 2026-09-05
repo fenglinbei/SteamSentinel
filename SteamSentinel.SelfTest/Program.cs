@@ -26,9 +26,12 @@ internal static partial class Program
     {
         string executableName = Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? string.Empty;
         const string fixturePrefix = "SteamSentinelFixture-";
+        if (executableName == fixturePrefix + "inheritance") return await RunV0117InheritanceProbeAsync();
         if (executableName.StartsWith(fixturePrefix, StringComparison.Ordinal))
             return await RunWorkerFixtureAsync(executableName[fixturePrefix.Length..]);
-        if (args.Length > 0) return await RunUtilityAsync(args);
+        string? resultsPath = args.Length == 2 && args[0] == "--results" ? Path.GetFullPath(args[1]) : null;
+        if (args.Length > 0 && resultsPath is null) return await RunUtilityAsync(args);
+        Stopwatch elapsed = Stopwatch.StartNew();
 
         string root = Path.Combine(Path.GetTempPath(), "SteamSentinel-SelfTest-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -58,6 +61,13 @@ internal static partial class Program
             await TestV0114BrokerAsync(root);
             await TestV0114UiAsync(root);
             await TestV0116Async(root);
+            await TestV0117UiAsync(root);
+            TestV0119Copy();
+            TestV0119PasswordBoundaries();
+            await TestV0119PasswordsAsync(root, rules);
+            await TestV0117ScannerAsync(root);
+            await TestV0117SecurityAsync(root);
+            TestV0117ReleaseEngineering();
             await TestWorkerProtocolAsync(root);
             await TestRestrictedWorkerClientAsync(root);
             await TestPlanBuilderAsync(root, rules);
@@ -76,8 +86,26 @@ internal static partial class Program
             foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
             return Failures.Count == 0 ? 0 : 1;
         }
+        catch (Exception ex)
+        {
+            Failures.Add("自检发生未处理异常：" + ex);
+            Console.Error.WriteLine(ex);
+            return 1;
+        }
         finally
         {
+            if (resultsPath is not null)
+                await JsonFile.WriteAtomicAsync(resultsPath, new
+                {
+                    passed = _passed,
+                    failed = Failures.Count,
+                    skipped = _skipped,
+                    elapsedMs = elapsed.ElapsedMilliseconds,
+                    version = ProductInfo.Version,
+                    buildIdentity = ProductInfo.BuildIdentity,
+                    failures = Failures,
+                    completedAtUtc = DateTimeOffset.UtcNow
+                });
             string full = Path.GetFullPath(root);
             string temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
             if (full.StartsWith(temp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
@@ -91,7 +119,7 @@ internal static partial class Program
     private static async Task TestFileTypesAsync(string root)
     {
         string disguised = Path.Combine(root, "video.mp4");
-        await File.WriteAllBytesAsync(disguised, [0x4D, 0x5A, 0, 0, 0, 0]);
+        await File.WriteAllBytesAsync(disguised, CreateV0117PeHeader());
         FileTypeResult type = await FileTypeDetector.DetectAsync(disguised);
         Check("MZ 改名 MP4", type.Type == DetectedFileType.PortableExecutable && type.ExtensionMismatch);
 
@@ -349,7 +377,7 @@ internal static partial class Program
         string directory = Path.Combine(root, "defaultprojects-fixture");
         Directory.CreateDirectory(directory);
         string executable = Path.Combine(directory, "legitimate-engine.exe");
-        await File.WriteAllBytesAsync(executable, [0x4D, 0x5A, 0, 0, 0, 0]);
+        await File.WriteAllBytesAsync(executable, CreateV0117PeHeader());
         ScanReport report = new() { Mode = ScanMode.Full, RuleSetVersion = rules.Version };
         using ContentScanner scanner = new(rules);
         await scanner.ScanRootAsync(directory, report, new ScanOptions
@@ -677,6 +705,10 @@ internal static partial class Program
     {
         switch (args[0])
         {
+            case "--password-v0119" when args.Length is 2 or 3:
+                return await RunV0119PasswordsAsync(args[1], args.Length == 3 ? args[2] : null);
+            case "--smoke-v0117" when args.Length is 2 or 3:
+                return await RunV0117SmokeAsync(args[1], args.Length == 3 ? args[2] : null);
             case "--elevated-worker-smoke" when args.Length == 1:
                 return await RunElevatedWorkerSmokeAsync();
             case "--installation-check" when args.Length == 2:
@@ -686,6 +718,8 @@ internal static partial class Program
                 return installation.IsProtected ? 0 : 1;
             case "--render-ui" when args.Length == 2:
                 return UiPreview.Render(args[1]);
+            case "--layout-ui" when args.Length == 2:
+                return RunV0117LayoutUi(args[1]);
             case "--ui-dispatcher-test" when args.Length == 1:
                 TestV016Dialog();
                 Console.WriteLine($"UI_DISPATCHER_PASS={_passed};FAIL={Failures.Count}");

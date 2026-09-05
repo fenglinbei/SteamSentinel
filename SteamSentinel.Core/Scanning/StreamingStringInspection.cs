@@ -12,9 +12,13 @@ internal static class StreamingStringInspection
     private const int OverlapBytes = 144 * 1024;
 
     internal static async Task<(HashSet<string> Raw, HashSet<string> Script)> ReadAsync(
-        string path, IEnumerable<string> ruleTokens, long limit, CancellationToken token)
+        string path, IEnumerable<string> ruleTokens, IEnumerable<string> domainTokens, long limit, CancellationToken token)
     {
-        string[] needles = ruleTokens.Concat(ContentHeuristics.Tokens).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        ArgumentOutOfRangeException.ThrowIfNegative(limit);
+        HashSet<string> domains = domainTokens.Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string[] needles = ruleTokens.Concat(domains).Concat(ContentHeuristics.Tokens)
+            .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         HashSet<string> raw = new(StringComparer.OrdinalIgnoreCase), script = new(StringComparer.OrdinalIgnoreCase);
         byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkBytes + OverlapBytes);
         try
@@ -35,6 +39,7 @@ internal static class StreamingStringInspection
                 // Preserve UTF-16LE byte alignment even if the stream returns a short, odd-sized read.
                 int alignment = (int)((total - count) & 1);
                 Inspect(Encoding.Unicode.GetString(buffer, alignment, (count - alignment) & ~1));
+                Inspect(Encoding.BigEndianUnicode.GetString(buffer, alignment, (count - alignment) & ~1));
                 retained = Math.Min(OverlapBytes, count);
                 Buffer.BlockCopy(buffer, count - retained, buffer, 0, retained);
             }
@@ -45,10 +50,30 @@ internal static class StreamingStringInspection
         void Inspect(string text)
         {
             foreach (string needle in needles)
-                if (!raw.Contains(needle) && text.Contains(needle, StringComparison.OrdinalIgnoreCase)) raw.Add(needle);
+                if (!raw.Contains(needle) && (domains.Contains(needle)
+                        ? ContainsDomain(text, needle)
+                        : text.Contains(needle, StringComparison.OrdinalIgnoreCase))) raw.Add(needle);
             string normalized = ScriptSignals.Normalize(text);
             foreach (string needle in ScriptSignals.Tokens)
                 if (!script.Contains(needle) && normalized.Contains(needle, StringComparison.OrdinalIgnoreCase)) script.Add(needle);
         }
     }
+
+    private static bool ContainsDomain(string text, string domain)
+    {
+        int start = 0;
+        while (start <= text.Length - domain.Length)
+        {
+            int index = text.IndexOf(domain, start, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) return false;
+            bool left = index == 0 || text[index - 1] == '.' || !IsDomainCharacter(text[index - 1]);
+            int end = index + domain.Length;
+            bool right = end == text.Length || !IsDomainCharacter(text[end]);
+            if (left && right) return true;
+            start = index + 1;
+        }
+        return false;
+    }
+
+    private static bool IsDomainCharacter(char value) => char.IsAsciiLetterOrDigit(value) || value is '-' or '.';
 }

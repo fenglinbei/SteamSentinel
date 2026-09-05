@@ -46,13 +46,23 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
             ReportOffsets offsets = new(_findings, _notes, _roots, _sources, _summaries, _candidates, _scope);
             ScanReport data = new()
             {
-                ScanId = report.ScanId, Mode = report.Mode, StartedAtUtc = report.StartedAtUtc,
-                CompletedAtUtc = final ? report.CompletedAtUtc : null, RuleSetVersion = report.RuleSetVersion,
-                Coverage = report.Coverage, Metrics = report.Metrics, ContentScanSettings = Count == 0 ? report.ContentScanSettings : null,
+                ProductVersion = report.ProductVersion,
+                BuildIdentity = report.BuildIdentity,
+                ScanId = report.ScanId,
+                Mode = report.Mode,
+                StartedAtUtc = report.StartedAtUtc,
+                CompletedAtUtc = final ? report.CompletedAtUtc : null,
+                RuleSetVersion = report.RuleSetVersion,
+                Coverage = report.Coverage,
+                Metrics = report.Metrics,
+                ContentScanSettings = Count == 0 ? report.ContentScanSettings : null,
                 WorkerDiagnostics = report.WorkerDiagnostics,
-                Findings = Take(report.Findings, ref _findings), CoverageNotes = Take(report.CoverageNotes, ref _notes),
-                Roots = Take(report.Roots, ref _roots), ContentSources = Take(report.ContentSources, ref _sources),
-                RootSummaries = Take(report.RootSummaries, ref _summaries), CandidateRoots = Take(report.CandidateRoots, ref _candidates),
+                Findings = Take(report.Findings, ref _findings),
+                CoverageNotes = Take(report.CoverageNotes, ref _notes),
+                Roots = Take(report.Roots, ref _roots),
+                ContentSources = Take(report.ContentSources, ref _sources),
+                RootSummaries = Take(report.RootSummaries, ref _summaries),
+                CandidateRoots = Take(report.CandidateRoots, ref _candidates),
                 ScopeNotes = Take(report.ScopeNotes, ref _scope)
             };
             List<CoverageAggregateUpdate> updates = [];
@@ -92,8 +102,16 @@ public sealed class ReportBatchReader
     {
         if (batch.Sequence != Count) throw new InvalidDataException("扫描结果批次不连续，不能作为完整结果。");
         ScanReport data = batch.Data;
-        Report ??= new ScanReport { ScanId = data.ScanId, Mode = data.Mode, StartedAtUtc = data.StartedAtUtc,
-            RuleSetVersion = data.RuleSetVersion, ContentScanSettings = data.ContentScanSettings };
+        Report ??= new ScanReport
+        {
+            ProductVersion = data.ProductVersion,
+            BuildIdentity = data.BuildIdentity,
+            ScanId = data.ScanId,
+            Mode = data.Mode,
+            StartedAtUtc = data.StartedAtUtc,
+            RuleSetVersion = data.RuleSetVersion,
+            ContentScanSettings = data.ContentScanSettings
+        };
         if (Report.ScanId != data.ScanId) throw new InvalidDataException("扫描结果标识不一致。");
         ReportOffsets o = batch.Offsets;
         // Validate every range before mutating, so a rejected batch cannot partially add findings.

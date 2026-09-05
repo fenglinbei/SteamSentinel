@@ -2,10 +2,12 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="处置动作预览"
-        Width="820" Height="600"
+        Width="860" Height="620" MinWidth="456" MinHeight="400"
+        FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="12"
+        ResizeMode="CanResize" UseLayoutRounding="True"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
-    <Grid Margin="22">
+    <Grid x:Name="PreviewLayout" Margin="12" SizeChanged="PreviewLayout_SizeChanged">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -14,62 +16,124 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock FontSize="23" FontWeight="SemiBold" Text="请核对每一项处置动作" />
-        <Border Grid.Row="1" Margin="0,12,0,12" Background="#FFF4ED" BorderBrush="#FFB088" BorderThickness="1" CornerRadius="6" Padding="12">
-            <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-                <StackPanel>
-                    <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                    <TextBlock TextWrapping="Wrap" Text="本方案可能包含已核实的关联启动项、进程和文件。请先保存工作，关闭相关程序可能中断游戏。启发式项仍需你核对，隔离保留回滚记录，不会立即永久删除。" />
-                    <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{Binding PlanNotes}" />
-                </StackPanel>
-            </ScrollViewer>
+        <TextBlock FontSize="18" FontWeight="SemiBold" Text="请核对每一项处置动作" TextWrapping="Wrap" />
+        <Border Grid.Row="1" Margin="0,6,0,6" Background="#FFF4ED" BorderBrush="#FFB088" BorderThickness="1" CornerRadius="6" Padding="8">
+            <TextBlock Text="请先保存工作。关闭进程可能中断游戏；隔离不会立即永久删除。" TextWrapping="Wrap" />
         </Border>
 
         <TabControl x:Name="PreviewTabs" Grid.Row="2">
-        <TabItem Header="本次将执行">
-        <DataGrid ItemsSource="{Binding GroupedActions}" AutoGenerateColumns="False" IsReadOnly="True"
-                  CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" RowDetailsVisibilityMode="VisibleWhenSelected">
-            <DataGrid.GroupStyle>
-                <GroupStyle><GroupStyle.HeaderTemplate><DataTemplate>
-                    <TextBlock Text="{Binding Name, StringFormat=关联目标：{0}}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="4,10,4,4" />
-                </DataTemplate></GroupStyle.HeaderTemplate></GroupStyle>
-            </DataGrid.GroupStyle>
-            <DataGrid.RowDetailsTemplate><DataTemplate>
-                <TextBlock Text="{Binding ExpectedIdentity, StringFormat=核对依据：{0}}" TextWrapping="Wrap" MaxWidth="720" Margin="10" />
-            </DataTemplate></DataGrid.RowDetailsTemplate>
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="批次" Binding="{Binding Batch}" Width="50" />
-                <DataGridTextColumn Header="动作" Binding="{Binding Type}" Width="130" />
-                <DataGridTextColumn Header="判定" Binding="{Binding Confidence}" Width="90" />
-                <DataGridTextColumn Header="说明" Binding="{Binding DisplayName}" Width="190" />
-                <DataGridTextColumn Header="精确目标" Binding="{Binding Target}" Width="*" MinWidth="310">
-                    <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock">
-                        <Setter Property="TextWrapping" Value="Wrap"/><Setter Property="ToolTip" Value="{Binding Target}"/>
-                    </Style></DataGridTextColumn.ElementStyle>
-                </DataGridTextColumn>
-            </DataGrid.Columns>
-        </DataGrid>
-        </TabItem>
-        <TabItem Header="未全部纳入">
-            <DataGrid ItemsSource="{Binding OmittedTargets}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="目标" Binding="{Binding Target}" Width="*" MinWidth="260">
-                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="ToolTip" Value="{Binding Target}"/></Style></DataGridTextColumn.ElementStyle>
-                    </DataGridTextColumn>
-                    <DataGridTextColumn Header="原因" Binding="{Binding Reason}" Width="*" MinWidth="300">
-                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style></DataGridTextColumn.ElementStyle>
-                    </DataGridTextColumn>
-                </DataGrid.Columns>
-            </DataGrid>
-        </TabItem>
+            <TabItem Header="本次将执行">
+                <DataGrid x:Name="PreviewActionsGrid" ItemsSource="{Binding GroupedActions}" AutoGenerateColumns="False" IsReadOnly="True"
+                          CanUserAddRows="False" CanUserResizeColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                          RowDetailsVisibilityMode="VisibleWhenSelected">
+                    <DataGrid.RowDetailsTemplate>
+                        <DataTemplate>
+                            <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="8">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Target, StringFormat=精确目标：{0}}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Group, StringFormat=关联目标：{0}}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                    <TextBlock Text="{Binding ExpectedIdentity, StringFormat=核对依据：{0}}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </DataTemplate>
+                    </DataGrid.RowDetailsTemplate>
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="动作 / 批次" Width="112" MinWidth="112" HeaderStyle="{StaticResource GridCenteredHeader}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Type}" Style="{StaticResource GridCellText}" TextAlignment="Center" />
+                                        <TextBlock Text="{Binding Batch, StringFormat=批次 {0}}" Style="{StaticResource GridCenteredText}" Foreground="#667085" FontSize="12" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="判定" Binding="{Binding Confidence}" Width="92" MinWidth="92" HeaderStyle="{StaticResource GridCenteredHeader}">
+                            <DataGridTextColumn.ElementStyle>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource GridCenteredText}">
+                                    <Setter Property="TextWrapping" Value="Wrap" />
+                                    <Setter Property="TextTrimming" Value="None" />
+                                </Style>
+                            </DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
+                        <DataGridTemplateColumn Header="说明与精确目标" Width="*" MinWidth="120">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" FontWeight="SemiBold" ToolTip="{Binding DisplayName}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource GridPathText}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=DataGrid}}" Value="compact">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Target}" Style="{StaticResource GridPathText}" ToolTip="{Binding Target}" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+            <TabItem Header="未全部纳入">
+                <DataGrid x:Name="PreviewOmittedGrid" ItemsSource="{Binding OmittedTargets}" AutoGenerateColumns="False" IsReadOnly="True"
+                          CanUserAddRows="False" CanUserResizeColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                          RowDetailsVisibilityMode="VisibleWhenSelected">
+                    <DataGrid.RowDetailsTemplate>
+                        <DataTemplate>
+                            <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="8">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Target, StringFormat=精确目标：{0}}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Reason, StringFormat=未纳入原因：{0}}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </DataTemplate>
+                    </DataGrid.RowDetailsTemplate>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="目标" Binding="{Binding Target}" Width="*" MinWidth="120">
+                            <DataGridTextColumn.ElementStyle>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                    <Setter Property="MaxHeight" Value="56" />
+                                </Style>
+                            </DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Header="未纳入原因" Binding="{Binding Reason}" Width="*" MinWidth="120">
+                            <DataGridTextColumn.ElementStyle>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                    <Setter Property="MaxHeight" Value="56" />
+                                </Style>
+                            </DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </TabItem>
+            <TabItem Header="计划说明">
+                <ScrollViewer x:Name="PreviewNoticeScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                        <TextBlock Text="在前两页选中条目，可查看完整目标、原因或核对依据。" TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,0" />
+                        <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="本方案可能包含已核实的关联启动项、进程和文件。请先保存工作，关闭相关程序可能中断游戏。启发式项仍需你核对，隔离保留回滚记录，不会立即永久删除。" />
+                        <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{Binding PlanNotes}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
         </TabControl>
 
-        <CheckBox x:Name="ConfirmCheckBox" Grid.Row="3" Margin="0,14,0,0" Checked="ConfirmCheckBox_Changed" Unchecked="ConfirmCheckBox_Changed"
-                  Content="我已核对全部批次的精确目标和未纳入项，同意执行上述动作" />
+        <CheckBox x:Name="ConfirmCheckBox" Grid.Row="3" Margin="0,10,0,0" HorizontalContentAlignment="Stretch"
+                  Checked="ConfirmCheckBox_Changed" Unchecked="ConfirmCheckBox_Changed">
+            <TextBlock Text="我已核对全部批次的精确目标和未纳入项，同意执行上述动作" TextWrapping="Wrap" />
+        </CheckBox>
 
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button Content="取消" Click="Cancel_Click" />
-            <Button x:Name="ExecuteButton" Style="{StaticResource PrimaryButton}" IsEnabled="False" Content="执行处置" Click="Execute_Click" />
-        </StackPanel>
+        <WrapPanel x:Name="PreviewActionsBar" Grid.Row="4" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button x:Name="CancelPreviewButton" Content="取消" IsCancel="True" Click="Cancel_Click" />
+            <Button x:Name="ExecuteButton" Style="{StaticResource PrimaryButton}" IsEnabled="False" Content="执行处置" Click="Execute_Click" Margin="0" />
+        </WrapPanel>
     </Grid>
 </Window>

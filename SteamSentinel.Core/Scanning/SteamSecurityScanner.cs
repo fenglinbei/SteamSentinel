@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Steam;
@@ -27,14 +28,23 @@ public sealed class SteamSecurityScanner(RuleSet rules)
             try
             {
                 if (!ContentDiscovery.IsLocalSafePath(path) || new FileInfo(path).Length > MaximumScriptBytes) throw new IOException("路径或大小超出检查范围");
-                string text = await File.ReadAllTextAsync(path, cancellationToken);
+                string text = await ReadUtf8BoundedAsync(path, MaximumScriptBytes, cancellationToken);
                 if (!WallpaperUiInspector.HasCombinedSuppression(text)) continue;
-                report.Findings.Add(new Finding { RuleId = "WALLPAPER-REPORT-SUPPRESSION", Category = FindingCategory.WallpaperEngine,
-                    Severity = FindingSeverity.High, Score = 75, Title = "Wallpaper 举报入口存在组合隐藏信号", Target = path,
-                    Sha256 = await Hashing.Sha256FileAsync(path, cancellationToken),
+                report.Findings.Add(new Finding
+                {
+                    RuleId = "WALLPAPER-REPORT-SUPPRESSION",
+                    Category = FindingCategory.WallpaperEngine,
+                    Severity = FindingSeverity.High,
+                    Score = 75,
+                    Title = "Wallpaper 举报入口存在组合隐藏信号",
+                    Target = path,
+                    Sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
+                        maximumBytes: new FileInfo(path).Length),
                     Description = "同时出现举报能力强制关闭与界面隐藏，需核对插件和修改来源，不自动替换版本未知的 Wallpaper 文件。",
-                    Evidence = "举报状态常量与隐藏样式组合", SuggestedActions = [SuggestedActionKind.ReviewOnly],
-                    CanRemediate = false });
+                    Evidence = "举报状态常量与隐藏样式组合",
+                    SuggestedActions = [SuggestedActionKind.ReviewOnly],
+                    CanRemediate = false
+                });
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { report.Coverage = ScanCoverage.Partial; report.CoverageNotes.Add("Wallpaper 界面检查未完成：" + path); }
@@ -74,7 +84,7 @@ public sealed class SteamSecurityScanner(RuleSet rules)
 
             FileInfo info = new(path);
             string sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
-                bytes => report.Metrics.BytesHashed += bytes);
+                bytes => report.Metrics.BytesHashed += bytes, maximumBytes: info.Length);
             HashRule? known = FindKnownHash(sha256);
 
             if (name.Equals("steam.cfg", StringComparison.OrdinalIgnoreCase))
@@ -137,9 +147,30 @@ public sealed class SteamSecurityScanner(RuleSet rules)
         int skippedFiles = 0;
         foreach (string root in new[] { Path.Combine(steamRoot, "steamui"), Path.Combine(steamRoot, "clientui") })
         {
-            IEnumerable<string> files;
-            try { files = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*.js", SearchOption.AllDirectories).Take(2000) : []; }
-            catch { skippedFiles++; continue; }
+            string[] files;
+            List<string> discoveryNotes = [];
+            try
+            {
+                files = Directory.Exists(root)
+                    ? ContentDiscovery.Files(root, discoveryNotes, 100_000, 32, cancellationToken)
+                        .Where(path => Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase))
+                        .Take(2001).ToArray()
+                    : [];
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { skippedFiles++; continue; }
+            if (files.Length > 2000)
+            {
+                discoveryNotes.Add($"Steam UI 脚本数量超过 2,000 项上限：{root}");
+                files = files[..2000];
+            }
+            if (discoveryNotes.Count > 0)
+            {
+                skippedFiles += discoveryNotes.Count;
+                report.CoverageNotes.AddRange(discoveryNotes.Distinct().Take(16));
+                if (discoveryNotes.Count > 16)
+                    report.CoverageNotes.Add($"Steam UI 发现阶段另有 {discoveryNotes.Count - 16:N0} 条受限路径说明未逐条列出。");
+            }
 
             foreach (string path in files)
             {
@@ -153,8 +184,13 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                     continue;
                 }
 
-                string text;
-                try { text = await File.ReadAllTextAsync(path, cancellationToken); }
+                string text, sha256;
+                try
+                {
+                    text = await ReadUtf8BoundedAsync(path, MaximumScriptBytes, cancellationToken);
+                    sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
+                        bytes => report.Metrics.BytesHashed += bytes, maximumBytes: info.Length);
+                }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     skippedFiles++;
@@ -163,8 +199,6 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                 totalBytes += info.Length;
                 checkedFiles++;
 
-                string sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
-                    bytes => report.Metrics.BytesHashed += bytes);
                 HashRule? known = FindKnownHash(sha256);
                 List<string> signals = AnalyzeSteamUi(text);
                 if (known?.Malware != true && signals.Count == 0) continue;
@@ -192,6 +226,25 @@ public sealed class SteamSecurityScanner(RuleSet rules)
 
         report.CoverageNotes.Add($"Steam UI 语义检查：读取 {checkedFiles} 个脚本、{totalBytes / 1024.0 / 1024.0:N1} MiB，跳过 {skippedFiles} 个权限或大小受限文件。本项只覆盖已支持的假红信模式。");
         if (skippedFiles > 0) report.Coverage = ScanCoverage.Partial;
+    }
+
+    private static async Task<string> ReadUtf8BoundedAsync(string path, long maximumBytes, CancellationToken token)
+    {
+        await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+            64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (stream.Length > maximumBytes || maximumBytes >= int.MaxValue)
+            throw new IOException("脚本超过读取大小上限。");
+        byte[] bytes = new byte[(int)Math.Min(maximumBytes + 1, stream.Length + 1)];
+        int total = 0;
+        while (total < bytes.Length)
+        {
+            int read = await stream.ReadAsync(bytes.AsMemory(total), token);
+            if (read == 0) break;
+            total += read;
+        }
+        if (total > maximumBytes || stream.ReadByte() >= 0)
+            throw new IOException("脚本在读取期间超过大小上限。");
+        return Encoding.UTF8.GetString(bytes, 0, total);
     }
 
     internal static List<string> AnalyzeSteamUi(string text)

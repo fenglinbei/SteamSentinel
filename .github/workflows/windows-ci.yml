@@ -1,0 +1,142 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-selftest:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      NUGET_XMLDOC_MODE: skip
+
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read and validate the build contract
+        id: contract
+        shell: pwsh
+        run: |
+          $sdk = [string]((Get-Content -LiteralPath 'global.json' -Raw | ConvertFrom-Json).sdk.version)
+          [xml]$props = Get-Content -LiteralPath 'Directory.Build.props' -Raw
+          $version = [string]$props.Project.PropertyGroup.VersionPrefix
+          $targetFramework = [string]$props.Project.PropertyGroup.TargetFramework
+          $minimumTests = [int]$props.Project.PropertyGroup.SteamSentinelMinimumSelfTests
+          if ($sdk -notmatch '^\d+\.\d+\.\d+$' -or $version -notmatch '^\d+\.\d+\.\d+$' -or
+              [string]::IsNullOrWhiteSpace($targetFramework) -or $minimumTests -lt 1) {
+            throw 'The central build contract is invalid.'
+          }
+
+          [xml]$appManifest = Get-Content -LiteralPath 'SteamSentinel.App/app.manifest' -Raw
+          [xml]$brokerManifest = Get-Content -LiteralPath 'SteamSentinel.Broker/app.manifest' -Raw
+          $expectedManifestVersion = "$version.0"
+          if ($appManifest.assembly.assemblyIdentity.version -ne $expectedManifestVersion -or
+              $brokerManifest.assembly.assemblyIdentity.version -ne $expectedManifestVersion) {
+            throw 'Application manifest version drifted from Directory.Build.props.'
+          }
+          $installer = Get-Content -LiteralPath 'installer/SteamSentinel.iss' -Raw
+          if ($installer -notmatch ('(?m)^#define AppVersion "' + [regex]::Escape($version) + '"$')) {
+            throw 'Installer default version drifted from Directory.Build.props.'
+          }
+
+          "sdk=$sdk" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "target_framework=$targetFramework" >> $env:GITHUB_OUTPUT
+          "minimum_tests=$minimumTests" >> $env:GITHUB_OUTPUT
+
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ steps.contract.outputs.sdk }}
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+
+      - name: Verify SDK pin
+        shell: pwsh
+        run: |
+          $actual = (dotnet --version).Trim()
+          $expected = '${{ steps.contract.outputs.sdk }}'
+          if ($actual -ne $expected) {
+            throw "Expected .NET SDK $expected, got $actual."
+          }
+
+      - name: Restore locked dependencies
+        shell: pwsh
+        run: |
+          dotnet restore SteamSentinel.slnx --locked-mode `
+            --source https://api.nuget.org/v3/index.json `
+            -p:NuGetAudit=true -p:NuGetAuditMode=all
+          if ($LASTEXITCODE -ne 0) { throw "Locked restore failed ($LASTEXITCODE)." }
+          git diff --exit-code -- '**/packages.lock.json'
+          if ($LASTEXITCODE -ne 0) { throw 'Restore changed a lock file.' }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $buildId = "$env:GITHUB_SHA.ci"
+          dotnet build SteamSentinel.slnx -c Release --no-restore `
+            "-p:SteamSentinelSourceRevision=$env:GITHUB_SHA" `
+            '-p:SteamSentinelBuildChannel=ci' `
+            "-p:SteamSentinelBuildId=$buildId"
+          if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE)." }
+
+          $targetFramework = '${{ steps.contract.outputs.target_framework }}'
+          $assemblyPath = Join-Path 'SteamSentinel.App/bin/Release' "$targetFramework/SteamSentinel.dll"
+          $productVersion = (Get-Item -LiteralPath $assemblyPath).VersionInfo.ProductVersion
+          $version = '${{ steps.contract.outputs.version }}'
+          if ($productVersion -ne "$version+$buildId") {
+            throw "Unexpected ProductVersion: $productVersion"
+          }
+
+      - name: Verify whitespace formatting
+        shell: pwsh
+        run: |
+          dotnet format whitespace SteamSentinel.slnx --verify-no-changes --no-restore
+          if ($LASTEXITCODE -ne 0) { throw "Whitespace verification failed ($LASTEXITCODE)." }
+
+      - name: Run complete self-test and enforce the baseline
+        id: selftest
+        shell: pwsh
+        run: |
+          $resultPath = Join-Path $env:RUNNER_TEMP 'SteamSentinel-selftest-results.json'
+          "result_path=$resultPath" >> $env:GITHUB_OUTPUT
+          dotnet run --project SteamSentinel.SelfTest/SteamSentinel.SelfTest.csproj `
+            -c Release --no-build -- --results $resultPath
+          if ($LASTEXITCODE -ne 0) { throw "SelfTest failed ($LASTEXITCODE)." }
+          if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+            throw 'SelfTest did not write its machine-readable result.'
+          }
+
+          $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          if ($null -eq $result.PSObject.Properties['elapsedMs'] -or [long]$result.elapsedMs -lt 0) {
+            throw 'SelfTest result is missing a valid elapsedMs value.'
+          }
+          $minimumTests = [int]'${{ steps.contract.outputs.minimum_tests }}'
+          if ([int]$result.failed -ne 0 -or [int]$result.passed -lt $minimumTests -or [int]$result.skipped -ne 0) {
+            throw "SelfTest baseline failed: passed=$($result.passed), failed=$($result.failed), skipped=$($result.skipped)."
+          }
+          $version = '${{ steps.contract.outputs.version }}'
+          if ($result.version -ne $version -or $result.buildIdentity -ne "$version+$env:GITHUB_SHA.ci") {
+            throw "SelfTest provenance mismatch: version=$($result.version), buildIdentity=$($result.buildIdentity)."
+          }
+
+      - name: Upload machine-readable self-test result
+        if: always() && steps.selftest.outputs.result_path != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SteamSentinel-selftest-${{ github.sha }}
+          path: ${{ steps.selftest.outputs.result_path }}
+          if-no-files-found: error
+          retention-days: 30

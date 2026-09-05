@@ -87,7 +87,9 @@ internal static partial class Program
         RecordingPasswords partialProvider = new((_, _) => secret);
         ScanReport partial = await Scan([limited, one], partialProvider, 64);
         Check("已验证密码不因另一成员超过大小上限而丢失", partial.Coverage == ScanCoverage.Partial && partialProvider.Requests.Count == 1 &&
-            partial.Metrics.ArchiveEntriesVisited == 2);
+            // Metadata-attempt accounting deliberately includes the oversized member even though
+            // its contents are not expanded: limited.zip has two entries and aes-a.zip has one.
+            partial.Metrics.ArchiveEntriesVisited == 3);
 
         // An archive with only skipped encrypted members has not verified the password.
         RecordingPasswords unverifiedProvider = new((_, _) => secret);
@@ -121,7 +123,7 @@ internal static partial class Program
         Check("同哈希内层跳过一次后不重复弹窗", skipInner.Requests.Count == 2 &&
             deferred.Findings.Any(f => f.RuleId == "ARCHIVE-ENCRYPTED-DEFERRED") && deferred.Coverage == ScanCoverage.Partial);
         Check("自动复用失败的弹窗明确说明原因", skipInner.Requests[1].PromptKind == ArchivePasswordPromptKind.CachedPasswordFailed &&
-            skipInner.Requests[1].Reason.Contains("已尝试本次保存的密码", StringComparison.Ordinal));
+            skipInner.Requests[1].Reason.Contains("已尝试本次暂存且适用的密码", StringComparison.Ordinal));
         RecordingPasswords failInner = new((_, _) => secret);
         ScanReport repeated = await Scan([outerA, outerB], failInner);
         Check("重复失败密码不重复解包且同内容合并询问", failInner.Requests.Count == 4 &&
@@ -185,11 +187,12 @@ internal static partial class Program
                     ArchivePasswordReuseScope.Session, ArchivePasswordPromptKind.CachedPasswordFailed);
                 PasswordDialog dialog = new(request);
                 passed = ((RadioButton)dialog.FindName("SessionRadio")).IsChecked == true &&
-                    ((RadioButton)dialog.FindName("ArchiveTreeRadio")).IsChecked == false && dialog.PromptTitle.Contains("已保存", StringComparison.Ordinal);
+                    ((RadioButton)dialog.FindName("ArchiveTreeRadio")).IsChecked == false && dialog.PromptTitle == "本次暂存的密码未能解开这一层";
                 dialog.Close();
                 TestV017Window();
                 TestV018Window();
                 TestV0115Window();
+                TestV0117Layout();
                 app.Shutdown();
             }
             catch (Exception ex) { failure = ex; }

@@ -2,13 +2,15 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine“假红信”诈骗链及相近落地方式。当前版本为 **0.1.16**，适合群内受控测试。构建支持自有组件、安装器与卸载器签名，类型以包内 `SIGNING.txt` 为准，自签名不等于公开受信任的发布者签名。尚未完成外部安全审计，不应直接作为正式公开发行版传播。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine“假红信”诈骗链及相近落地方式。当前版本为 **0.1.19**，适合群内受控测试。预览构建可能未签名，具体身份与来源以包内 `VERSION.txt`、`SIGNING.txt` 和外层 `RELEASE-METADATA.json` 为准。公开发布模式要求公开受信任的代码签名证书与 RFC 3161 时间戳，否则构建会中止。项目尚未完成外部安全审计，不应把预览包当成正式公开发行版传播。
 
 它的定位是：让不想临时安装 360、卡巴斯基等完整安全套件的用户，也能快速对当前电脑做一次 Steam 垂直场景检查和可回滚处置。启发式能力不会因为专业杀毒软件存在而关闭，但启发式发现默认不预选，必须由用户核对精确目标后才能隔离。
 
 ## 主要能力
 
-已实现本地全 AppID 工坊发现，范围见 [COVERAGE-0.1.14.md](docs/COVERAGE-0.1.14.md)，本版分批处置、4 GiB 核验额度和原范围复查见 [COVERAGE-0.1.16.md](docs/COVERAGE-0.1.16.md)，后续事项见 [ROADMAP.md](docs/ROADMAP.md)。图标来源与重建方式见 [ICONS.md](docs/ICONS.md)。
+0.1.19 保持 0.1.18 的整体设计、原有圆角和小窗口布局，修复表格密度、对齐、留白及按钮对比度，并在同版本内明确扫描结论与补查提示，见 [修复范围说明](docs/COVERAGE-0.1.19.md)。
+
+已实现本地全 AppID 工坊发现，范围见 [COVERAGE-0.1.14.md](docs/COVERAGE-0.1.14.md)，分批处置、4 GiB 核验额度和原范围复查见 [COVERAGE-0.1.16.md](docs/COVERAGE-0.1.16.md)，0.1.17 的安全与发布工程边界见 [COVERAGE-0.1.17.md](docs/COVERAGE-0.1.17.md)，后续事项见 [ROADMAP.md](docs/ROADMAP.md)。图标来源与重建方式见 [ICONS.md](docs/ICONS.md)。
 
 - 只读检查进程、Run/RunOnce、计划任务、服务、Windows 安全设置、hosts、代理状态及 Steam 客户端完整性风险点。
 - 自动发现全部本地 Steam 库中的数字 AppID 工坊项目，支持指定游戏范围，单独适配 Wallpaper 元数据、鸭科夫 MOD、常见 Mods/BepInEx/plugins 和 Steam 插件目录。非工坊游戏私有 MOD 布局不保证全部自动发现。
@@ -18,8 +20,9 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 - 快速内容读取预算为 1 GiB，另为小型启动文件保留 128 MiB。完整内容扫描不设默认整轮哈希字节上限，仍有内存、文件数和解压安全限制，不等于无限全盘扫描。优先检查关联落点、插件与 MOD，覆盖记录按目录合并并提供补查方式。下载、桌面、临时目录和运行历史均须用户勾选。
 - 按文件魔数识别真实格式，不依赖扩展名，可识别 PE 改名、MP4 尾随载荷和常见脚本。
 - 递归检查 ZIP、RAR、7z、tar、gzip、bzip2、xz、zstd 等 SharpCompress 支持的容器，并限制层级、条目数、展开体积和压缩比。
-- 遇到加密压缩包时由界面询问密码，可选择当前层、当前外层文件及嵌套包、本次扫描全部包三个复用范围，仅复用成功解密的密码，不破解、不保存、不写入日志，也不通过命令行传递。用户跳过时明确标记为“扫描不完整”。
+- 遇到加密压缩包时由界面询问密码，可选择当前层、当前外层文件及嵌套包、本次扫描全部包三个复用范围。单密码成功解密后复用；也可明确提供最多 16 个有序候选，按所选范围依次尝试，候选不等同于已验证正确。密码不破解、不保存、不写入日志，也不通过命令行传递。用户跳过时明确标记为“扫描不完整”。
 - 密码窗口会沿用本次选择并说明失败原因，相同内容跳过后不反复询问，扫描结束可点击“重试未解密内容”补充密码。重试只扫描相关外层文件，不代替全机复扫。坏包不会中止后续文件扫描。
+- 可选择本次跳过所有未能解密的加密包：先试适用密码，仍未解开则不再弹窗并记录未检查；新扫描不继承此选择。见 [密码交互说明](docs/PASSWORD-0.1.19.md)。
 - 将内容扫描放在 Low Integrity 受限令牌的独立工作进程中，进程以挂起状态创建，先加入单进程 Windows Job Object，再开始读取不可信内容，安装器还会为该进程添加双向网络阻断规则。
 - 管理员窗口也使用 Low 权限扫描组件，不以提权替代隔离。组件启动失败时显示阶段与可取得的退出码，已完成的系统检查仍可导出，未检查内容不会被当作安全。
 - 所有处置先生成预览计划，再通过 UAC 管理员 Broker 执行。Broker 会绑定请求者 SID、短时计划 SHA-256、精确路径、文件哈希、目录指纹、注册表当前值和计划任务哈希。
@@ -31,7 +34,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 ## 推荐运行方式
 
-1. 从受信任渠道取得 `SteamSentinel-0.1.16-setup.exe`，先对照同目录的 `SteamSentinel-0.1.16-RELEASE-SHA256.txt` 核对哈希。升级前退出旧版主程序和管理员窗口，使用安装包覆盖安装，不要只替换 EXE。
+1. 从受信任渠道取得正式的 `SteamSentinel-0.1.19-setup.exe`，先对照同目录的 `SteamSentinel-0.1.19-RELEASE-SHA256.txt` 核对哈希和 `RELEASE-METADATA.json` 中的提交身份。带 `preview` 或 `dirty` 的文件名不是正式发布。升级前退出旧版主程序和管理员窗口，使用安装包覆盖安装，不要只替换 EXE。
 2. 使用安装器安装到固定的 Program Files 目录。默认普通权限扫描，处置时自动请求 UAC，也可点击“打开管理员窗口”主动授权，不需要在快捷方式中手动配置。
 3. 首次使用先执行“快速扫描”，随后执行“完整工坊扫描”。单独收到的 MP4、压缩包或安装包可用“扫描文件/目录”。
 4. 检查结果顶部的覆盖状态。`Complete` 只表示已完成支持范围内的检查，`Partial` 不能当作“安全”。
@@ -39,7 +42,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 6. 如果动作涉及 Steam 前端，请先完整退出 Steam。异常前端文件与 `steam.cfg` 被隔离后，重新启动 Steam 让官方客户端补全组件，若未自动补全，使用 Steam 官方安装包覆盖安装。
 7. 隔离后重启并再次完整扫描。需要恢复时使用“隔离与回滚”，永久删除前应先保留取证副本。
 
-解压 `SteamSentinel-0.1.16-win-x64.zip` 直接运行时，扫描和报告导出仍可使用，但隔离、恢复、永久删除及管理员窗口入口会关闭。只有 Program Files 受保护安装、目录及文件 ACL 检查、安装包 `SHA256SUMS.txt` 全部列出文件的校验同时通过时，程序才开放管理员处置。检查包含 DLL、运行时配置、子目录和清单自身权限，普通用户的读取和执行权限不会被误判为可写。
+解压 `SteamSentinel-0.1.19-win-x64.zip` 直接运行时，扫描和报告导出仍可使用，但隔离、恢复、永久删除及管理员窗口入口会关闭。只有 Program Files 受保护安装、目录及文件 ACL 检查、安装包 `SHA256SUMS.txt` 全部列出文件的校验同时通过时，程序才开放管理员处置。检查包含 DLL、运行时配置、子目录和清单自身权限，普通用户的读取和执行权限不会被误判为可写。
 
 处置计划仍绑定发起扫描的 Windows 账户。使用管理员账户的普通权限窗口时，处置可直接请求 UAC。标准账户需要点击“打开管理员窗口”，在 Windows 提示中提供管理员凭据，然后在新窗口重新扫描并生成计划。原报告、选择和密码不跨账户传递，原窗口仍保留，取消 UAC 不会丢失结果。若使用另一账户，请确认新扫描包含原用户的 Steam 与工坊目录。没有管理员凭据时不能隔离或恢复，但仍可扫描和导出报告。
 
@@ -50,7 +53,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 - 已知恶意哈希命中属于高置信度确认，分数为 100。
 - 单一扩展名或字符串线索仅供复核，不会直接授权隔离。已分析的高置信组合特征、已复核可疑样本哈希和危险归档路径允许手动隔离，但不会自动预选。
 - 压缩包命中不说明主机已经感染，成员内容哈希与外层隔离目标哈希分别记录，外层文件变动后必须重新扫描。
-- 不承诺所有格式都能展开，MSI/复合文档目前检查文件哈希并标记未展开，最终载荷未解开或分析不足时保留可疑结论，不冒充确认。
+- 不承诺所有格式都能展开。MSI 使用 Windows 只读数据库与内嵌 CAB 接口检查；外部分卷、特殊压缩或不支持的复合内容会明确标记未完整，最终载荷未解开或分析不足时保留可疑结论，不冒充确认。
 - Wallpaper Engine 内置 `defaultprojects` 不再按自带 EXE/JS 批量告警，应用程序壁纸的 EXE 也不会只凭类型判高危。
 - 同名进程只有精确恶意哈希命中才可进入自动处置，仅名称相同一律人工复核。
 - 未发现已知威胁不代表对未知恶意代码的绝对保证。
@@ -62,30 +65,34 @@ Broker 只接受 `%LOCALAPPDATA%\SteamSentinel\Plans` 下的短时 JSON 计划�
 
 处置成功只说明本次计划中的精确目标已被处理，不构成“整台电脑无毒”证明。工具会直接处理已知恶意项，也允许用户处置已复核的启发式项，条件允许时，仍建议再用保持更新的专业安全软件做全盘复核。
 
-含未回滚内容的隔离事件必须至少经历一次系统重启才允许永久删除，界面还要求一次覆盖为 `Complete` 且没有已知恶意项的复扫。生命周期动作必须使用单独计划，避免产生空隔离事件。
+当前没有 Broker 可独立验证、不可伪造的复扫证明，因此界面的 `Complete` / Full clean 策略不是永久删除的授权边界。Broker 会拒绝删除任何仍含活动记录的隔离事件，包括旧版本创建的事件；只允许清理经过完整结构与路径核验、且所有记录都已标记 `RolledBack` 的空事件。不要为了删除样本而执行回滚；仍需处置的隔离内容应继续保留为证据并等待后续安全删除机制。
 
 ## 数据位置
 
 - 用户计划、报告与 Low Integrity 临时区：`%LOCALAPPDATA%\SteamSentinel`、`%USERPROFILE%\AppData\LocalLow\SteamSentinel`
 - 管理员隔离区：`%PROGRAMDATA%\SteamSentinel\Quarantine`
 - 管理员结果区：`%PROGRAMDATA%\SteamSentinel\Results`
-- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.09.04.1`
+- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.09.04.2`
 
 ## 从源码构建
 
-需要 .NET SDK 10、Windows 10 SDK 19041 或更高版本。生成安装包还需要 Inno Setup 6。
+需要仓库 `global.json` 精确指定的 .NET SDK 10.0.400、Windows 10 SDK 19041 或更高版本。生成安装包还需要 Inno Setup 6。依赖锁文件属于源码的一部分；CI 和发布脚本都使用 locked mode，不能静默改写依赖解析结果。
 
 ```powershell
-dotnet restore .\SteamSentinel.slnx --source https://api.nuget.org/v3/index.json
+dotnet restore .\SteamSentinel.slnx --locked-mode -r win-x64 --source https://api.nuget.org/v3/index.json
 dotnet build .\SteamSentinel.slnx -c Release --no-restore
-dotnet run --project .\SteamSentinel.SelfTest\SteamSentinel.SelfTest.csproj -c Release --no-build
+$results = Join-Path $env:TEMP 'SteamSentinel-selftest-results.json'
+dotnet run --project .\SteamSentinel.SelfTest\SteamSentinel.SelfTest.csproj -c Release --no-build -- --results $results
+Get-Content -LiteralPath $results -Raw
 ```
 
-生成自包含便携扫描包、源码包、安装包和发布哈希可运行：
+在干净工作树上生成明确标记的预览包（默认写到仓库外的 `previews`，绝不覆盖已有目录）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Mode Preview -SkipInstaller
 ```
+
+只有预览构建可以显式使用 `-AllowDirtyPreview`；此时脚本先拒绝不在源码白名单内的未跟踪文件，再用临时 Git 索引固化快照，文件名与 `BuildIdentity` 同时包含 `dirty` 和源码树 ID。源码包始终由 `git archive` 从该快照生成，不复制忽略文件或任意工作树内容。正式 `-Mode Release` 还要求工作树干净、`HEAD` 精确位于并验证签名的 `v0.1.19` 注解标签，以及公开受信证书和 HTTPS RFC 3161 时间戳；详情见 [SIGNING.md](docs/SIGNING.md)。
 
 ## 审查入口
 

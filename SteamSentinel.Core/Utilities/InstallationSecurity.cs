@@ -74,6 +74,16 @@ public static class InstallationSecurity
             foreach (string component in RequiredComponents)
                 if (!expected.ContainsKey(component)) return new(false, $"完整性清单缺少组件：{component}");
 
+            foreach (string file in EnumerateInstallFilesWithoutReparsePoints(root))
+            {
+                string relative = Path.GetRelativePath(root, file);
+                if (!IsLoadablePayloadPath(relative) || expected.ContainsKey(relative)) continue;
+                if (!IsAllowedUnlistedInstallFile(relative))
+                    return new(false, $"安装目录包含未列入完整性清单的可加载文件：{relative}");
+                InstallationSecurityStatus uninstallerAcl = CheckAcl(new FileInfo(file));
+                if (!uninstallerAcl.IsProtected) return uninstallerAcl;
+            }
+
             // Apphosts load managed assemblies and bundled runtime files. Protect the payload,
             // not only the three EXEs, before either the broker or the UI can elevate.
             HashSet<string> checkedDirectories = new(StringComparer.OrdinalIgnoreCase) { root };
@@ -179,6 +189,45 @@ public static class InstallationSecurity
         return checksums;
     }
 
+    internal static bool IsLoadablePayloadPath(string relativePath)
+    {
+        string name = Path.GetFileName(relativePath);
+        string extension = Path.GetExtension(name);
+        return extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".com", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".scr", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".cpl", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".ocx", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".sys", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".winmd", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".config", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains(".deps.", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains(".runtimeconfig.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsAllowedUnlistedInstallFile(string relativePath) =>
+        relativePath.Equals("unins000.exe", StringComparison.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> EnumerateInstallFilesWithoutReparsePoints(string root)
+    {
+        Stack<string> pending = new();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            string directory = pending.Pop();
+            foreach (string entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                FileAttributes attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new UnauthorizedAccessException($"安装目录包含重解析对象：{Path.GetRelativePath(root, entry)}");
+                if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+                else yield return entry;
+            }
+        }
+    }
+
     private static string ComputeSha256Exclusive(string path)
     {
         using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -196,33 +245,194 @@ public static class InstallationSecurity
 
 public static class MachineStateSecurity
 {
+    private const int MaximumProtectedTreeEntries = 200_000;
+
     public static void EnsureProtectedRoots()
     {
         string machineRoot = Path.GetFullPath(AppPaths.MachineStateRoot);
         if (Validation.ContainsReparsePoint(machineRoot))
             throw new UnauthorizedAccessException("机器状态目录包含重解析点，已拒绝管理员写入。");
 
-        Directory.CreateDirectory(machineRoot);
-        ApplyProtectedAcl(machineRoot, allowUsersRead: true);
+        EnsureExistingProtectedDirectory(machineRoot);
+        ApplyProtectedDirectoryAcl(machineRoot, allowUsersBrowse: true);
         foreach (string child in new[] { AppPaths.QuarantineRoot, AppPaths.ResultsRoot, AppPaths.BrokerTemporaryRoot })
         {
             if (Validation.ContainsReparsePoint(child))
                 throw new UnauthorizedAccessException("隔离或结果目录包含重解析点，已拒绝管理员写入。");
-            Directory.CreateDirectory(child);
-            ApplyProtectedAcl(
+            EnsureExistingProtectedDirectory(child);
+            ApplyProtectedDirectoryAcl(
                 child,
-                allowUsersRead: !Path.GetFullPath(child).Equals(
+                allowUsersBrowse: !Path.GetFullPath(child).Equals(
                     Path.GetFullPath(AppPaths.BrokerTemporaryRoot),
                     StringComparison.OrdinalIgnoreCase));
         }
     }
 
-    private static void ApplyProtectedAcl(string path, bool allowUsersRead)
+    private static void EnsureExistingProtectedDirectory(string path)
+    {
+        if (File.Exists(path) || !Directory.Exists(path))
+            throw new UnauthorizedAccessException("受保护机器状态目录缺失；为防 ProgramData 预置目录被提权采信，请修复或重新安装 SteamSentinel。");
+        InstallationSecurityStatus status = InstallationSecurity.CheckAcl(new DirectoryInfo(path));
+        if (!status.IsProtected)
+            throw new UnauthorizedAccessException($"机器状态目录在 ACL 收紧前不可信：{status.Message}");
+    }
+
+    public static void PrepareIncidentDirectory(string path, string requestedBySid)
+    {
+        string fullPath = RequireWithin(path, AppPaths.QuarantineRoot);
+        if (File.Exists(fullPath) || Directory.Exists(fullPath))
+            throw new IOException("新的隔离事件目录已存在，已拒绝复用。");
+        if (Validation.ContainsReparsePoint(Path.GetDirectoryName(fullPath)!))
+            throw new UnauthorizedAccessException("隔离事件父目录包含重解析点。");
+
+        Directory.CreateDirectory(fullPath);
+        SecurityIdentifier requester = ParseRequester(requestedBySid);
+        DirectorySecurity security = BuildProtectedDirectorySecurity(requester, allowUsersBrowse: false);
+        FileSystemAclExtensions.SetAccessControl(new DirectoryInfo(fullPath), security);
+        EnsureProtectedPath(fullPath);
+    }
+
+    public static void PreparePayloadDirectory(string path)
+    {
+        string fullPath = RequireWithin(path, AppPaths.QuarantineRoot);
+        if (Validation.ContainsReparsePoint(Path.GetDirectoryName(fullPath)!))
+            throw new UnauthorizedAccessException("隔离载荷父目录包含重解析点。");
+        List<string> missing = [];
+        for (string? current = fullPath; current is not null && !Directory.Exists(current); current = Path.GetDirectoryName(current))
+        {
+            if (!current.StartsWith(
+                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppPaths.QuarantineRoot)) + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UnauthorizedAccessException("隔离载荷目录路径越界。");
+            }
+            missing.Add(current);
+        }
+        Directory.CreateDirectory(fullPath);
+        foreach (string created in missing.AsEnumerable().Reverse())
+            ApplyProtectedDirectoryAcl(created, allowUsersBrowse: false);
+        // Reassert the exact leaf even when it pre-existed; only the elevated broker can
+        // create it beneath a protected incident root.
+        ApplyProtectedDirectoryAcl(fullPath, allowUsersBrowse: false);
+        EnsureProtectedPath(fullPath);
+    }
+
+    public static void ProtectManifestFile(string path, string requestedBySid) =>
+        ApplyProtectedFileAcl(RequireWithin(path, AppPaths.QuarantineRoot), ParseRequester(requestedBySid));
+
+    public static void ProtectPayloadFile(string path) =>
+        ApplyProtectedFileAcl(RequireWithin(path, AppPaths.QuarantineRoot), reader: null);
+
+    public static void ProtectResultFile(string path, string requestedBySid) =>
+        ApplyProtectedFileAcl(RequireWithin(path, AppPaths.ResultsRoot), ParseRequester(requestedBySid));
+
+    public static void ProtectBrokerStateFile(string path) =>
+        ApplyProtectedFileAcl(RequireWithin(path, AppPaths.BrokerTemporaryRoot), reader: null);
+
+    public static void EnsureProtectedPath(string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        if (Validation.ContainsReparsePoint(fullPath))
+            throw new UnauthorizedAccessException($"受保护状态路径包含重解析点：{fullPath}");
+
+        FileSystemInfo item = Directory.Exists(fullPath)
+            ? new DirectoryInfo(fullPath)
+            : File.Exists(fullPath)
+                ? new FileInfo(fullPath)
+                : throw new FileNotFoundException("受保护状态对象不存在。", fullPath);
+        InstallationSecurityStatus status = InstallationSecurity.CheckAcl(item);
+        if (!status.IsProtected)
+            throw new UnauthorizedAccessException($"机器状态 ACL 校验失败：{status.Message}");
+    }
+
+    public static void EnsureProtectedSubtree(string path)
+    {
+        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        EnsureProtectedPath(root);
+        Stack<string> pending = new();
+        pending.Push(root);
+        int count = 0;
+        while (pending.Count > 0)
+        {
+            string directory = pending.Pop();
+            foreach (string entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (++count > MaximumProtectedTreeEntries)
+                    throw new InvalidDataException("隔离事件对象数量异常，已拒绝管理员生命周期操作。");
+                FileAttributes attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new UnauthorizedAccessException($"隔离事件包含重解析点：{entry}");
+                EnsureProtectedPath(entry);
+                if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+            }
+        }
+    }
+
+    internal static DirectorySecurity BuildProtectedDirectorySecurity(
+        SecurityIdentifier? requester = null,
+        bool allowUsersBrowse = false)
     {
         DirectorySecurity security = new();
         security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
         security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
         InheritanceFlags inheritance = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        AddFullControlRules(security, inheritance);
+        if (allowUsersBrowse)
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+                FileSystemRights.ReadAndExecute | FileSystemRights.ListDirectory | FileSystemRights.Read,
+                InheritanceFlags.None,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+        }
+        if (requester is not null)
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                requester,
+                FileSystemRights.ReadAndExecute | FileSystemRights.ListDirectory | FileSystemRights.Read,
+                InheritanceFlags.None,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+        }
+        return security;
+    }
+
+    internal static FileSecurity BuildProtectedFileSecurity(SecurityIdentifier? reader = null)
+    {
+        FileSecurity security = new();
+        security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        AddFullControlRules(security, InheritanceFlags.None);
+        if (reader is not null)
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                reader,
+                FileSystemRights.Read,
+                InheritanceFlags.None,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+        }
+        return security;
+    }
+
+    private static void ApplyProtectedDirectoryAcl(string path, bool allowUsersBrowse)
+    {
+        FileSystemAclExtensions.SetAccessControl(
+            new DirectoryInfo(path),
+            BuildProtectedDirectorySecurity(allowUsersBrowse: allowUsersBrowse));
+    }
+
+    private static void ApplyProtectedFileAcl(string path, SecurityIdentifier? reader)
+    {
+        if (!File.Exists(path) || Validation.ContainsReparsePoint(path))
+            throw new UnauthorizedAccessException("受保护状态文件不存在或包含重解析点。");
+        FileSystemAclExtensions.SetAccessControl(new FileInfo(path), BuildProtectedFileSecurity(reader));
+        EnsureProtectedPath(path);
+    }
+
+    private static void AddFullControlRules(FileSystemSecurity security, InheritanceFlags inheritance)
+    {
         security.AddAccessRule(new FileSystemAccessRule(
             new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
             FileSystemRights.FullControl,
@@ -235,15 +445,21 @@ public static class MachineStateSecurity
             inheritance,
             PropagationFlags.None,
             AccessControlType.Allow));
-        if (allowUsersRead)
-        {
-            security.AddAccessRule(new FileSystemAccessRule(
-                new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
-                FileSystemRights.ReadAndExecute | FileSystemRights.ListDirectory | FileSystemRights.Read,
-                inheritance,
-                PropagationFlags.None,
-                AccessControlType.Allow));
-        }
-        FileSystemAclExtensions.SetAccessControl(new DirectoryInfo(path), security);
+    }
+
+    private static SecurityIdentifier ParseRequester(string sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid)) throw new InvalidDataException("请求者 SID 为空。");
+        try { return new SecurityIdentifier(sid); }
+        catch (ArgumentException ex) { throw new InvalidDataException("请求者 SID 无效。", ex); }
+    }
+
+    private static string RequireWithin(string path, string root)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        if (!fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("机器状态对象路径越界。");
+        return fullPath;
     }
 }

@@ -44,12 +44,22 @@ internal static class PlanRegression
             !(f.ContentPath?.Contains("!/") == true && string.IsNullOrWhiteSpace(f.TargetSha256))).ToArray();
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(8));
         RemediationBatchSession session = await new RemediationBatchPlanner(RuleLoader.LoadEmbedded()).PrepareAsync(selected, replay, true, token: timeout.Token);
-        await JsonFile.WriteNewAsync(output, new { Mode = "Read-only plan replay, no Broker or file actions executed",
-            SourceEvidence = Path.GetFullPath(evidence), ReplaySampleRoot = sampleRoot, Session = session });
-        Console.WriteLine(JsonSerializer.Serialize(new { session.SelectedFindingCount, session.SelectedTargetCount,
-            session.PlannedCount, BatchCount = session.Plans.Count,
+        await JsonFile.WriteNewAsync(output, new
+        {
+            Mode = "Read-only plan replay, no Broker or file actions executed",
+            SourceEvidence = Path.GetFullPath(evidence),
+            ReplaySampleRoot = sampleRoot,
+            Session = session
+        });
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            session.SelectedFindingCount,
+            session.SelectedTargetCount,
+            session.PlannedCount,
+            BatchCount = session.Plans.Count,
             QuarantineFiles = session.Plans.Sum(p => p.Actions.Count(a => a.Type == RemediationActionType.QuarantineFile)),
-            Missing = session.Targets.Where(t => t.MissingActions.Count > 0).Select(t => new { t.Target, t.Reason }) }, JsonFile.Options));
+            Missing = session.Targets.Where(t => t.MissingActions.Count > 0).Select(t => new { t.Target, t.Reason })
+        }, JsonFile.Options));
         return session.Targets.All(t => t.MissingActions.Count == 0 && t.ActionIds.Count > 0) ? 0 : 1;
     }
 }

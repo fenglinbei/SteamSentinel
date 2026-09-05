@@ -83,8 +83,17 @@ internal static partial class Program
         FrameworkElement content = (FrameworkElement)window.Content;
         window.Content = null;
         // Off-screen inert host: does not raise MainWindow.Loaded or inspect this machine.
-        Window host = new() { Content = content, Width = 980, Height = 720, Left = -20000, Top = -20000,
-            ShowActivated = false, ShowInTaskbar = false, WindowStyle = WindowStyle.None };
+        Window host = new()
+        {
+            Content = content,
+            Width = 980,
+            Height = 720,
+            Left = -20000,
+            Top = -20000,
+            ShowActivated = false,
+            ShowInTaskbar = false,
+            WindowStyle = WindowStyle.None
+        };
         ShutdownMode previousShutdown = Application.Current.ShutdownMode;
         Application.Current.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         host.Show();
@@ -136,8 +145,15 @@ internal static partial class Program
                 catch (OperationCanceledException) { cancelled = true; }
             }
             Check("v0.1.15 复查失败和取消回到等待调用方，不被进度层吞掉", failed && cancelled);
-            ScanOptions originalOptions = new() { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false,
-                IncludeWorkshop = false, InspectArchives = true, CustomRoots = [@"C:\inert-original"] };
+            ScanOptions originalOptions = new()
+            {
+                Mode = ScanMode.Custom,
+                IncludeSystem = false,
+                IncludeSteam = false,
+                IncludeWorkshop = false,
+                InspectArchives = true,
+                CustomRoots = [@"C:\inert-original"]
+            };
             int contentThread = uiThread;
             ScanReport originalScopeReport = await window.RunOriginalContentCheckAsync(originalOptions, CancellationToken.None, async (options, reporter, _) =>
             {

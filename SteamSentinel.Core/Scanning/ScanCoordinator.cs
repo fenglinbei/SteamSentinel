@@ -114,7 +114,7 @@ public sealed class ScanCoordinator
             {
                 foreach (ContentRoot source in layout.ContentRoots.Where(item => item.Kind is "mod" or "plugin"))
                 {
-                    if (!scanned.Add(source.Path)) continue;
+                    if (!scanned.Add(Path.GetFullPath(source.Path))) continue;
                     int first = report.Findings.Count;
                     currentApp = source.AppId; currentKind = source.Kind;
                     report.ContentSources.Add($"{source.Name}，{source.Kind}：{source.Path}");
@@ -164,7 +164,7 @@ public sealed class ScanCoordinator
                             });
                         }
 
-                        scanned.Add(Path.GetFullPath(projectDirectory));
+                        if (!scanned.Add(Path.GetFullPath(projectDirectory))) continue;
                         currentApp = appId; currentKind = "workshop";
                         int first = report.Findings.Count;
                         report.ContentSources.Add($"工坊 {appId}/{project.WorkshopId}：{projectDirectory}");

@@ -1,15 +1,36 @@
 <Project>
   <PropertyGroup>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
-    <Version>0.1.16</Version>
-    <AssemblyVersion>0.1.16.0</AssemblyVersion>
-    <FileVersion>0.1.16.0</FileVersion>
-    <InformationalVersion>0.1.16</InformationalVersion>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
+
+    <!--
+      VersionPrefix is the single human-facing version source. Reproducible
+      release and CI callers must pass SteamSentinelBuildId explicitly. The
+      safe local fallback is deliberately unattributed rather than pretending
+      that an arbitrary working tree came from a particular commit.
+    -->
+    <VersionPrefix>0.1.19</VersionPrefix>
+    <SteamSentinelMinimumSelfTests>795</SteamSentinelMinimumSelfTests>
+    <Version>$(VersionPrefix)</Version>
+    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
+    <FileVersion>$(VersionPrefix).0</FileVersion>
+    <SteamSentinelSourceRevision Condition="'$(SteamSentinelSourceRevision)' == ''">unattributed</SteamSentinelSourceRevision>
+    <SteamSentinelBuildChannel Condition="'$(SteamSentinelBuildChannel)' == ''">local</SteamSentinelBuildChannel>
+    <SteamSentinelBuildId Condition="'$(SteamSentinelBuildId)' == ''">$(SteamSentinelSourceRevision).$(SteamSentinelBuildChannel)</SteamSentinelBuildId>
+    <InformationalVersion>$(VersionPrefix)+$(SteamSentinelBuildId)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <RepositoryCommit>$(SteamSentinelSourceRevision)</RepositoryCommit>
     <Authors>SteamSentinel contributors</Authors>
     <Product>SteamSentinel Steam 红信安全工具</Product>
     <Copyright>Copyright © 2026 fenglinbei</Copyright>

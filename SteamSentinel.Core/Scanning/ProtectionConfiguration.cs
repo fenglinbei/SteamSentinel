@@ -49,11 +49,20 @@ public static class ProtectionConfiguration
                 if (path is null || !ContentDiscovery.IsLocalSafePath(path) || !IsRelatedExclusion(steam, path)) continue;
                 report.Findings.Add(new Finding
                 {
-                    RuleId = "CONFIG-PLUGIN-EXCLUSION", Category = FindingCategory.SecurityControl, Severity = FindingSeverity.High, Score = 90,
-                    Title = "恶意插件落点存在安全排除项", Description = "排除项与本机已确认的恶意插件相关，不能单凭此项断定由谁创建。处置只移除此路径。",
-                    Target = path, ConfigurationKind = kind, ConfigurationSnapshot = path,
-                    RelatedFilePath = binding.Target, RelatedFileSha256 = binding.Sha256, Evidence = kind + "：" + path,
-                    CanRemediate = true, SuggestedActions = [SuggestedActionKind.RemoveRelatedDefenderExclusion]
+                    RuleId = "CONFIG-PLUGIN-EXCLUSION",
+                    Category = FindingCategory.SecurityControl,
+                    Severity = FindingSeverity.High,
+                    Score = 90,
+                    Title = "恶意插件落点存在安全排除项",
+                    Description = "排除项与本机已确认的恶意插件相关，不能单凭此项断定由谁创建。处置只移除此路径。",
+                    Target = path,
+                    ConfigurationKind = kind,
+                    ConfigurationSnapshot = path,
+                    RelatedFilePath = binding.Target,
+                    RelatedFileSha256 = binding.Sha256,
+                    Evidence = kind + "：" + path,
+                    CanRemediate = true,
+                    SuggestedActions = [SuggestedActionKind.RemoveRelatedDefenderExclusion]
                 });
             }
         }
@@ -64,11 +73,20 @@ public static class ProtectionConfiguration
                 if (item is null || !IsRelatedFirewall(steam, item)) continue;
                 report.Findings.Add(new Finding
                 {
-                    RuleId = "CONFIG-PLUGIN-FIREWALL", Category = FindingCategory.Network, Severity = FindingSeverity.High, Score = 90,
-                    Title = "发现与已知投递链一致的放行规则", Description = "同时发现本机恶意插件，处置只禁用此条规则并保留回滚信息，不重置防火墙。",
-                    Target = item.Name, ConfigurationKind = "Firewall", ConfigurationSnapshot = JsonSerializer.Serialize(item),
-                    RelatedFilePath = binding.Target, RelatedFileSha256 = binding.Sha256, Evidence = item.DisplayName + "：" + item.Program,
-                    CanRemediate = true, SuggestedActions = [SuggestedActionKind.DisableRelatedFirewallRule]
+                    RuleId = "CONFIG-PLUGIN-FIREWALL",
+                    Category = FindingCategory.Network,
+                    Severity = FindingSeverity.High,
+                    Score = 90,
+                    Title = "发现与已知投递链一致的放行规则",
+                    Description = "同时发现本机恶意插件，处置只禁用此条规则并保留回滚信息，不重置防火墙。",
+                    Target = item.Name,
+                    ConfigurationKind = "Firewall",
+                    ConfigurationSnapshot = JsonSerializer.Serialize(item),
+                    RelatedFilePath = binding.Target,
+                    RelatedFileSha256 = binding.Sha256,
+                    Evidence = item.DisplayName + "：" + item.Program,
+                    CanRemediate = true,
+                    SuggestedActions = [SuggestedActionKind.DisableRelatedFirewallRule]
                 });
             }
     }

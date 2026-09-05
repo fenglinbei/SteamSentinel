@@ -19,11 +19,19 @@ internal static partial class Program
         string media = Path.Combine(folder, "large.mp4");
         MakeMediaFixture(media, 300L * 1024 * 1024);
         string program = Path.Combine(folder, "payload.mp4");
-        await File.WriteAllBytesAsync(program, "MZ harmless signature-only fixture"u8.ToArray());
+        await File.WriteAllBytesAsync(program, MakePortableExecutableFixture());
         string hash = await Hashing.Sha256FileAsync(program);
         RuleSet rules = new() { KnownHashes = { new() { Id = "HARMLESS-FIXTURE", Sha256 = hash, Malware = true, Label = "无害回归规则" } } };
-        ScanOptions quick = new() { Mode = ScanMode.Quick, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false,
-            MaximumContentBytes = 1, InspectArchives = false };
+        ScanOptions quick = new()
+        {
+            Mode = ScanMode.Quick,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            MaximumContentBytes = 1,
+            InspectArchives = false
+        };
         using ContentScanner scanner = new(rules);
         ScanReport mediaReport = new() { Mode = ScanMode.Quick };
         await scanner.ScanRootAsync(media, mediaReport, quick, new NullPasswordProvider());
@@ -39,7 +47,7 @@ internal static partial class Program
         Check("伪装 MP4 的程序不会走正常媒体快路径", programReport.Metrics.MediaStructuresChecked == 0 && programReport.Findings.Any(f => f.RuleId == "CONTENT-EXTENSION-MISMATCH"));
 
         string overlay = Path.Combine(folder, "overlay.mp4"); MakeMediaFixture(overlay, 300L * 1024 * 1024);
-        await using (FileStream append = new(overlay, FileMode.Append)) await append.WriteAsync("MZ harmless tail fixture"u8.ToArray());
+        await using (FileStream append = new(overlay, FileMode.Append)) await append.WriteAsync(MakePortableExecutableFixture());
         ScanReport overlayReport = new() { Mode = ScanMode.Quick };
         await scanner.ScanRootAsync(overlay, overlayReport, quick, new NullPasswordProvider());
         Check("大视频即使预算不足仍发现尾随可执行内容", overlayReport.Findings.Any(f => f.RuleId == "MP4-TRAILING-DATA" && f.Severity == FindingSeverity.High));
@@ -47,17 +55,39 @@ internal static partial class Program
 
         string small = Path.Combine(folder, "small.mp4"); MakeMediaFixture(small, 128);
         ScanReport full = new() { Mode = ScanMode.Custom };
-        await scanner.ScanRootAsync(small, full, new ScanOptions { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false,
-            UseAmsi = false, HashEveryFile = true, MaximumContentBytes = 1024 }, new NullPasswordProvider());
+        await scanner.ScanRootAsync(small, full, new ScanOptions
+        {
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            UseAmsi = false,
+            HashEveryFile = true,
+            MaximumContentBytes = 1024
+        }, new NullPasswordProvider());
         Check("完整内容补查会计算整个视频哈希", full.Metrics.BytesHashed == 128 && full.Coverage == ScanCoverage.Complete);
-        ScanReport scopeReport = await new ScanCoordinator(rules).RunAsync(new ScanOptions { Mode = ScanMode.Custom,
-            IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false, CustomRoots = [small], MaximumContentBytes = 1024 });
+        ScanReport scopeReport = await new ScanCoordinator(rules).RunAsync(new ScanOptions
+        {
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            CustomRoots = [small],
+            MaximumContentBytes = 1024
+        });
         Check("报告预算说明仅记录实际内容阶段", scopeReport.ScopeNotes.Count(n => n.Contains("文件哈希读取预算")) == 1 &&
             scopeReport.ScopeNotes.All(n => !n.StartsWith("系统阶段")));
 
         ScanReport noise = new() { Mode = ScanMode.Quick, CompletedAtUtc = DateTimeOffset.UtcNow };
-        for (int i = 0; i < 6500; i++) noise.Findings.Add(new() { Category = FindingCategory.Coverage, RuleId = "CONTENT-BYTE-BUDGET",
-            Target = small, Description = "budget " + i, Severity = FindingSeverity.Medium, Score = 30 });
+        for (int i = 0; i < 6500; i++) noise.Findings.Add(new()
+        {
+            Category = FindingCategory.Coverage,
+            RuleId = "CONTENT-BYTE-BUDGET",
+            Target = small,
+            Description = "budget " + i,
+            Severity = FindingSeverity.Medium,
+            Score = 30
+        });
         Check("六千五百条旧覆盖记录仅汇总为一类", CoveragePresentation.Groups(noise).Single().Count == 6500);
         Check("旧版覆盖记录也不推高风险数量和严重度", noise.RiskFindingCount == 0 && noise.HighestSeverity == FindingSeverity.Information);
         Check("补查目标使用外层路径并去重", MainWindow.CoverageTargets(CoveragePresentation.Groups(noise).Single()).SequenceEqual([small]));
@@ -65,8 +95,13 @@ internal static partial class Program
         Check("加密补查说明要求正确密码", encrypted.CanFullScan && encrypted.NextStep.Contains("正确") && encrypted.NextStep.Contains("密码"));
         Check("读取失败不承诺完整扫描自动解决", !CoveragePresentation.Describe("SCAN-PARTIAL", small, "拒绝访问").CanFullScan);
         Check("安全上限不能用完整扫描绕过", !CoveragePresentation.Describe("ARCHIVE-RATIO-LIMIT", small, "压缩比超过上限").CanFullScan);
-        Check("缺外层哈希的尾随威胁不可选择隔离", !new FindingItemViewModel(new() { CanRemediate = true, IsKnownMalware = true,
-            Target = media, ContentPath = media + "!/<尾随内容>" }).CanSelect);
+        Check("缺外层哈希的尾随威胁不可选择隔离", !new FindingItemViewModel(new()
+        {
+            CanRemediate = true,
+            IsKnownMalware = true,
+            Target = media,
+            ContentPath = media + "!/<尾随内容>"
+        }).CanSelect);
         noise.Findings.Add(new() { Category = FindingCategory.File, Severity = FindingSeverity.Critical, IsKnownMalware = true, Title = "无害规则" });
         Check("覆盖记录不压制真实威胁", noise.RiskFindingCount == 1 && noise.HighestSeverity == FindingSeverity.Critical);
         string output = Path.Combine(folder, "report.md"); await ReportExporter.ExportMarkdownAsync(noise, output);
@@ -86,5 +121,16 @@ internal static partial class Program
         BinaryPrimitives.WriteUInt32BigEndian(header, 16); "ftyp"u8.CopyTo(header.AsSpan(4)); "isom"u8.CopyTo(header.AsSpan(8));
         BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(16), checked((uint)(length - 16))); "mdat"u8.CopyTo(header.AsSpan(20));
         stream.Write(header); stream.SetLength(length);
+    }
+
+    private static byte[] MakePortableExecutableFixture()
+    {
+        byte[] bytes = new byte[128];
+        bytes[0] = 0x4D; bytes[1] = 0x5A;
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(0x3C), 0x40);
+        "PE\0\0"u8.CopyTo(bytes.AsSpan(0x40));
+        bytes[0x44] = 0x64; bytes[0x45] = 0x86;
+        bytes[0x46] = 1;
+        return bytes;
     }
 }

@@ -25,12 +25,8 @@ internal sealed class ArchiveWorkerClient
         string workerAssembly = Path.ChangeExtension(workerPath, ".dll");
         if (!File.Exists(workerAssembly))
             throw new WorkerFailureException(WorkerStage.Preflight, null, "缺少扫描组件 DLL，不能开始内容检查。", new FileNotFoundException(null, workerAssembly));
-        string workerRoot = Path.GetFullPath(AppPaths.WorkerTemporaryRoot);
-        Directory.CreateDirectory(workerRoot);
-        if (Validation.ContainsReparsePoint(workerRoot))
-            throw new UnauthorizedAccessException("工作进程临时目录包含重解析点。");
-        string workingDirectory = Path.Combine(workerRoot, Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(workingDirectory);
+        await using WorkerWorkspace workspace = new();
+        string workingDirectory = workspace.Path;
 
         try
         {
@@ -44,21 +40,6 @@ internal sealed class ArchiveWorkerClient
         {
             throw new WorkerFailureException(WorkerStage.RestrictedStart, null, ex.Message, ex);
         }
-        finally
-        {
-            // Process/Job handles must be closed before removing the child's working directory.
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                try
-                {
-                    if (Directory.Exists(workingDirectory) && !Validation.ContainsReparsePoint(workingDirectory))
-                        Directory.Delete(workingDirectory, recursive: true);
-                    break;
-                }
-                catch (IOException) { await Task.Delay(50 * (attempt + 1)).ConfigureAwait(false); }
-                catch (UnauthorizedAccessException) { break; }
-            }
-        }
     }
 
     private static async Task<ScanReport> RunProtocolAsync(
@@ -66,10 +47,26 @@ internal sealed class ArchiveWorkerClient
         Func<ArchivePasswordRequest, CancellationToken, Task<ArchivePasswordResponse>> passwordCallback,
         IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
     {
-        using CancellationTokenRegistration registration = cancellationToken.Register(() =>
+        SemaphoreSlim inputLock = new(1, 1);
+        async Task SendAsync(WorkerMessage message, CancellationToken token)
         {
-            try { worker.Kill(); } catch { }
-        });
+            await inputLock.WaitAsync(token).ConfigureAwait(false);
+            try { await WriteAsync(worker, message, token).ConfigureAwait(false); }
+            finally { inputLock.Release(); }
+        }
+        Task? cancellationCleanup = null;
+        using CancellationTokenRegistration registration = cancellationToken.Register(() =>
+            cancellationCleanup = Task.Run(async () =>
+            {
+                try
+                {
+                    using CancellationTokenSource grace = new(TimeSpan.FromSeconds(2));
+                    await SendAsync(new WorkerMessage { Type = WorkerMessageTypes.Cancel }, grace.Token)
+                        .WaitAsync(grace.Token).ConfigureAwait(false);
+                    await worker.WaitForExitAsync(grace.Token).ConfigureAwait(false);
+                }
+                catch { try { worker.Kill(); } catch { } }
+            }));
         using CancellationTokenSource errorCancellation = new();
         BoundedWorkerError errors = new();
         Task errorTask = errors.DrainAsync(worker.StandardError, errorCancellation.Token);
@@ -80,6 +77,7 @@ internal sealed class ArchiveWorkerClient
         WorkerDiagnostics? diagnostics = null;
         string launcherIntegrity = ProcessIntegrity.GetCurrent().ToString();
         long lastUiProgress = 0;
+        string? lastUiStage = null;
 
         ScanReport Partial()
         {
@@ -116,7 +114,7 @@ internal sealed class ArchiveWorkerClient
             }
 
             stage = WorkerStage.Scanning;
-            await WriteAsync(worker, new WorkerMessage { Type = WorkerMessageTypes.Start, Options = options }, cancellationToken);
+            await SendAsync(new WorkerMessage { Type = WorkerMessageTypes.Start, Options = options }, cancellationToken);
             ScanReport? report = null;
             string? failure = null;
 
@@ -133,10 +131,18 @@ internal sealed class ArchiveWorkerClient
                 {
                     case WorkerMessageTypes.Progress when message.Progress is not null:
                         lastProgress = message.Progress;
-                        if (diagnostics is not null) diagnostics = diagnostics with { Stage = lastProgress.Stage,
-                            LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
-                        if (Environment.TickCount64 - lastUiProgress >= 100)
-                        { progress?.Report(message.Progress); lastUiProgress = Environment.TickCount64; }
+                        if (diagnostics is not null) diagnostics = diagnostics with
+                        {
+                            Stage = lastProgress.Stage,
+                            LastPath = lastProgress.CurrentItem,
+                            Operation = lastProgress.Message
+                        };
+                        if (Environment.TickCount64 - lastUiProgress >= 100 || message.Progress.Stage != lastUiStage)
+                        {
+                            progress?.Report(message.Progress);
+                            lastUiProgress = Environment.TickCount64;
+                            lastUiStage = message.Progress.Stage;
+                        }
                         break;
                     case WorkerMessageTypes.Checkpoint when message.Batch is not null:
                         batches.Apply(message.Batch);
@@ -144,10 +150,17 @@ internal sealed class ArchiveWorkerClient
                         break;
                     case WorkerMessageTypes.PasswordRequest when message.PasswordRequest is not null:
                         lastProgress = new("等待压缩包密码", message.PasswordRequest.ArchivePath, 0, null, "尚未读取这一层加密内容");
-                        if (diagnostics is not null) diagnostics = diagnostics with { Stage = lastProgress.Stage,
-                            LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
+                        if (diagnostics is not null) diagnostics = diagnostics with
+                        {
+                            Stage = lastProgress.Stage,
+                            LastPath = lastProgress.CurrentItem,
+                            Operation = lastProgress.Message
+                        };
                         ArchivePasswordResponse response = await passwordCallback(message.PasswordRequest, cancellationToken);
-                        await WriteAsync(worker, new WorkerMessage
+                        if (!string.Equals(response.RequestId, message.PasswordRequest.RequestId, StringComparison.Ordinal))
+                            throw new InvalidDataException("密码响应与当前请求不匹配，已停止内容检查。");
+                        _ = ArchivePasswordInput.ValidateAndGetPasswords(response);
+                        await SendAsync(new WorkerMessage
                         {
                             Type = WorkerMessageTypes.PasswordResponse,
                             PasswordResponse = response
@@ -208,6 +221,8 @@ internal sealed class ArchiveWorkerClient
         }
         finally
         {
+            if (cancellationCleanup is not null)
+                try { await cancellationCleanup.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); } catch { }
             try
             {
                 if (!worker.HasExited)

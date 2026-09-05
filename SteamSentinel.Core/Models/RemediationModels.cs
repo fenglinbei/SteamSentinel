@@ -1,4 +1,5 @@
 using System.Security.Principal;
+using System.Text.Json.Serialization;
 
 namespace SteamSentinel.Core.Models;
 
@@ -23,12 +24,19 @@ public enum RemediationActionType
 
 public sealed class RemediationPlan
 {
+    [JsonRequired]
     public string SchemaVersion { get; init; } = "1";
+    [JsonRequired]
     public Guid PlanId { get; init; } = Guid.NewGuid();
+    [JsonRequired]
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
+    [JsonRequired]
     public DateTimeOffset ExpiresAtUtc { get; init; } = DateTimeOffset.UtcNow.AddMinutes(15);
+    [JsonRequired]
     public string RequestedBy { get; init; } = Environment.UserName;
+    [JsonRequired]
     public string RequestedBySid { get; init; } = WindowsIdentity.GetCurrent().User?.Value ?? string.Empty;
+    [JsonRequired]
     public List<RemediationAction> Actions { get; init; } = [];
 }
 
@@ -122,6 +130,8 @@ public sealed class QuarantineManifest
     public string SchemaVersion { get; init; } = "1";
     public Guid IncidentId { get; init; }
     public Guid PlanId { get; init; }
+    public Guid TrustId { get; init; }
+    public string RequestedBySid { get; init; } = string.Empty;
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset MachineBootTimeUtc { get; init; } = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
     public List<QuarantineRecord> Records { get; init; } = [];
@@ -145,7 +155,7 @@ public sealed class QuarantineRecord
     public string? DefenderExclusionPath { get; init; }
     public List<string> HostsDomains { get; init; } = [];
     public bool RolledBack { get; set; }
-    public bool? MutationConfirmed { get; set; }
+    public bool MutationConfirmed { get; set; }
     public string? RelatedFilePath { get; init; }
     public string? RelatedFileSha256 { get; init; }
     public string? ConfigurationKind { get; init; }

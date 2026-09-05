@@ -107,6 +107,7 @@ public sealed class ScanMetrics
 public sealed class ScanReport
 {
     public string ProductVersion { get; init; } = ProductInfo.Version;
+    public string BuildIdentity { get; init; } = ProductInfo.BuildIdentity;
     public string RuleSetVersion { get; set; } = string.Empty;
     public Guid ScanId { get; init; } = Guid.NewGuid();
     public DateTimeOffset StartedAtUtc { get; init; } = DateTimeOffset.UtcNow;
@@ -133,7 +134,8 @@ public sealed class ScanReport
     public int RiskFindingCount => Findings.Count(f => f.Category != FindingCategory.Coverage);
     public string ExecutionStatus => Findings.Any(f => f.RuleId == "CONTENT-SCAN-FAILED") ? "内容检查失败，已保留可用结果" :
         CoverageNotes.Any(n => n.Contains("取消")) ? "扫描已取消，已保留可用结果" :
-        CompletedAtUtc is null ? "尚未结束" : "扫描流程已结束，未检查内容另列";
+        CompletedAtUtc is null ? "尚未结束" :
+        Coverage == ScanCoverage.Complete ? "本次扫描已完成" : "本次扫描已结束，仍有未检查内容";
     public List<string> ScopeNotes { get; init; } = [];
 }
 
@@ -187,7 +189,48 @@ public sealed record ArchivePasswordResponse(
     bool Cancelled,
     string? Password,
     bool ReuseForSession,
-    ArchivePasswordReuseScope ReuseScope = ArchivePasswordReuseScope.CurrentOnly);
+    ArchivePasswordReuseScope ReuseScope = ArchivePasswordReuseScope.CurrentOnly,
+    IReadOnlyList<string>? Passwords = null,
+    bool SkipAllEncrypted = false);
+
+public static class ArchivePasswordInput
+{
+    public const int MaximumPasswords = 16;
+    public const int MaximumPasswordCharacters = 1024;
+
+    /// <summary>
+    /// Validates an untrusted provider response and returns its effective password candidates.
+    /// A non-empty ordered batch takes precedence over the legacy single-password field.
+    /// Password text is never trimmed or included in validation errors.
+    /// </summary>
+    public static IReadOnlyList<string> ValidateAndGetPasswords(ArchivePasswordResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        if (!Enum.IsDefined(response.ReuseScope))
+            throw new ArgumentException("密码复用范围值无效。", nameof(response));
+        if (response.Password is { Length: > MaximumPasswordCharacters })
+            throw new ArgumentException($"单个密码不能超过 {MaximumPasswordCharacters} 个字符。", nameof(response));
+
+        if (response.Passwords is { } supplied)
+        {
+            if (supplied.Count > MaximumPasswords)
+                throw new ArgumentException($"一次最多可以提供 {MaximumPasswords} 个密码。", nameof(response));
+            List<string> ordered = [];
+            HashSet<string> seen = new(StringComparer.Ordinal);
+            for (int index = 0; index < supplied.Count; index++)
+            {
+                string? value = supplied[index];
+                if (string.IsNullOrEmpty(value)) continue;
+                if (value.Length > MaximumPasswordCharacters)
+                    throw new ArgumentException($"单个密码不能超过 {MaximumPasswordCharacters} 个字符。", nameof(response));
+                if (seen.Add(value)) ordered.Add(value);
+            }
+            if (ordered.Count > 0) return ordered;
+        }
+
+        return string.IsNullOrEmpty(response.Password) ? [] : [response.Password];
+    }
+}
 
 public enum ArchivePasswordReuseScope { CurrentOnly, ArchiveTree, Session }
 
@@ -211,5 +254,9 @@ public sealed class NullPasswordProvider : IArchivePasswordProvider
 public static class ProductInfo
 {
     public const string Name = "SteamSentinel Steam 红信安全工具";
-    public const string Version = "0.1.16";
+    public static string BuildIdentity { get; } = typeof(ProductInfo).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().SingleOrDefault()?.InformationalVersion
+        ?? "unknown";
+    public static string Version { get; } = BuildIdentity.Split('+')[0];
 }

@@ -60,20 +60,20 @@ public sealed class AmsiScanner : IDisposable
 
     private AmsiScanResult ScanOwnedBuffer(byte[] bytes, string contentName)
     {
-            int hr = AmsiScanBuffer(_context, bytes, (uint)bytes.Length, contentName, _session, out int result);
-            if (hr < 0)
-            {
-                return new AmsiScanResult(AmsiVerdict.Error, result, $"AMSI 调用失败：0x{hr:X8}");
-            }
+        int hr = AmsiScanBuffer(_context, bytes, (uint)bytes.Length, contentName, _session, out int result);
+        if (hr < 0)
+        {
+            return new AmsiScanResult(AmsiVerdict.Error, result, $"AMSI 调用失败：0x{hr:X8}");
+        }
 
-            AmsiVerdict verdict = result switch
-            {
-                >= AmsiResultDetected => AmsiVerdict.Detected,
-                >= 0x4000 => AmsiVerdict.BlockedByPolicy,
-                0 => AmsiVerdict.Clean,
-                _ => AmsiVerdict.NotDetected
-            };
-            return new AmsiScanResult(verdict, result, $"AMSI 返回值：{result}");
+        AmsiVerdict verdict = result switch
+        {
+            >= AmsiResultDetected => AmsiVerdict.Detected,
+            >= 0x4000 => AmsiVerdict.BlockedByPolicy,
+            0 => AmsiVerdict.Clean,
+            _ => AmsiVerdict.NotDetected
+        };
+        return new AmsiScanResult(verdict, result, $"AMSI 返回值：{result}");
     }
 
     public async Task<AmsiScanResult> ScanFileAsync(

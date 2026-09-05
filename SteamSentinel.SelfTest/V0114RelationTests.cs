@@ -68,28 +68,55 @@ internal static partial class Program
 
         Finding FileFinding(string target, string? identity, string rule = "FIXTURE") => new()
         {
-            RuleId = rule, Category = FindingCategory.File, Target = target, Sha256 = identity, TargetSha256 = identity,
-            Score = 95, CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            RuleId = rule,
+            Category = FindingCategory.File,
+            Target = target,
+            Sha256 = identity,
+            TargetSha256 = identity,
+            Score = 95,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         Finding file = FileFinding(payload, hash);
         Finding ProcessFinding(int pid) => new()
         {
-            Category = FindingCategory.Process, Target = payload, Sha256 = hash, ProcessId = pid,
-            ProcessStartedAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(pid), RelatedFilePath = payload, RelatedFileSha256 = hash,
-            CanRemediate = true, Score = 100, SuggestedActions = [SuggestedActionKind.StopProcess]
+            Category = FindingCategory.Process,
+            Target = payload,
+            Sha256 = hash,
+            ProcessId = pid,
+            ProcessStartedAtUtc = DateTimeOffset.UnixEpoch.AddMinutes(pid),
+            RelatedFilePath = payload,
+            RelatedFileSha256 = hash,
+            CanRemediate = true,
+            Score = 100,
+            SuggestedActions = [SuggestedActionKind.StopProcess]
         };
         Finding RunFinding(string view, string command, string? relatedHash = null) => new()
         {
-            RuleId = "PERSISTENCE-RUN-BOUND", Category = FindingCategory.Persistence, Target = command,
-            RegistryHive = "HKLM", RegistryView = view, RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run",
-            RegistryValueName = "sameName", RelatedFilePath = payload, RelatedFileSha256 = relatedHash ?? hash,
-            CanRemediate = true, Score = 100, SuggestedActions = [SuggestedActionKind.RemoveRegistryValue]
+            RuleId = "PERSISTENCE-RUN-BOUND",
+            Category = FindingCategory.Persistence,
+            Target = command,
+            RegistryHive = "HKLM",
+            RegistryView = view,
+            RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run",
+            RegistryValueName = "sameName",
+            RelatedFilePath = payload,
+            RelatedFileSha256 = relatedHash ?? hash,
+            CanRemediate = true,
+            Score = 100,
+            SuggestedActions = [SuggestedActionKind.RemoveRegistryValue]
         };
         Finding task = new()
         {
-            RuleId = "PERSISTENCE-TASK-BOUND", Target = @"\Fixture", Sha256 = new string('A', 64),
-            RelatedFilePath = payload, RelatedFileSha256 = hash, ConfigurationSnapshot = "\"" + payload + "\"",
-            CanRemediate = true, Score = 100, SuggestedActions = [SuggestedActionKind.RemoveScheduledTask]
+            RuleId = "PERSISTENCE-TASK-BOUND",
+            Target = @"\Fixture",
+            Sha256 = new string('A', 64),
+            RelatedFilePath = payload,
+            RelatedFileSha256 = hash,
+            ConfigurationSnapshot = "\"" + payload + "\"",
+            CanRemediate = true,
+            Score = 100,
+            SuggestedActions = [SuggestedActionKind.RemoveScheduledTask]
         };
         Finding[] all = [file, ProcessFinding(10001), ProcessFinding(10002), RunFinding("Registry64", payload),
             RunFinding("Registry32", payload), task, RunFinding("Default", "unrelated", new string('B', 64))];
@@ -108,8 +135,11 @@ internal static partial class Program
         catch (InvalidDataException) { rejected = true; }
         Check("文件无原始身份不能在构建计划时采用新哈希", rejected);
         rejected = false;
-        try { await new RemediationPlanBuilder(new()).BuildAsync([new Finding { Target = payload, Sha256 = hash, ProcessId = 101,
-            CanRemediate = true, SuggestedActions = [SuggestedActionKind.StopProcess] }], false); }
+        try
+        {
+            await new RemediationPlanBuilder(new()).BuildAsync([new Finding { Target = payload, Sha256 = hash, ProcessId = 101,
+            CanRemediate = true, SuggestedActions = [SuggestedActionKind.StopProcess] }], false);
+        }
         catch (InvalidDataException) { rejected = true; }
         Check("缺少进程启动时间拒绝输出停止动作", rejected);
         rejected = false;
@@ -117,8 +147,13 @@ internal static partial class Program
         {
             await new RemediationPlanBuilder(new()).BuildAsync(Enumerable.Range(0, 65).Select(i => new Finding
             {
-                Target = "inert", RegistryHive = "HKCU", RegistryView = "Default", RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run",
-                RegistryValueName = "fixture-" + i, CanRemediate = true, SuggestedActions = [SuggestedActionKind.RemoveRegistryValue]
+                Target = "inert",
+                RegistryHive = "HKCU",
+                RegistryView = "Default",
+                RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run",
+                RegistryValueName = "fixture-" + i,
+                CanRemediate = true,
+                SuggestedActions = [SuggestedActionKind.RemoveRegistryValue]
             }), false);
         }
         catch (InvalidDataException ex) { rejected = ex.Message.Contains("请按关联组分批处理"); }
@@ -135,22 +170,45 @@ internal static partial class Program
 
         RuleSet whitelist = new() { KnownRunValueNames = ["allowed"], KnownTaskNames = [@"\Allowed"] };
         RelatedArtifactScanner allowedScanner = new(whitelist);
-        Finding legacyRun = new() { RuleId = "PERSISTENCE-RUN-KNOWN", Target = "missing.exe", RegistryHive = "HKCU", RegistryView = "Default",
-            RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RegistryValueName = "allowed", CanRemediate = true,
-            SuggestedActions = [SuggestedActionKind.RemoveRegistryValue] };
+        Finding legacyRun = new()
+        {
+            RuleId = "PERSISTENCE-RUN-KNOWN",
+            Target = "missing.exe",
+            RegistryHive = "HKCU",
+            RegistryView = "Default",
+            RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run",
+            RegistryValueName = "allowed",
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.RemoveRegistryValue]
+        };
         Finding? orphan = allowedScanner.PreserveAllowlistedSnapshot(legacyRun, legacyRun);
         Check("原白名单孤立 Run 项原值一致可移除但不宣称已知恶意", orphan is { CanRemediate: true, IsKnownMalware: false, RelatedFilePath: null });
         Finding changedRun = new() { Target = "changed.exe", RegistryHive = "HKCU", RegistryView = "Default", RegistryKey = legacyRun.RegistryKey, RegistryValueName = "allowed" };
         Check("孤立 Run 项不能采用已变化的原值", allowedScanner.PreserveAllowlistedSnapshot(legacyRun, changedRun) is null);
-        Finding legacyTask = new() { RuleId = "PERSISTENCE-TASK-KNOWN", Target = @"\Allowed", Sha256 = new string('C', 64), CanRemediate = true,
-            SuggestedActions = [SuggestedActionKind.RemoveScheduledTask] };
+        Finding legacyTask = new()
+        {
+            RuleId = "PERSISTENCE-TASK-KNOWN",
+            Target = @"\Allowed",
+            Sha256 = new string('C', 64),
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.RemoveScheduledTask]
+        };
         Check("原白名单孤立任务保留原 XML 身份", allowedScanner.PreserveAllowlistedSnapshot(legacyTask, legacyTask)?.Sha256 == legacyTask.Sha256 &&
             allowedScanner.PreserveAllowlistedSnapshot(legacyTask, new Finding { RuleId = legacyTask.RuleId, Target = legacyTask.Target, Sha256 = new string('D', 64) }) is null);
 
         Finding heuristic = FileFinding(payload, await Hashing.Sha256FileAsync(payload), "HEUR-STEAM-UI-PATCHER");
         Check("强原始文件启发式可闭包但仍非已知恶意", RelatedArtifactRelations.SupportsHeuristicEntry(heuristic) && !heuristic.IsKnownMalware);
-        Finding archiveHeuristic = new() { RuleId = heuristic.RuleId, Target = payload, ContentPath = payload + "!/inner.py", Sha256 = hash,
-            TargetSha256 = heuristic.Sha256, Score = 95, CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile] };
+        Finding archiveHeuristic = new()
+        {
+            RuleId = heuristic.RuleId,
+            Target = payload,
+            ContentPath = payload + "!/inner.py",
+            Sha256 = hash,
+            TargetSha256 = heuristic.Sha256,
+            Score = 95,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
+        };
         Check("归档内部证据不会当作原始文件独立运行绑定", !RelatedArtifactRelations.SupportsHeuristicEntry(archiveHeuristic) &&
             RelatedArtifactRelations.FileHash(archiveHeuristic) == heuristic.Sha256);
         Check("名称规则与低置信加载器不能获得启发式关联权限", !RelatedArtifactRelations.SupportsHeuristicEntry(FileFinding(payload, hash, "PROCESS-KNOWN-NAME")) &&
@@ -158,14 +216,25 @@ internal static partial class Program
 
         string restore = Path.Combine(directory, "steam", "package"); Directory.CreateDirectory(restore);
         await File.WriteAllTextAsync(Path.Combine(restore, "inert.txt"), "manual restore fixture");
-        Finding folder = new() { RuleId = "STEAM-RESTORE-MANUAL", Category = FindingCategory.Steam, Target = restore,
-            CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineDirectory] };
+        Finding folder = new()
+        {
+            RuleId = "STEAM-RESTORE-MANUAL",
+            Category = FindingCategory.Steam,
+            Target = restore,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.QuarantineDirectory]
+        };
         RelatedArtifactExpansion manual = await new RelatedArtifactScanner(new()).ExpandAsync([folder], new());
         RemediationPlan folderPlan = await new RemediationPlanBuilder(new()).BuildAsync(manual.Findings, false);
         Check("明确选择的 Steam 恢复目录保留且生成兼容指纹", folderPlan.Actions.Single().ExpectedSha256 == await DirectoryFingerprint.ComputeAsync(restore) &&
             manual.Notes.Any(n => n.Contains("人工确认")));
-        Finding scannedFolder = new() { Target = restore, TargetSha256 = folderPlan.Actions.Single().ExpectedSha256, CanRemediate = true,
-            SuggestedActions = [SuggestedActionKind.QuarantineDirectory] };
+        Finding scannedFolder = new()
+        {
+            Target = restore,
+            TargetSha256 = folderPlan.Actions.Single().ExpectedSha256,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.QuarantineDirectory]
+        };
         Check("普通可操作扫描目录保留匹配的原始指纹", (await new RelatedArtifactScanner(new()).ExpandAsync([scannedFolder], new())).Findings.Contains(scannedFolder));
         await File.WriteAllTextAsync(Path.Combine(restore, "inert.txt"), "changed directory fixture");
         Check("已变化扫描目录不静默采用新指纹", !(await new RelatedArtifactScanner(new()).ExpandAsync([scannedFolder], new())).Findings.Any(f => f.CanRemediate));
@@ -177,9 +246,13 @@ internal static partial class Program
         string linkHash = await Hashing.Sha256FileAsync(link);
         Finding startup = new()
         {
-            RuleId = "PERSISTENCE-STARTUP-LINK", Target = link, Sha256 = linkHash,
-            RelatedFilePath = Path.Combine(directory, "already-missing.exe"), RelatedFileSha256 = hash,
-            CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            RuleId = "PERSISTENCE-STARTUP-LINK",
+            Target = link,
+            Sha256 = linkHash,
+            RelatedFilePath = Path.Combine(directory, "already-missing.exe"),
+            RelatedFileSha256 = hash,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         RelatedArtifactExpansion startupExpansion = await new RelatedArtifactScanner(new()).ExpandAsync([startup], new());
         RemediationPlan startupPlan = await new RemediationPlanBuilder(new()).BuildAsync(startupExpansion.Findings, false, allFindings: startupExpansion.Findings);

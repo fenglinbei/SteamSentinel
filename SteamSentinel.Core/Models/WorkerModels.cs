@@ -34,6 +34,8 @@ public static class ScanReportMerger
     {
         ScanReport merged = new()
         {
+            ProductVersion = first.ProductVersion,
+            BuildIdentity = first.BuildIdentity,
             Mode = first.Mode,
             StartedAtUtc = first.StartedAtUtc < second.StartedAtUtc ? first.StartedAtUtc : second.StartedAtUtc,
             RuleSetVersion = first.RuleSetVersion,

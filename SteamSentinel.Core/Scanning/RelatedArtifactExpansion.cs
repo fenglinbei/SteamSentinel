@@ -172,12 +172,20 @@ public sealed partial class RelatedArtifactScanner
             bool known = _known.ContainsKey(hash);
             Finding proof = new()
             {
-                RuleId = source?.RuleId ?? "RELATION-KNOWN-HASH", Category = FindingCategory.File,
-                Severity = known ? FindingSeverity.Critical : source!.Severity, Score = known ? 100 : source!.Score,
-                Title = source?.Title ?? "关联文件命中已知恶意哈希", Description = "重新读取验证原始文件身份，未执行文件或展开归档。",
-                Target = path, Sha256 = hash, TargetSha256 = hash, ContentPath = source?.ContentPath,
-                Evidence = source?.Evidence ?? "精确文件哈希命中规则库。", IsKnownMalware = known,
-                CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+                RuleId = source?.RuleId ?? "RELATION-KNOWN-HASH",
+                Category = FindingCategory.File,
+                Severity = known ? FindingSeverity.Critical : source!.Severity,
+                Score = known ? 100 : source!.Score,
+                Title = source?.Title ?? "关联文件命中已知恶意哈希",
+                Description = "重新读取验证原始文件身份，未执行文件或展开归档。",
+                Target = path,
+                Sha256 = hash,
+                TargetSha256 = hash,
+                ContentPath = source?.ContentPath,
+                Evidence = source?.Evidence ?? "精确文件哈希命中规则库。",
+                IsKnownMalware = known,
+                CanRemediate = true,
+                SuggestedActions = [SuggestedActionKind.QuarantineFile]
             };
             _proofs[path] = proof;
             report.Findings.Add(proof);
@@ -264,8 +272,14 @@ public sealed partial class RelatedArtifactScanner
                     Enum.Parse<RegistryView>(finding.RegistryView));
                 using RegistryKey? key = baseKey.OpenSubKey(finding.RegistryKey);
                 if (key?.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string current)
-                    fresh = new Finding { Target = current, RegistryHive = finding.RegistryHive, RegistryView = finding.RegistryView,
-                        RegistryKey = finding.RegistryKey, RegistryValueName = name };
+                    fresh = new Finding
+                    {
+                        Target = current,
+                        RegistryHive = finding.RegistryHive,
+                        RegistryView = finding.RegistryView,
+                        RegistryKey = finding.RegistryKey,
+                        RegistryValueName = name
+                    };
             }
             Finding? preserved = fresh is null ? null : PreserveAllowlistedSnapshot(finding, fresh);
             if (preserved is null) return false;
@@ -290,11 +304,21 @@ public sealed partial class RelatedArtifactScanner
         if (!allowed) return null;
         return new Finding
         {
-            RuleId = previous.RuleId, Category = FindingCategory.Persistence, Severity = previous.Severity, Score = previous.Score,
-            Title = "移除重新核对的启动项配置", Description = "此动作只移除已验证配置，目标文件未确认，不标记为已知恶意文件。",
-            Target = previous.Target, Sha256 = previous.Sha256, ConfigurationSnapshot = previous.ConfigurationSnapshot,
-            RegistryHive = previous.RegistryHive, RegistryView = previous.RegistryView, RegistryKey = previous.RegistryKey,
-            RegistryValueName = previous.RegistryValueName, IsKnownMalware = false, CanRemediate = true,
+            RuleId = previous.RuleId,
+            Category = FindingCategory.Persistence,
+            Severity = previous.Severity,
+            Score = previous.Score,
+            Title = "移除重新核对的启动项配置",
+            Description = "此动作只移除已验证配置，目标文件未确认，不标记为已知恶意文件。",
+            Target = previous.Target,
+            Sha256 = previous.Sha256,
+            ConfigurationSnapshot = previous.ConfigurationSnapshot,
+            RegistryHive = previous.RegistryHive,
+            RegistryView = previous.RegistryView,
+            RegistryKey = previous.RegistryKey,
+            RegistryValueName = previous.RegistryValueName,
+            IsKnownMalware = false,
+            CanRemediate = true,
             SuggestedActions = [task ? SuggestedActionKind.RemoveScheduledTask : SuggestedActionKind.RemoveRegistryValue]
         };
     }
@@ -344,12 +368,20 @@ public sealed partial class RelatedArtifactScanner
                         bool allowed = known || direct && _proofs.TryGetValue(Path.GetFullPath(path), out Finding? proof) && RelatedArtifactRelations.SupportsHeuristicEntry(proof);
                         AddCurrent(new Finding
                         {
-                            RuleId = direct ? "PROCESS-RELATED-IMAGE" : "PROCESS-LOADED-MALWARE", Category = FindingCategory.Process,
-                            Severity = known ? FindingSeverity.Critical : FindingSeverity.High, Score = ProofScore(path, hash),
+                            RuleId = direct ? "PROCESS-RELATED-IMAGE" : "PROCESS-LOADED-MALWARE",
+                            Category = FindingCategory.Process,
+                            Severity = known ? FindingSeverity.Critical : FindingSeverity.High,
+                            Score = ProofScore(path, hash),
                             Title = direct ? "已识别关联文件的运行映像" : "已识别加载关联文件的宿主",
                             Description = "核对 PID、启动时间、程序哈希与当前加载文件路径，此关联不等于已证实写入行为，不隔离加载它的程序。",
-                            Target = host, Sha256 = hostHash, ProcessId = process.Id, ProcessStartedAtUtc = start,
-                            RelatedFilePath = path, RelatedFileSha256 = hash, IsKnownMalware = known, CanRemediate = allowed,
+                            Target = host,
+                            Sha256 = hostHash,
+                            ProcessId = process.Id,
+                            ProcessStartedAtUtc = start,
+                            RelatedFilePath = path,
+                            RelatedFileSha256 = hash,
+                            IsKnownMalware = known,
+                            CanRemediate = allowed,
                             Evidence = $"PID {process.Id}；映像：{host}；模块：{path}",
                             SuggestedActions = allowed ? [direct ? SuggestedActionKind.StopProcess : SuggestedActionKind.StopHostProcess] : [SuggestedActionKind.ReviewOnly]
                         }, report);

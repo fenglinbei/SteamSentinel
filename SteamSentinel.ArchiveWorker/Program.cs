@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading.Channels;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Scanning;
 using SteamSentinel.Core.Utilities;
@@ -39,23 +40,55 @@ internal static class Program
                 return 2;
             }
 
-            StdioPasswordProvider passwordProvider = new();
+            using CancellationTokenSource scanCancellation = new();
+            Channel<ArchivePasswordResponse> responses = Channel.CreateBounded<ArchivePasswordResponse>(8);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (true)
+                    {
+                        string? input = await Input.ReadLineAsync(scanCancellation.Token);
+                        if (input is null) { scanCancellation.Cancel(); break; }
+                        WorkerMessage? message = JsonSerializer.Deserialize<WorkerMessage>(input.TrimStart('\uFEFF'), JsonFile.Options);
+                        if (message?.Type == WorkerMessageTypes.Cancel) { scanCancellation.Cancel(); break; }
+                        if (message?.Type != WorkerMessageTypes.PasswordResponse || message.PasswordResponse is null)
+                            throw new InvalidDataException("扫描组件收到无效或过量控制消息。");
+                        _ = ArchivePasswordInput.ValidateAndGetPasswords(message.PasswordResponse);
+                        if (!responses.Writer.TryWrite(message.PasswordResponse))
+                            throw new InvalidDataException("扫描组件收到无效或过量控制消息。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    responses.Writer.TryComplete(ex);
+                    try { scanCancellation.Cancel(); } catch (ObjectDisposedException) { }
+                }
+                finally { responses.Writer.TryComplete(); }
+            });
+            StdioPasswordProvider passwordProvider = new(responses.Reader);
             long lastDiagnostics = 0, lastCheckpoint = 0, lastProgressSent = 0;
+            string? lastStageSent = null;
             int lastFindings = -1;
             long lastCoverageOccurrences = -1;
             ReportBatchWriter batches = new(batch => WriteAsync(new WorkerMessage
-                { Type = WorkerMessageTypes.Checkpoint, Batch = batch }).GetAwaiter().GetResult());
+            { Type = WorkerMessageTypes.Checkpoint, Batch = batch }).GetAwaiter().GetResult());
             SynchronousProgress progress = new(message =>
             {
                 lastProgress = message;
                 long now = Environment.TickCount64;
                 if (now - lastDiagnostics >= 1000)
                 { diagnostics = WorkerDiagnostics.Capture(message); lastDiagnostics = now; }
-                if (now - lastProgressSent >= 100 || message.Stage is "压缩包目录" or "压缩包扫描" or "内容特征" or "本机安全引擎")
+                if (now - lastProgressSent >= 100 || message.Stage != lastStageSent)
                 {
-                    WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Progress, Progress = message,
-                        Diagnostics = diagnostics }).GetAwaiter().GetResult();
+                    WriteAsync(new WorkerMessage
+                    {
+                        Type = WorkerMessageTypes.Progress,
+                        Progress = message,
+                        Diagnostics = diagnostics
+                    }).GetAwaiter().GetResult();
                     lastProgressSent = now;
+                    lastStageSent = message.Stage;
                 }
                 if (live is not null) resources.Check(live);
             });
@@ -68,14 +101,16 @@ internal static class Program
                     Environment.TickCount64 - lastCheckpoint < 1000) return;
                 state.WorkerDiagnostics = diagnostics ??= WorkerDiagnostics.Capture(lastProgress);
                 if (lastProgress is not null) state.WorkerDiagnostics = state.WorkerDiagnostics with
-                    { Stage = lastProgress.Stage, LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
+                { Stage = lastProgress.Stage, LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
                 batches.Send(state);
                 lastFindings = state.Findings.Count;
                 lastCoverageOccurrences = coverageOccurrences;
                 lastCheckpoint = Environment.TickCount64;
             }
             ScanCoordinator coordinator = new();
-            ScanReport report = await coordinator.RunAsync(start.Options, passwordProvider, progress, checkpoint: Checkpoint);
+            ScanReport report = await coordinator.RunAsync(start.Options, passwordProvider, progress,
+                cancellationToken: scanCancellation.Token, checkpoint: Checkpoint);
+            scanCancellation.Token.ThrowIfCancellationRequested();
             report.WorkerDiagnostics = WorkerDiagnostics.Capture(lastProgress);
             batches.Send(report, final: true);
             await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Completed, BatchCount = batches.Count });
@@ -118,7 +153,7 @@ internal static class Program
         }
     }
 
-    private sealed class StdioPasswordProvider : IArchivePasswordProvider
+    private sealed class StdioPasswordProvider(ChannelReader<ArchivePasswordResponse> responses) : IArchivePasswordProvider
     {
         public async Task<ArchivePasswordResponse> RequestPasswordAsync(
             ArchivePasswordRequest request,
@@ -130,24 +165,13 @@ internal static class Program
                 PasswordRequest = request
             });
 
-            while (true)
+            while (await responses.WaitToReadAsync(cancellationToken))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                string? line = await Input.ReadLineAsync(cancellationToken);
-                if (line is null) return new ArchivePasswordResponse(request.RequestId, true, null, false);
-                line = line.TrimStart('\uFEFF');
-                WorkerMessage? response = JsonSerializer.Deserialize<WorkerMessage>(line, JsonFile.Options);
-                if (response?.Type == WorkerMessageTypes.Cancel)
-                {
-                    return new ArchivePasswordResponse(request.RequestId, true, null, false);
-                }
-
-                if (response?.Type == WorkerMessageTypes.PasswordResponse &&
-                    response.PasswordResponse?.RequestId == request.RequestId)
-                {
-                    return response.PasswordResponse;
-                }
+                while (responses.TryRead(out ArchivePasswordResponse? response))
+                    if (response.RequestId == request.RequestId) return response;
             }
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new OperationCanceledException("密码响应通道已关闭。", cancellationToken);
         }
     }
 

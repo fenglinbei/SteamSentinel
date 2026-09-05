@@ -98,8 +98,8 @@ public static class Mp4Inspector
     {
         if (offset < 0 || offset >= stream.Length) return null;
         stream.Position = offset;
-        byte[] buffer = new byte[64];
-        int read = await stream.ReadAsync(buffer, cancellationToken);
+        byte[] buffer = new byte[64 * 1024];
+        int read = await ReadExactlyAtMostAsync(stream, buffer, cancellationToken);
         FileTypeResult type = FileTypeDetector.Detect(buffer.AsSpan(0, read), string.Empty);
         return type.Type == DetectedFileType.Unknown ? null : type.Label;
     }

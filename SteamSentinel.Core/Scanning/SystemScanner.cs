@@ -6,12 +6,16 @@ using System.Xml.Linq;
 using Microsoft.Win32;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
 
 public sealed partial class SystemScanner
 {
+    private const int MaximumRandomProgramDirectories = 4096;
+    private const int MaximumRandomProgramEntries = 20_000;
+    private const int MaximumRandomProgramDepth = 16;
     private readonly RuleSet _rules;
     private readonly Dictionary<string, HashRule> _hashRules;
 
@@ -21,7 +25,9 @@ public sealed partial class SystemScanner
     public SystemScanner(RuleSet rules)
     {
         _rules = rules;
-        _hashRules = rules.KnownHashes.ToDictionary(rule => rule.Sha256, StringComparer.OrdinalIgnoreCase);
+        _hashRules = rules.KnownHashes.Where(rule => Validation.IsHexSha256(rule.Sha256))
+            .GroupBy(rule => rule.Sha256, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
     }
 
     public async Task ScanAsync(
@@ -36,7 +42,7 @@ public sealed partial class SystemScanner
 
         progress?.Report(new ScanProgress("系统扫描", "已知落地点", 0, null, "检查本机落地路径"));
         await ScanKnownPathsAsync(report, cancellationToken);
-        ScanRandomProgramDirectories(report);
+        ScanRandomProgramDirectories(report, cancellationToken);
 
         progress?.Report(new ScanProgress("系统扫描", "自启动与任务", 0, null, "检查 Run、任务和服务"));
         ScanRunKeys(report);
@@ -68,8 +74,9 @@ public sealed partial class SystemScanner
                 HashRule? hashRule = null;
                 if (path is not null && File.Exists(path) && (knownName || IsSuspiciousProgramPath(path)))
                 {
+                    long length = new FileInfo(path).Length;
                     sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
-                        bytes => report.Metrics.BytesHashed += bytes);
+                        bytes => report.Metrics.BytesHashed += bytes, maximumBytes: length);
                     _hashRules.TryGetValue(sha256, out hashRule);
                 }
 
@@ -120,8 +127,9 @@ public sealed partial class SystemScanner
             bool known = false;
             if (File.Exists(path))
             {
+                long length = new FileInfo(path).Length;
                 sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
-                    bytes => report.Metrics.BytesHashed += bytes);
+                    bytes => report.Metrics.BytesHashed += bytes, maximumBytes: length);
                 known = _hashRules.TryGetValue(sha256, out HashRule? matchedRule) && matchedRule.Malware;
             }
 
@@ -149,27 +157,40 @@ public sealed partial class SystemScanner
         }
     }
 
-    private void ScanRandomProgramDirectories(ScanReport report)
+    private void ScanRandomProgramDirectories(ScanReport report, CancellationToken cancellationToken)
     {
         string programs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
         if (!Directory.Exists(programs)) return;
 
-        IEnumerable<string> directories;
-        try { directories = Directory.EnumerateDirectories(programs).ToArray(); }
-        catch { return; }
-
-        foreach (string directory in directories)
+        int visitedDirectories = 0;
+        int skippedDirectories = 0;
+        string? skippedExample = null;
+        try
         {
-            try
+            foreach (string directory in Directory.EnumerateDirectories(programs))
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++visitedDirectories > MaximumRandomProgramDirectories)
+                {
+                    AddCoverage(report, $"随机样式程序目录枚举达到 {MaximumRandomProgramDirectories} 项上限。", programs);
+                    break;
+                }
+                if (!ContentDiscovery.IsLocalSafePath(directory))
+                {
+                    skippedDirectories++;
+                    skippedExample ??= directory;
+                    continue;
+                }
                 string name = Path.GetFileName(directory);
                 if (!RandomDirectoryNameRegex().IsMatch(name)) continue;
                 int score = 10;
                 List<string> evidence = ["随机样式目录名"];
                 if (File.Exists(Path.Combine(directory, "WindowsUpdatem.exe"))) { score += 45; evidence.Add("WindowsUpdatem.exe"); }
-                if (Directory.EnumerateFiles(directory, "python3*.dll", SearchOption.TopDirectoryOnly).Any()) { score += 15; evidence.Add("内嵌 Python"); }
-                if (Directory.Exists(Path.Combine(directory, "pymem")) || Directory.EnumerateDirectories(directory, "pymem", SearchOption.AllDirectories).Take(1).Any()) { score += 20; evidence.Add("pymem"); }
-                if (Directory.EnumerateFileSystemEntries(directory, "*win32crypt*", SearchOption.AllDirectories).Take(1).Any()) { score += 15; evidence.Add("win32crypt"); }
+                RandomProgramStructure structure = InspectRandomProgramDirectory(directory, cancellationToken);
+                if (structure.CoverageNote is not null) AddCoverage(report, structure.CoverageNote, directory);
+                if (structure.HasPython) { score += 15; evidence.Add("内嵌 Python"); }
+                if (structure.HasPymem) { score += 20; evidence.Add("pymem"); }
+                if (structure.HasWin32Crypt) { score += 15; evidence.Add("win32crypt"); }
                 if (score < 45) continue;
 
                 report.Findings.Add(new Finding
@@ -187,12 +208,69 @@ public sealed partial class SystemScanner
                     SuggestedActions = [SuggestedActionKind.ReviewOnly]
                 });
             }
-            catch
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AddCoverage(report, $"随机样式程序目录未完整读取：{ex.Message}", programs);
+        }
+        if (skippedDirectories > 0)
+            AddCoverage(report, $"随机样式程序目录检查跳过 {skippedDirectories:N0} 个重解析点或非本地路径，示例：{skippedExample}", programs);
+    }
+
+    private static RandomProgramStructure InspectRandomProgramDirectory(
+        string root, CancellationToken cancellationToken)
+    {
+        bool python = false, pymem = false, win32Crypt = false;
+        string? coverageNote = null;
+        int visited = 0;
+        Stack<(string Path, int Depth)> pending = new();
+        pending.Push((root, 0));
+        while (pending.TryPop(out var current))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                // Continue with other candidate directories.
+                foreach (string entry in Directory.EnumerateFileSystemEntries(current.Path)
+                             .Take(Math.Max(0, MaximumRandomProgramEntries - visited) + 1))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (++visited > MaximumRandomProgramEntries)
+                    {
+                        coverageNote ??= $"随机样式程序目录内部枚举达到 {MaximumRandomProgramEntries} 项上限。";
+                        return new(python, pymem, win32Crypt, coverageNote);
+                    }
+                    FileAttributes attributes = File.GetAttributes(entry);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        coverageNote ??= $"随机样式程序目录检查跳过重解析点：{entry}";
+                        continue;
+                    }
+                    string name = Path.GetFileName(entry);
+                    if ((attributes & FileAttributes.Directory) != 0)
+                    {
+                        if (name.Equals("pymem", StringComparison.OrdinalIgnoreCase)) pymem = true;
+                        if (current.Depth >= MaximumRandomProgramDepth)
+                            coverageNote ??= $"随机样式程序目录达到 {MaximumRandomProgramDepth} 层深度上限：{entry}";
+                        else pending.Push((entry, current.Depth + 1));
+                    }
+                    else
+                    {
+                        if (current.Depth == 0 && name.StartsWith("python3", StringComparison.OrdinalIgnoreCase) &&
+                            name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) python = true;
+                        if (name.Contains("win32crypt", StringComparison.OrdinalIgnoreCase)) win32Crypt = true;
+                    }
+                    if (python && pymem && win32Crypt) return new(true, true, true, coverageNote);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                coverageNote ??= $"随机样式程序目录未完整读取：{current.Path}，{ex.Message}";
             }
         }
+        return new(python, pymem, win32Crypt, coverageNote);
     }
+
+    private sealed record RandomProgramStructure(bool HasPython, bool HasPymem, bool HasWin32Crypt, string? CoverageNote);
 
     private void ScanRunKeys(ScanReport report)
     {
@@ -258,10 +336,12 @@ public sealed partial class SystemScanner
     {
         string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "Tasks");
         if (!Directory.Exists(root)) return;
+        List<string> discoveryNotes = [];
         try
         {
-            foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            foreach (string file in ContentDiscovery.Files(root, discoveryNotes, 100_000, 32, cancellationToken))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 report.Metrics.PersistenceItemsVisited++;
                 string relative = Path.GetRelativePath(root, file);
                 string taskName = "\\" + relative.Replace(Path.DirectorySeparatorChar, '\\');
@@ -273,15 +353,15 @@ public sealed partial class SystemScanner
                 try
                 {
                     FileInfo info = new(file);
-                    if (info.Length <= 2 * 1024 * 1024) text = File.ReadAllText(file);
+                    if (info.Length <= 2 * 1024 * 1024) text = await File.ReadAllTextAsync(file, cancellationToken);
                 }
-                catch { }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
                 if (!knownName && !ContainsKnownIndicator(text)) continue;
                 string? taskSha256 = null;
                 try
                 {
                     taskSha256 = await Hashing.Sha256FileAsync(file, cancellationToken,
-                        bytes => report.Metrics.BytesHashed += bytes);
+                        bytes => report.Metrics.BytesHashed += bytes, maximumBytes: new FileInfo(file).Length);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -312,6 +392,9 @@ public sealed partial class SystemScanner
         {
             AddCoverage(report, $"无法完整读取计划任务：{ex.Message}", root);
         }
+        foreach (string note in discoveryNotes.Distinct().Take(16)) AddCoverage(report, note, root);
+        if (discoveryNotes.Count > 16)
+            AddCoverage(report, $"计划任务发现阶段另有 {discoveryNotes.Count - 16:N0} 条受限路径说明未逐条列出。", root);
     }
 
     private static string? TaskCommandSnapshot(string text)
@@ -538,7 +621,7 @@ public sealed partial class SystemScanner
         return _rules.KnownProcessNames.Any(name => value.Contains(name, StringComparison.OrdinalIgnoreCase)) ||
                _rules.KnownRunValueNames.Any(name => value.Contains(name, StringComparison.OrdinalIgnoreCase)) ||
                _rules.KnownTaskNames.Any(name => value.Contains(name, StringComparison.OrdinalIgnoreCase)) ||
-               _rules.KnownDomains.Any(domain => value.Contains(domain, StringComparison.OrdinalIgnoreCase)) ||
+               _rules.KnownDomains.Any(domain => ContainsDomain(value, domain)) ||
                _rules.KnownPathTemplates.Any(template => value.Contains(
                    Environment.ExpandEnvironmentVariables(template), StringComparison.OrdinalIgnoreCase));
     }
@@ -546,6 +629,24 @@ public sealed partial class SystemScanner
     public bool IsConfirmedRunIndicator(string valueName, string value) =>
         _rules.KnownRunValueNames.Contains(valueName, StringComparer.OrdinalIgnoreCase) &&
         ContainsKnownIndicator(value);
+
+    private static bool ContainsDomain(string text, string domain)
+    {
+        int start = 0;
+        while (start <= text.Length - domain.Length)
+        {
+            int index = text.IndexOf(domain, start, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) return false;
+            bool left = index == 0 || text[index - 1] == '.' || !IsDomainCharacter(text[index - 1]);
+            int end = index + domain.Length;
+            bool right = end == text.Length || !IsDomainCharacter(text[end]);
+            if (left && right) return true;
+            start = index + 1;
+        }
+        return false;
+    }
+
+    private static bool IsDomainCharacter(char value) => char.IsAsciiLetterOrDigit(value) || value is '-' or '.';
 
     private static bool IsSuspiciousProgramPath(string path)
     {

@@ -28,8 +28,11 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
         }
         catch (Exception ex)
         {
-            observation = new() { Status = RemediationVerificationStatus.Unknown,
-                Message = ex is OperationCanceledException ? "只读验证超时或取消，无法确认状态。" : "只读验证失败：" + ex.Message };
+            observation = new()
+            {
+                Status = RemediationVerificationStatus.Unknown,
+                Message = ex is OperationCanceledException ? "只读验证超时或取消，无法确认状态。" : "只读验证失败：" + ex.Message
+            };
         }
         RemediationVerificationStatus status = observation.Status;
         if (!Enum.IsDefined(status) || status == RemediationVerificationStatus.NotChecked) status = RemediationVerificationStatus.Unknown;

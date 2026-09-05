@@ -18,8 +18,9 @@ public partial class App : Application
         DispatcherUnhandledException += (_, args) =>
         {
             AppErrorLog.Write("DispatcherUnhandledException", args.Exception);
+            if (MainWindow is MainWindow window) window.EnterRecoveryMode();
             MessageBox.Show(
-                $"发生未处理错误：\n\n{args.Exception.Message}",
+                $"发生未处理错误，已禁用后续处置。请导出已有记录并重新启动：\n\n{args.Exception.Message}",
                 "SteamSentinel",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);

@@ -156,16 +156,22 @@ internal static partial class Program
         if (await Console.In.ReadLineAsync() is null) return 2;
         if (mode.StartsWith("checkpoint", StringComparison.Ordinal))
         {
-            ScanReport partial = new() { Metrics = new() { FilesVisited = 4 },
-                WorkerDiagnostics = new("压缩包目录", "inert.zip!/next.rar", "读取目录", 123, 456, 100, DateTimeOffset.UtcNow) };
+            ScanReport partial = new()
+            {
+                Metrics = new() { FilesVisited = 4 },
+                WorkerDiagnostics = new("压缩包目录", "inert.zip!/next.rar", "读取目录", 123, 456, 100, DateTimeOffset.UtcNow)
+            };
             partial.Findings.Add(new() { RuleId = "BENIGN-CHECKPOINT", Target = "inert.txt", TargetSha256 = new string('A', 64) });
             new ReportBatchWriter(batch => Console.Out.WriteLine(JsonSerializer.Serialize(new WorkerMessage
-                { Type = WorkerMessageTypes.Checkpoint, Batch = batch }))).Send(partial);
+            { Type = WorkerMessageTypes.Checkpoint, Batch = batch }))).Send(partial);
             await Console.Out.FlushAsync();
             if (mode == "checkpointcancel") await Task.Delay(TimeSpan.FromSeconds(30));
             if (mode == "checkpointoom") await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new WorkerMessage
-                { Type = WorkerMessageTypes.Failed, Error = "OutOfMemoryException: inert simulated failure",
-                    Diagnostics = partial.WorkerDiagnostics with { FailureType = "OutOfMemoryException" } }));
+            {
+                Type = WorkerMessageTypes.Failed,
+                Error = "OutOfMemoryException: inert simulated failure",
+                Diagnostics = partial.WorkerDiagnostics with { FailureType = "OutOfMemoryException" }
+            }));
             return 23;
         }
         if (mode == "reportfail")

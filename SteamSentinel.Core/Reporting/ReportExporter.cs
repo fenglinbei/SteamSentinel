@@ -15,14 +15,15 @@ public static class ReportExporter
         text.AppendLine($"# {ProductInfo.Name} 扫描报告");
         text.AppendLine();
         text.AppendLine($"- 工具版本：`{report.ProductVersion}`");
+        text.AppendLine($"- 构建标识：`{Escape(report.BuildIdentity)}`");
         text.AppendLine($"- 规则版本：`{report.RuleSetVersion}`");
         text.AppendLine($"- 扫描 ID：`{report.ScanId}`");
         text.AppendLine($"- 开始时间：{report.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}");
-        text.AppendLine($"- 完成时间：{report.CompletedAtUtc?.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}");
-        text.AppendLine($"- 覆盖状态：**{CoverageLabel(report.Coverage)}**");
+        text.AppendLine($"- 结束时间：{report.CompletedAtUtc?.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}");
+        text.AppendLine($"- 检查完整性：**{CoverageLabel(report.Coverage)}**");
         text.AppendLine($"- 最高严重度：**{SeverityLabel(report.HighestSeverity)}**");
         text.AppendLine($"- 执行状态：{report.ExecutionStatus}");
-        text.AppendLine($"- 风险或提示数量：{report.RiskFindingCount}，不包含覆盖记录");
+        text.AppendLine($"- 风险或提示数量：{report.RiskFindingCount}，不包含检查范围说明");
         foreach (string scope in report.ScopeNotes) text.AppendLine("- 检查范围：" + Escape(scope));
         text.AppendLine();
         text.AppendLine("> “未发现已知威胁”不等同于对未知漏洞或未解密内容的绝对安全保证。");
@@ -36,7 +37,7 @@ public static class ReportExporter
         text.AppendLine($"- 工坊项目：{report.Metrics.WorkshopItemsVisited}");
         text.AppendLine($"- 压缩包条目：{report.Metrics.ArchiveEntriesVisited}");
         text.AppendLine();
-        text.AppendLine("## 内容来源与关联落点");
+        text.AppendLine("## 内容来源与相关文件位置");
         if (report.ContentScanSettings is ScanOptions settings)
         {
             text.AppendLine();
@@ -70,7 +71,7 @@ public static class ReportExporter
         {
             text.AppendLine("## 各扫描路径的结果");
             text.AppendLine();
-            text.AppendLine("| 路径 | 已知威胁数 | 可处置发现数 | 覆盖状态 |");
+            text.AppendLine("| 路径 | 已知威胁数 | 可处置发现数 | 检查完整性 |");
             text.AppendLine("|---|---:|---:|---|");
             foreach (ScanRootSummary root in report.RootSummaries)
                 text.AppendLine($"| {Escape(root.Path)} | {root.KnownThreats} | {root.ActionableFindings} | {CoverageLabel(root.Coverage)} |");
@@ -83,7 +84,7 @@ public static class ReportExporter
             text.AppendLine();
             foreach (CoverageGroup group in CoveragePresentation.Groups(report))
             {
-                text.AppendLine($"### {Escape(group.Kind)} · {group.Count} 次覆盖记录（非去重文件数）");
+                text.AppendLine($"### {Escape(group.Kind)} · {group.Count} 条检查范围记录（非去重文件数）");
                 text.AppendLine();
                 text.AppendLine(Escape(group.NextStep));
                 text.AppendLine();
@@ -126,18 +127,21 @@ public static class ReportExporter
         text.AppendLine();
         text.AppendLine("文件存在、运行关联和 Steam 篡改是不同证据。工具可隔离已知威胁，也保留需要你确认的启发式处置。处置成功不代表整台电脑无毒，请重启后复扫，必要时用专业杀毒软件全盘检查。如果可能发生凭据窃取，应从可信设备更换密码并撤销其他会话，本地恢复不能撤回已外泄的数据。");
 
-        string fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        await File.WriteAllTextAsync(fullPath, text.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), cancellationToken);
+        await Utilities.AtomicFile.WriteAsync(path, async output =>
+        {
+            await using StreamWriter writer = new(output, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), leaveOpen: true);
+            await writer.WriteAsync(text.ToString().AsMemory(), cancellationToken);
+            await writer.FlushAsync(cancellationToken);
+        }, cancellationToken);
     }
 
     private static string Escape(string value) => Inspection.ScriptSignals.RedactSecrets(value).Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
 
     public static string CoverageLabel(ScanCoverage value) => value switch
     {
-        ScanCoverage.Complete => "本次支持范围内未跳过检查",
-        ScanCoverage.Partial => "有内容未检查或尚未深查",
-        _ => "已跳过"
+        ScanCoverage.Complete => "已完成本次范围内的检查",
+        ScanCoverage.Partial => "部分内容未检查或未做完整比对",
+        _ => "本次未执行检查"
     };
 
     public static string CategoryLabel(FindingCategory value) => value switch
@@ -151,7 +155,7 @@ public static class ReportExporter
         FindingCategory.Network => "网络",
         FindingCategory.Certificate => "证书",
         FindingCategory.SecurityControl => "安全设置",
-        FindingCategory.Coverage => "检查覆盖",
+        FindingCategory.Coverage => "检查范围说明",
         _ => "其他"
     };
 
@@ -177,7 +181,7 @@ public static class ReportExporter
 
     public static string SeverityLabel(FindingSeverity value) => value switch
     {
-        FindingSeverity.Critical => "已确认/严重",
+        FindingSeverity.Critical => "严重",
         FindingSeverity.High => "高度可疑",
         FindingSeverity.Medium => "需要复核",
         FindingSeverity.Low => "低风险提示",

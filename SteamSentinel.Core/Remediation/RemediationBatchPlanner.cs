@@ -26,7 +26,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             OriginalContentSettings = CloneOptions(original.ContentScanSettings),
             Targets = selected.GroupBy(GoalKey, StringComparer.OrdinalIgnoreCase).Select(g => new RemediationTargetOutcome
             {
-                Key = g.Key, Target = g.First().Target, FindingIds = g.Select(f => f.Id).Distinct().ToList(),
+                Key = g.Key,
+                Target = g.First().Target,
+                FindingIds = g.Select(f => f.Id).Distinct().ToList(),
                 RequiredActions = g.SelectMany(RequiredActionKeys).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
             }).ToList()
         };
@@ -77,8 +79,15 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         session.Plans.AddRange(PackActions(actionGroups));
         if (session.Plans.Count > 0 && needDomains && rules.KnownDomains.Count > 0)
         {
-            RemediationAction block = new() { Type = RemediationActionType.BlockKnownDomains, Target = "hosts",
-                DisplayName = "在 hosts 中阻断已知 C2 域名", Domains = [.. rules.KnownDomains], IsKnownMalware = true, ConfidenceScore = 100 };
+            RemediationAction block = new()
+            {
+                Type = RemediationActionType.BlockKnownDomains,
+                Target = "hosts",
+                DisplayName = "在 hosts 中阻断已知 C2 域名",
+                Domains = [.. rules.KnownDomains],
+                IsKnownMalware = true,
+                ConfidenceScore = 100
+            };
             if (session.Plans[0].Actions.Count == 64) session.Plans.Insert(0, new() { Actions = [block] });
             else { session.Plans[0].Actions.Add(block); RemediationPlanBuilder.OrderActionsForSafeExecution(session.Plans[0].Actions); }
         }
@@ -88,8 +97,14 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         HashSet<string> plannedKeys = session.Plans.SelectMany(p => p.Actions).Select(ActionKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var group in verified.Where(f => f.CanRemediate).GroupBy(GoalKey, StringComparer.OrdinalIgnoreCase))
             if (goalKeys.Add(group.Key) && group.SelectMany(RequiredActionKeys).Any(plannedKeys.Contains))
-                session.Targets.Add(new() { Key = group.Key, Target = group.First().Target, AddedByAssociation = true,
-                    FindingIds = group.Select(f => f.Id).ToList(), RequiredActions = group.SelectMany(RequiredActionKeys).Distinct(StringComparer.OrdinalIgnoreCase).ToList() });
+                session.Targets.Add(new()
+                {
+                    Key = group.Key,
+                    Target = group.First().Target,
+                    AddedByAssociation = true,
+                    FindingIds = group.Select(f => f.Id).ToList(),
+                    RequiredActions = group.SelectMany(RequiredActionKeys).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                });
         // Account for implicit, previewed actions too (for example executable outbound block and hosts block).
         foreach (RemediationAction action in session.Plans.SelectMany(p => p.Actions))
         {
@@ -110,10 +125,18 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
 
     private static Finding[] Coalesce(IEnumerable<Finding> input) => input.GroupBy(f =>
         // Archive findings can share the same outer identity while retaining all inner evidence in the original report.
-        JsonSerializer.Serialize(new { Key = GoalKey(f), Hash = RelatedArtifactRelations.FileHash(f),
+        JsonSerializer.Serialize(new
+        {
+            Key = GoalKey(f),
+            Hash = RelatedArtifactRelations.FileHash(f),
             RawHash = f.RelatedFilePath is null && f.SuggestedActions.Count == 1 && f.SuggestedActions[0] == SuggestedActionKind.QuarantineFile ? null : f.Sha256,
-            f.RelatedFilePath, f.RelatedFileSha256, f.ConfigurationSnapshot, f.ConfigurationKind, f.ProcessStartedAtUtc,
-            Actions = string.Join(',', f.SuggestedActions.Order()) }), StringComparer.Ordinal)
+            f.RelatedFilePath,
+            f.RelatedFileSha256,
+            f.ConfigurationSnapshot,
+            f.ConfigurationKind,
+            f.ProcessStartedAtUtc,
+            Actions = string.Join(',', f.SuggestedActions.Order())
+        }), StringComparer.Ordinal)
         .Select(g => g.OrderByDescending(f => f.Score).ThenByDescending(f => f.IsKnownMalware).First()).ToArray();
 
     internal static List<Finding[]> PackSelection(Finding[] selected, List<string> notes)
@@ -192,8 +215,16 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
     {
         foreach (SuggestedActionKind kind in f.SuggestedActions)
             if (kind is not (SuggestedActionKind.None or SuggestedActionKind.ReviewOnly) && Enum.TryParse(kind.ToString(), out RemediationActionType type))
-                yield return ActionKey(new() { Type = type, Target = f.Target, ProcessId = f.ProcessId,
-                    RegistryHive = f.RegistryHive, RegistryView = f.RegistryView, RegistryKey = f.RegistryKey, RegistryValueName = f.RegistryValueName });
+                yield return ActionKey(new()
+                {
+                    Type = type,
+                    Target = f.Target,
+                    ProcessId = f.ProcessId,
+                    RegistryHive = f.RegistryHive,
+                    RegistryView = f.RegistryView,
+                    RegistryKey = f.RegistryKey,
+                    RegistryValueName = f.RegistryValueName
+                });
     }
 
     internal static void MapOutcomes(RemediationBatchSession session)

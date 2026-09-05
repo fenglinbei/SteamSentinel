@@ -32,15 +32,15 @@ internal static class RelatedArtifactReader
 
     internal static void ValidatePath(SafeFileHandle handle, string requested)
     {
-            if (!GetFileInformationByHandleEx(handle, 9, out AttributeTag attributes, 8) || (attributes.Attributes & 0x400) != 0)
-                throw new UnauthorizedAccessException("关联文件属于重解析点或无法验证属性。");
-            char[] buffer = new char[32768];
-            uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
-            if (length == 0 || length >= buffer.Length) throw new IOException("无法验证关联文件最终路径。");
-            string final = new(buffer, 0, (int)length);
-            if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
-            if (!requested.Equals(final, StringComparison.OrdinalIgnoreCase) || !ContentDiscovery.IsLocalSafePath(requested))
-                throw new UnauthorizedAccessException("关联文件路径在打开时发生变化。");
+        if (!GetFileInformationByHandleEx(handle, 9, out AttributeTag attributes, 8) || (attributes.Attributes & 0x400) != 0)
+            throw new UnauthorizedAccessException("关联文件属于重解析点或无法验证属性。");
+        char[] buffer = new char[32768];
+        uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
+        if (length == 0 || length >= buffer.Length) throw new IOException("无法验证关联文件最终路径。");
+        string final = new(buffer, 0, (int)length);
+        if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
+        if (!requested.Equals(final, StringComparison.OrdinalIgnoreCase) || !ContentDiscovery.IsLocalSafePath(requested))
+            throw new UnauthorizedAccessException("关联文件路径在打开时发生变化。");
     }
 
     internal static bool IsProtected(string path) =>
@@ -89,8 +89,10 @@ public static class RelatedTaskSnapshotReader
         using MemoryStream input = new(bytes, writable: false);
         using XmlReader reader = XmlReader.Create(input, new XmlReaderSettings
         {
-            DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-            MaxCharactersInDocument = MaximumBytes, MaxCharactersFromEntities = 1024
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = MaximumBytes,
+            MaxCharactersFromEntities = 1024
         });
         XDocument document = XDocument.Load(reader);
         if (document.Root?.Name.LocalName != "Task") throw new InvalidDataException("不是计划任务 XML。");

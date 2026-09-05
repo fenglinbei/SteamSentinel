@@ -59,6 +59,8 @@ internal sealed class RestrictedProcess : IDisposable
         SafeKernelHandle? processHandle = null;
         SafeKernelHandle? threadHandle = null;
         IntPtr environment = IntPtr.Zero;
+        IntPtr attributes = IntPtr.Zero, inheritedHandles = IntPtr.Zero;
+        bool attributesInitialized = false;
         try
         {
             CreatePipePair(inheritable, childReads: true, out childStdin, out parentStdin);
@@ -66,16 +68,34 @@ internal sealed class RestrictedProcess : IDisposable
             CreatePipePair(inheritable, childReads: false, out childStderr, out parentStderr);
             using SafeAccessTokenHandle restrictedToken = CreateLowIntegrityToken();
             environment = BuildEnvironmentBlock(fullWorkingDirectory);
-            StartupInfo startup = new()
+            nuint attributeBytes = 0;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeBytes);
+            if (attributeBytes == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法确定句柄白名单大小。");
+            attributes = Marshal.AllocHGlobal(checked((nint)attributeBytes));
+            if (!InitializeProcThreadAttributeList(attributes, 1, 0, ref attributeBytes))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建扫描组件句柄白名单。");
+            attributesInitialized = true;
+            inheritedHandles = Marshal.AllocHGlobal(3 * IntPtr.Size);
+            Marshal.WriteIntPtr(inheritedHandles, 0, childStdin.DangerousGetHandle());
+            Marshal.WriteIntPtr(inheritedHandles, IntPtr.Size, childStdout.DangerousGetHandle());
+            Marshal.WriteIntPtr(inheritedHandles, 2 * IntPtr.Size, childStderr.DangerousGetHandle());
+            if (!UpdateProcThreadAttribute(attributes, 0, 0x00020002, inheritedHandles,
+                    (nuint)(3 * IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法限制扫描组件继承句柄。");
+            StartupInfoEx startup = new()
             {
-                Size = Marshal.SizeOf<StartupInfo>(),
-                Flags = StartfUseStdHandles,
-                StandardInput = childStdin.DangerousGetHandle(),
-                StandardOutput = childStdout.DangerousGetHandle(),
-                StandardError = childStderr.DangerousGetHandle()
+                Info = new StartupInfo
+                {
+                    Size = Marshal.SizeOf<StartupInfoEx>(),
+                    Flags = StartfUseStdHandles,
+                    StandardInput = childStdin.DangerousGetHandle(),
+                    StandardOutput = childStdout.DangerousGetHandle(),
+                    StandardError = childStderr.DangerousGetHandle()
+                },
+                AttributeList = attributes
             };
             StringBuilder commandLine = new($"\"{fullExecutable}\"");
-            uint flags = CreateSuspended | CreateNoWindow | CreateUnicodeEnvironment;
+            uint flags = CreateSuspended | CreateNoWindow | CreateUnicodeEnvironment | 0x00080000;
             if (!CreateProcessAsUser(
                     restrictedToken,
                     fullExecutable,
@@ -134,6 +154,9 @@ internal sealed class RestrictedProcess : IDisposable
         }
         finally
         {
+            if (attributesInitialized) DeleteProcThreadAttributeList(attributes);
+            if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
+            if (inheritedHandles != IntPtr.Zero) Marshal.FreeHGlobal(inheritedHandles);
             if (environment != IntPtr.Zero) Marshal.FreeHGlobal(environment);
         }
     }
@@ -319,6 +342,13 @@ internal sealed class RestrictedProcess : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfoEx
+    {
+        public StartupInfo Info;
+        public IntPtr AttributeList;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct ProcessInformation
     {
         public IntPtr Process;
@@ -402,8 +432,20 @@ internal sealed class RestrictedProcess : IDisposable
         uint creationFlags,
         IntPtr environment,
         string currentDirectory,
-        ref StartupInfo startupInfo,
+        ref StartupInfoEx startupInfo,
         out ProcessInformation processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref nuint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, nuint attribute,
+        IntPtr value, nuint size, IntPtr previous, IntPtr returnSize);
+
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(IntPtr list);
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

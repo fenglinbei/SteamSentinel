@@ -85,7 +85,7 @@ internal static partial class Program
         Check("JSON 导出保留聚合次数且继续脱敏", CoverageAggregation.OccurrenceCount(decoded) == occurrences + 1 &&
             !jsonText.Contains("token=secret") && jsonText.Length < 32 * 1024);
         Check("Markdown 明示完整模式无整轮上限及非完整示例", md.Contains("不设整轮哈希字节上限") &&
-            md.Contains("100001 次覆盖记录") && md.Contains("示例不是完整清单") && !md.Contains("token=secret"));
+            md.Contains("100001 条检查范围记录") && md.Contains("示例不是完整清单") && !md.Contains("token=secret"));
         merged.ContentScanSettings = new() { Mode = ScanMode.Quick, MaximumContentBytes = 1L << 30 };
         await ReportExporter.ExportMarkdownAsync(merged, markdown);
         md = await File.ReadAllTextAsync(markdown);
@@ -95,8 +95,16 @@ internal static partial class Program
         string manyRoot = Path.Combine(directory, "many", new string('a', 90)); Directory.CreateDirectory(manyRoot);
         const int files = 14_050;
         for (int i = 0; i < files; i++) File.WriteAllText(Path.Combine(manyRoot, $"item-{i:D5}.dat"), "x");
-        ScanOptions zero = new() { Mode = ScanMode.Full, IncludeSystem = false, IncludeSteam = false,
-            IncludeWorkshop = false, UseAmsi = false, MaximumContentBytes = 0, CustomRoots = [manyRoot] };
+        ScanOptions zero = new()
+        {
+            Mode = ScanMode.Full,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            MaximumContentBytes = 0,
+            CustomRoots = [manyRoot]
+        };
         ScanReport many = await new ScanCoordinator(new RuleSet()).RunAsync(zero);
         Check("超过一万四千实际路径完成格式遍历而不触发重复文本上限", many.Metrics.FilesVisited == files &&
             many.CoverageAggregates.Single().Count == files && many.Findings.Count == 0 && many.Metrics.BytesHashed == 0);
@@ -118,7 +126,7 @@ internal static partial class Program
                 lowMany.CoverageAggregates.Single().Count == files && lowMany.Findings.Count == 0 && lowMany.Coverage == ScanCoverage.Partial &&
                 lowMany.RootSummaries.Single().Coverage == ScanCoverage.Partial && lowMany.RootSummaries.Single().FilesVisited == files);
             Check("真实 Low Worker 聚合压力测试保留诊断且峰值小于 1 GiB", lowMany.WorkerDiagnostics is
-                { PrivateBytes: > 0, PeakPrivateBytes: > 0 and < 1024L * 1024 * 1024 });
+            { PrivateBytes: > 0, PeakPrivateBytes: > 0 and < 1024L * 1024 * 1024 });
             Console.WriteLine($"V0114_COVERAGE_LOW_FILES={lowMany.Metrics.FilesVisited};OCCURRENCES={CoverageAggregation.OccurrenceCount(lowMany)};" +
                 $"GROUPS={lowMany.CoverageAggregates.Count};PEAK_MIB={lowMany.WorkerDiagnostics!.PeakPrivateBytes / 1024 / 1024}");
         }
@@ -151,8 +159,12 @@ internal static partial class Program
                 entry.Write(new byte[768]);
             }
         ScanReport expanded = new();
-        await scanner.ScanRootAsync(archive, expanded, new() { Mode = ScanMode.Full, UseAmsi = false,
-            MaximumExpandedBytes = 1024 }, new NullPasswordProvider());
+        await scanner.ScanRootAsync(archive, expanded, new()
+        {
+            Mode = ScanMode.Full,
+            UseAmsi = false,
+            MaximumExpandedBytes = 1024
+        }, new NullPasswordProvider());
         Check("Full 无全局哈希上限不取消压缩展开上限", expanded.Metrics.ArchiveBytesExpanded == 768 &&
             expanded.Coverage == ScanCoverage.Partial && expanded.CoverageNotes.Any(n => n.Contains("累计解压数据达到上限")));
 

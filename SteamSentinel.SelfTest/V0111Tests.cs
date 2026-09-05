@@ -46,8 +46,15 @@ internal static partial class Program
         Check("任意工坊 AppID 进程路径可关联", ContentDiscovery.IsWorkshopContentPath(Path.Combine(layout.WorkshopRoots[2], "123456", "mod.dll")));
         Check("网络路径、设备路径和 ADS 被拒绝", !ContentDiscovery.IsLocalSafePath(@"\\example.invalid\share\a") &&
             !ContentDiscovery.IsLocalSafePath(@"\\?\C:\x") && !ContentDiscovery.IsLocalSafePath(Path.Combine(folder, "file:stream")));
-        ScanReport normal = await new ScanCoordinator(rules, layout).RunAsync(new ScanOptions { Mode = ScanMode.Full,
-            IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = true, IncludeRelatedContent = true, UseAmsi = false });
+        ScanReport normal = await new ScanCoordinator(rules, layout).RunAsync(new ScanOptions
+        {
+            Mode = ScanMode.Full,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = true,
+            IncludeRelatedContent = true,
+            UseAmsi = false
+        });
         Check("普通游戏 MOD 不按壁纸 project.json 或 DLL 类型误报", normal.Findings.All(f => f.RuleId is not ("WORKSHOP-PROJECT-METADATA" or "WORKSHOP-EXECUTABLE-CONTENT")));
         Check("扫描报告保留全部工坊来源", normal.Metrics.WorkshopItemsVisited == 3 && normal.ContentSources.Any(p => p.Contains("4000/123456")));
         Check("恶意 MOD 的前两环按精确内容加入规则", rules.KnownHashes.Count(r => r.Malware && r.Id.StartsWith("STEAMRED-DUCKOV-")) == 3);
@@ -102,9 +109,18 @@ internal static partial class Program
         var match = await new RelatedArtifactScanner(fixtureRules).MatchCommandAsync('"' + knownFile + '"', new ScanReport(), default);
         Check("持久化关联使用文件内容而非名称", match is { } found && found.Hash == knownHash);
         Check("相同文件名不自动判为恶意", await new RelatedArtifactScanner(rules).MatchCommandAsync('"' + knownFile + '"', new ScanReport(), default) is null);
-        Finding host = new() { Target = knownFile, Sha256 = knownHash, RelatedFilePath = knownFile, RelatedFileSha256 = knownHash,
-            ProcessId = 1234, ProcessStartedAtUtc = DateTimeOffset.UtcNow, IsKnownMalware = true, CanRemediate = true,
-            SuggestedActions = [SuggestedActionKind.StopHostProcess] };
+        Finding host = new()
+        {
+            Target = knownFile,
+            Sha256 = knownHash,
+            RelatedFilePath = knownFile,
+            RelatedFileSha256 = knownHash,
+            ProcessId = 1234,
+            ProcessStartedAtUtc = DateTimeOffset.UtcNow,
+            IsKnownMalware = true,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.StopHostProcess]
+        };
         RemediationPlan hostPlan = await new RemediationPlanBuilder(fixtureRules).BuildAsync([host], false);
         Check("恶意模块的正常宿主只关闭，不隔离或封网", hostPlan.Actions.Count == 1 && hostPlan.Actions[0].Type == RemediationActionType.StopHostProcess && hostPlan.Actions[0].ProcessStartedAtUtc == host.ProcessStartedAtUtc);
         BrokerEngine broker = new();

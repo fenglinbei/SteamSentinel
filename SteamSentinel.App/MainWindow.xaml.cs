@@ -13,6 +13,7 @@ using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Scanning;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
+using Validation = SteamSentinel.Core.Utilities.Validation;
 
 namespace SteamSentinel.App;
 
@@ -31,10 +32,16 @@ public partial class MainWindow : Window
     private ScanReport? _caseFollowUp;
     private bool _reportNeedsRefresh;
     private bool _busy;
+    private bool _recoveryRequired;
+    private Guid? _lastFullSystemAndContentScanId;
 
     public MainWindow()
     {
         InitializeComponent();
+        Width = Math.Min(Width, SystemParameters.WorkArea.Width);
+        Height = Math.Min(Height, SystemParameters.WorkArea.Height);
+        MinWidth = Math.Min(MinWidth, SystemParameters.WorkArea.Width);
+        MinHeight = Math.Min(MinHeight, SystemParameters.WorkArea.Height);
         WorkshopScopeComboBox.ItemsSource = new[] { new WorkshopScopeItem("", "全部本地工坊") };
         WorkshopScopeComboBox.SelectedIndex = 0;
         Findings = [];
@@ -96,11 +103,19 @@ public partial class MainWindow : Window
 
     private void CoverageGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (CoverageGrid.SelectedItem is not CoverageGroup group) { CoverSelectedButton.IsEnabled = false; return; }
+        if (CoverageGrid.SelectedItem is not CoverageGroup group)
+        {
+            CoverSelectedButton.IsEnabled = false;
+            DetailDescriptionText.Text = "请先选择一类检查范围说明，查看原因与补查方式。";
+            DetailEvidenceText.Text = string.Empty;
+            DetailHashText.Text = string.Empty;
+            DetailWorkshopText.Text = string.Empty;
+            return;
+        }
         DetailDescriptionText.Text = group.NextStep;
         DetailEvidenceText.Text = string.Join(Environment.NewLine + Environment.NewLine, group.Entries.Take(50).Select(i => i.Target + "\n" + i.Detail)) +
-            (group.Count > 50 ? $"\n本组共 {group.Count:N0} 次覆盖记录，界面只展示部分记录。重复原因按目录合并，示例路径并非完整文件清单，可按目录补查。" : "");
-        DetailHashText.Text = "覆盖记录不是威胁，不参与隔离选择。";
+            (group.Count > 50 ? $"\n本组共 {group.Count:N0} 条检查范围记录，界面只展示部分记录。重复原因按目录合并，示例路径并非完整文件清单，可按目录补查。" : "");
+        DetailHashText.Text = "这些记录说明检查范围或未完成的原因，不是威胁判定；不能据此确认安全，也不能直接隔离。";
         DetailWorkshopText.Text = "按路径补查，压缩包使用外层文件。";
         CoverSelectedButton.IsEnabled = !_busy && group.CanFullScan && CoverageTargets(group).Count > 0;
     }
@@ -157,7 +172,7 @@ public partial class MainWindow : Window
         if (_busy || _lastReport is null) return;
         List<string> targets = GetPasswordRetryTargets(_lastReport);
         if (targets.Count == 0) return;
-        if (MessageBox.Show(this, $"将重新扫描 {targets.Count} 个相关外层文件，之前的密码已清空，需要重新输入。请准备好外层和内层密码。新结果只覆盖这些文件，不是全机复扫。",
+        if (MessageBox.Show(this, $"将重新扫描 {targets.Count} 个相关外层文件，上次扫描的密码已清空，需要重新输入。请准备好外层和内层密码。\n\n这会替换当前扫描报告，如需保留，请先取消并导出。新报告只包含这些文件的检查结果，不是全机复扫。",
             "重试未解密内容", MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK) return;
         ArchiveCheckBox.IsChecked = true;
         await StartScanAsync(ScanMode.Custom, targets);
@@ -176,17 +191,18 @@ public partial class MainWindow : Window
         Findings.Clear();
         CoverageGrid.ItemsSource = null;
         CoverageTab.Header = "未检查内容";
-        CoverageStatusText.Text = "扫描结束后显示未深查与读取受限的内容。";
+        CoverageStatusText.Text = "扫描结束后显示未检查或未完成检查的原因，以及补查方式。";
         CoverSelectedButton.IsEnabled = false;
         ResultTabs.SelectedIndex = 0;
         _lastReport = null;
+        _lastFullSystemAndContentScanId = null;
         _reportNeedsRefresh = false;
         HeaderStatusText.Text = "正在扫描";
         HeaderDetailText.Text = mode switch
         {
-            ScanMode.Quick => "快速系统与工坊扫描",
-            ScanMode.Full => "完整哈希与递归内容扫描",
-            _ => "自定义内容扫描"
+            ScanMode.Quick => "正在快速检查系统状态与所选内容",
+            ScanMode.Full => "正在按所选范围和检查选项进行完整内容扫描",
+            _ => "正在检查所选文件或目录"
         };
         FindingCountText.Text = "0 项风险或提示";
         ScanProgressBar.IsIndeterminate = true;
@@ -248,20 +264,27 @@ public partial class MainWindow : Window
             ScanReport contentReport = await _workerClient.RunAsync(
                 contentOptions, RequestPasswordAsync, progress, token);
             _lastReport = systemReport is null ? contentReport : ScanReportMerger.Merge(systemReport, contentReport);
-            if (mode != ScanMode.Custom) await Task.Run(() => ProtectionConfiguration.CollectAsync(SteamLocator.Discover(), _lastReport, token), token);
+            if (mode != ScanMode.Custom)
+                await ScanFailureReports.CollectSupplementAsync(_lastReport,
+                    () => Task.Run(() => ProtectionConfiguration.CollectAsync(SteamLocator.Discover(), _lastReport, token), token));
+            if (mode == ScanMode.Full && systemReport is { Coverage: ScanCoverage.Complete } &&
+                contentReport.Coverage == ScanCoverage.Complete && _lastReport.Coverage == ScanCoverage.Complete &&
+                contentOptions.IncludeWorkshop && contentOptions.IncludeRelatedContent && contentOptions.InspectArchives &&
+                contentOptions.HashEveryFile && contentOptions.WorkshopAppIds.Count == 0 && !token.IsCancellationRequested)
+                _lastFullSystemAndContentScanId = _lastReport.ScanId;
             PopulateFindings(_lastReport);
             UpdateSummary(_lastReport);
         }
         catch (OperationCanceledException ex)
         {
-            if (contentAttempted) PreserveScanFailure(systemReport, mode, customRoots, ex, cancelled: true);
+            if (contentAttempted) PreserveScanFailure(_lastReport ?? systemReport, mode, customRoots, ex, cancelled: true);
             HeaderStatusText.Text = "扫描已取消";
             HeaderDetailText.Text = systemReport is null ? "内容检查未完成" : "已保留系统检查结果，内容检查未完成";
             FooterText.Text = "扫描已取消，加密包密码不会保留，当前结果不能作为完整复扫。";
         }
         catch (Exception ex)
         {
-            if (contentAttempted) PreserveScanFailure(systemReport, mode, customRoots, ex, cancelled: false);
+            if (contentAttempted) PreserveScanFailure(_lastReport ?? systemReport, mode, customRoots, ex, cancelled: false);
             else
             {
                 HeaderStatusText.Text = "扫描失败";
@@ -292,7 +315,7 @@ public partial class MainWindow : Window
         ScanProgressBar.Value = 0;
         ProgressItemText.Text = _lastReport.WorkerDiagnostics is { LastPath.Length: > 0 } diagnostic
             ? $"最后处理：{diagnostic.LastPath}（{diagnostic.Stage}），已保留此前结果，可导出报告反馈。"
-            : "已保留可用结果，请查看覆盖说明，或导出报告反馈。";
+            : "已保留可用结果，请查看“未检查内容”中的原因，或导出报告反馈。";
     }
 
     private Task<ArchivePasswordResponse> RequestPasswordAsync(ArchivePasswordRequest request, CancellationToken cancellationToken)
@@ -301,12 +324,18 @@ public partial class MainWindow : Window
         {
             cancellationToken.ThrowIfCancellationRequested();
             PasswordDialog dialog = new(request) { Owner = this };
-            bool accepted = dialog.ShowDialog() == true;
-            return new ArchivePasswordResponse(
-                request.RequestId,
-                !accepted,
-                accepted ? dialog.EnteredPassword : null,
-                false, dialog.ReuseScope);
+            try
+            {
+                bool accepted = dialog.ShowDialog() == true;
+                return new ArchivePasswordResponse(
+                    request.RequestId,
+                    !accepted,
+                    accepted ? dialog.EnteredPassword : null,
+                    false, dialog.ReuseScope,
+                    Passwords: accepted ? dialog.EnteredPasswords?.ToArray() : null,
+                    SkipAllEncrypted: dialog.SkipAllEncrypted);
+            }
+            finally { dialog.ClearReturnedPasswords(); }
         }).Task;
     }
 
@@ -325,10 +354,15 @@ public partial class MainWindow : Window
         FindingCountText.Text = $"{Findings.Count:N0} 项风险或提示";
         IReadOnlyList<CoverageGroup> groups = CoveragePresentation.Groups(report);
         CoverageGrid.ItemsSource = groups;
-        CoverageTab.Header = groups.Count > 0 ? $"未检查内容（{groups.Count} 类）" : "检查范围";
-        CoverageStatusText.Text = groups.Count > 0 ? $"{groups.Count} 类覆盖说明，不计入风险数量。选中一类可查看原因与补查方式，记录数不一定等于文件数。" : "本次支持范围内没有额外跳过项，仍不代表电脑绝对安全。";
+        CoverageTab.Header = groups.Count > 0 ? $"未检查内容（{groups.Count} 类）" :
+            report.Coverage == ScanCoverage.Complete ? "检查范围" : "未检查内容";
+        CoverageStatusText.Text = groups.Count > 0
+            ? $"{groups.Count} 类检查范围说明，不计入风险数量。选中一类可查看原因与补查方式，记录数不一定等于文件数。"
+            : report.Coverage == ScanCoverage.Complete
+                ? "本次所选范围内未报告跳过或未完成的检查，仍不代表电脑绝对安全。"
+                : "本次未完成全部检查，暂无可归类的原因。请查看扫描状态或导出报告。";
         ExportButton.IsEnabled = true;
-        RemediateButton.IsEnabled = !_busy && !_reportNeedsRefresh && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
+        RemediateButton.IsEnabled = !_busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && !_reportNeedsRefresh && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
         if (Findings.Count > 0) FindingsGrid.SelectedIndex = 0;
     }
 
@@ -347,24 +381,41 @@ public partial class MainWindow : Window
             HeaderStatusText.Text = "发现可疑项";
             HeaderDetailText.Text = "需要人工复核，未自动判定为病毒";
         }
+        else if (report.Coverage == ScanCoverage.Skipped)
+        {
+            HeaderStatusText.Text = "本次未执行检查，无法判断风险";
+            HeaderDetailText.Text = "没有可用的检查结论，请核对扫描范围与跳过原因后重新扫描。";
+        }
+        else if (report.Coverage == ScanCoverage.Complete)
+        {
+            HeaderStatusText.Text = "本次检查已完成，未发现需处理的风险";
+            HeaderDetailText.Text = "已完成本次所选范围内的检查，结论不代表电脑绝对安全。";
+        }
         else
         {
-            HeaderStatusText.Text = "已检查部分未发现需处理的风险";
-            HeaderDetailText.Text = "结论仅适用于已完成的检查，不代表电脑绝对安全";
+            HeaderStatusText.Text = "已完成部分检查，未发现需处理的风险";
+            HeaderDetailText.Text = report.Mode == ScanMode.Quick
+                ? "仍有未检查内容，若要完整排查，请使用完整内容扫描，并按需勾选额外的检查内容。"
+                : "仍有未检查内容，请查看“未检查内容”中的原因，并按提示补查或调整检查选项。";
         }
 
-        HeaderDetailText.Text += report.Coverage == ScanCoverage.Complete
-            ? "，已完成支持范围内的检查。" : "，部分内容未检查，请查看“未检查内容”。";
-        ProgressStageText.Text = report.Mode == ScanMode.Quick ? "快速扫描已完成" : "本次扫描已完成";
-        ProgressItemText.Text = "风险与提示、未检查内容已分开列出，请核对后再处置。";
+        if (confirmed || suspicious)
+            HeaderDetailText.Text += report.Coverage == ScanCoverage.Complete
+                ? "。结论仅适用于本次所选范围。" : "；仍有未检查内容，请查看“未检查内容”并按提示补查。";
+        string scanName = report.Mode == ScanMode.Quick ? "快速扫描" : "本次扫描";
+        ProgressStageText.Text = report.Coverage == ScanCoverage.Skipped ? "本次未执行检查" :
+            scanName + (report.Coverage == ScanCoverage.Complete ? "已完成" : "已结束");
+        ProgressItemText.Text = report.Coverage == ScanCoverage.Complete
+            ? "结果仅适用于本次所选范围，请核对结果后再决定是否处置。"
+            : "请在“风险与提示”查看发现，在“未检查内容”查看原因与补查方式。";
         ScanProgressBar.Value = 100;
-        FooterText.Text = $"文件 {report.Metrics.FilesVisited:N0} · 工坊 {report.Metrics.WorkshopItemsVisited:N0} · 压缩条目 {report.Metrics.ArchiveEntriesVisited:N0} · 覆盖 {ReportExporter.CoverageLabel(report.Coverage)}";
+        FooterText.Text = $"文件 {report.Metrics.FilesVisited:N0} · 工坊 {report.Metrics.WorkshopItemsVisited:N0} · 压缩条目 {report.Metrics.ArchiveEntriesVisited:N0} · 检查状态 {ReportExporter.CoverageLabel(report.Coverage)}";
     }
 
     private void FindingsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         FindingItemViewModel? item = FindingsGrid.SelectedItem as FindingItemViewModel;
-        DetailDescriptionText.Text = item?.Description ?? string.Empty;
+        DetailDescriptionText.Text = item is null ? string.Empty : item.Title + "\n" + item.Description;
         if (item is not null && !item.CanSelect)
             DetailDescriptionText.Text += "\n此项目前仅作提示，尚无足够依据执行处置。可点击“进一步检查”核对实际文件，若仍无法判断，请导出记录。";
         DetailEvidenceText.Text = item?.Evidence ?? string.Empty;
@@ -397,7 +448,7 @@ public partial class MainWindow : Window
             }
             details.Add("只读快照，最多检查四个关联位置。没有关闭任何程序或句柄。未列出占用不表示一定可以删除，目录句柄和受保护进程可能无法识别。请先保存工作并正常退出相关程序，不要仅凭 PID 强行结束系统进程。");
             DetailEvidenceText.Text = string.Join("\n\n", details);
-            MessageBox.Show(this, DetailEvidenceText.Text, "文件占用情况", MessageBoxButton.OK, MessageBoxImage.Information);
+            new TextDetailsWindow("文件占用情况（只读）", DetailEvidenceText.Text) { Owner = this }.ShowDialog();
         }
         catch (Exception ex) { MessageBox.Show(this, "未能完成占用查询，没有关闭任何程序。\n" + ex.Message, "占用状态未知", MessageBoxButton.OK, MessageBoxImage.Information); }
         finally { SetBusy(false); }
@@ -478,10 +529,11 @@ public partial class MainWindow : Window
         QuarantineItems.Clear();
         if (!Directory.Exists(AppPaths.QuarantineRoot)) return;
 
-        string[] manifestPaths;
+        string[] incidentPaths;
         try
         {
-            manifestPaths = await Task.Run(() => Directory.GetFiles(AppPaths.QuarantineRoot, "manifest.json", SearchOption.AllDirectories));
+            incidentPaths = await Task.Run(() => Directory.EnumerateDirectories(AppPaths.QuarantineRoot).Take(2049).ToArray());
+            if (incidentPaths.Length > 2048) FooterText.Text = "隔离事件超过显示上限，只列出前 2048 项。";
         }
         catch (Exception ex)
         {
@@ -489,17 +541,43 @@ public partial class MainWindow : Window
             return;
         }
 
-        foreach (string manifestPath in manifestPaths)
+        using System.Security.Principal.WindowsIdentity identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        foreach (string incidentPath in incidentPaths.Take(2048))
         {
+            if (!Guid.TryParseExact(Path.GetFileName(incidentPath), "D", out Guid incidentId) &&
+                !Guid.TryParseExact(Path.GetFileName(incidentPath), "N", out incidentId)) continue;
+            string manifestPath = Path.Combine(incidentPath, "manifest.json");
             try
             {
+                if (Validation.ContainsReparsePoint(manifestPath) || new FileInfo(manifestPath).Length > 2 * 1024 * 1024)
+                    throw new InvalidDataException("隔离清单包含不安全路径或超过大小限制。");
                 QuarantineManifest manifest = await JsonFile.ReadAsync<QuarantineManifest>(manifestPath);
-                if (manifest.Records.Count == 0) continue;
+                if (!string.Equals(manifest.RequestedBySid, identity.User?.Value, StringComparison.Ordinal))
+                {
+                    if (string.IsNullOrEmpty(manifest.RequestedBySid))
+                        QuarantineItems.Add(new QuarantineItemViewModel
+                        {
+                            Manifest = new() { IncidentId = incidentId },
+                            ManifestPath = manifestPath,
+                            ReadError = "旧版事件缺少身份与可信索引，请保留隔离并人工核对"
+                        });
+                    continue;
+                }
                 QuarantineItems.Add(new QuarantineItemViewModel { Manifest = manifest, ManifestPath = manifestPath });
             }
-            catch
+            catch (UnauthorizedAccessException)
             {
-                // A malformed manifest is not automatically deleted or trusted.
+                // Another user's event is intentionally not readable or displayed.
+            }
+            catch (Exception ex)
+            {
+                AppErrorLog.Write("ReadQuarantineManifest", ex);
+                QuarantineItems.Add(new QuarantineItemViewModel
+                {
+                    Manifest = new() { IncidentId = incidentId },
+                    ManifestPath = manifestPath,
+                    ReadError = "清单损坏或无法读取，需人工核对"
+                });
             }
         }
     }
@@ -517,6 +595,7 @@ public partial class MainWindow : Window
     private async void Rollback_Click(object sender, RoutedEventArgs e)
     {
         if (QuarantineGrid.SelectedItem is not QuarantineItemViewModel selected) return;
+        if (selected.ReadError is not null) { MessageBox.Show(this, selected.ReadError, "隔离记录不可自动处理"); return; }
         if (MessageBox.Show(this,
                 "回滚会尝试把文件和配置恢复到原位置。若原位置已被占用，管理员处置组件将拒绝覆盖。继续吗？",
                 "确认回滚", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
@@ -526,21 +605,18 @@ public partial class MainWindow : Window
     private async void DeleteIncident_Click(object sender, RoutedEventArgs e)
     {
         if (QuarantineGrid.SelectedItem is not QuarantineItemViewModel selected) return;
-        if (!selected.RebootObserved)
+        if (selected.ReadError is not null) { MessageBox.Show(this, selected.ReadError, "隔离记录不可自动处理"); return; }
+        string? rejection = IncidentDeletionPolicy.RejectionReason(selected.Manifest, _lastReport,
+            _lastFullSystemAndContentScanId, DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64));
+        if (rejection is not null)
         {
-            MessageBox.Show(this, "该隔离事件创建后尚未检测到一次系统重启，永久删除已被阻止。", "SteamSentinel", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-        bool cleanRescan = _lastReport is not null && _lastReport.Coverage == ScanCoverage.Complete &&
-                           !_lastReport.Findings.Any(finding => finding.IsKnownMalware && finding.Severity == FindingSeverity.Critical);
-        if (!cleanRescan)
-        {
-            MessageBox.Show(this, "请先完成一次覆盖状态为“完整”的复扫，并确认没有已知恶意项。", "SteamSentinel", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, rejection, "清理隔离记录不可用", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         if (MessageBox.Show(this,
-                "这会永久删除所选隔离事件及其中样本，无法通过本工具恢复。是否继续？",
-                "永久删除确认", MessageBoxButton.YesNo, MessageBoxImage.Stop) != MessageBoxResult.Yes) return;
+                "这会永久删除已全部回滚事件的记录及残留备份，无法通过本工具恢复。管理员组件会再次检查事件状态。是否继续？",
+                "永久删除确认", MessageBoxButton.YesNo, MessageBoxImage.Stop, MessageBoxResult.No) != MessageBoxResult.Yes) return;
         await RunIncidentActionAsync(RemediationActionType.DeleteIncident, selected.IncidentId);
     }
 
@@ -609,12 +685,12 @@ public partial class MainWindow : Window
         CoverSelectedButton.IsEnabled = !busy && CoverageGrid.SelectedItem is CoverageGroup { CanFullScan: true } group && CoverageTargets(group).Count > 0;
         RetryPasswordsButton.IsEnabled = !busy && _lastReport is not null && GetPasswordRetryTargets(_lastReport).Count > 0;
         CancelScanButton.IsEnabled = busy && _scanCancellation is not null;
-        RemediateButton.IsEnabled = !busy && !_reportNeedsRefresh && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
+        RemediateButton.IsEnabled = !busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && !_reportNeedsRefresh && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
         ExportButton.IsEnabled = !busy && _lastReport is not null;
         ReviewFindingButton.IsEnabled = !busy && ResultTabs.SelectedIndex == 0 && FindingsGrid.SelectedItem is FindingItemViewModel;
         OccupancyButton.IsEnabled = !busy && ResultTabs.SelectedIndex == 0 && FindingsGrid.SelectedItem is FindingItemViewModel;
-        RollbackButton.IsEnabled = !busy && _installationSecurity.IsProtected;
-        DeleteIncidentButton.IsEnabled = !busy && _installationSecurity.IsProtected;
+        RollbackButton.IsEnabled = !busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
+        DeleteIncidentButton.IsEnabled = !busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
         ElevateButton.IsEnabled = !busy && _installationSecurity.IsProtected && !_elevationContext.IsElevated;
         RefreshInstallationButton.IsEnabled = !busy;
         if (!busy && _closeWhenIdle && !_windowClosed)
@@ -626,6 +702,11 @@ public partial class MainWindow : Window
 
     private async Task<bool> EnsureRemediationAvailableAsync()
     {
+        if (_recoveryRequired || _remediationClient.HasUnresolvedExecution)
+        {
+            MessageBox.Show(this, "处置状态尚未确认或界面发生过未处理错误。请导出记录并核对受保护结果，再重新打开窗口扫描。", "处置暂不可用", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
         await RefreshInstallationSecurityAsync();
         if (_installationSecurity.IsProtected)
         {
@@ -640,6 +721,18 @@ public partial class MainWindow : Window
             MessageBoxButton.OK,
             MessageBoxImage.Warning);
         return false;
+    }
+
+    internal void EnterRecoveryMode()
+    {
+        _recoveryRequired = true;
+        _reportNeedsRefresh = true;
+        if (!_operationCommitted) _scanCancellation?.Cancel();
+        RemediateButton.IsEnabled = false;
+        RollbackButton.IsEnabled = false;
+        DeleteIncidentButton.IsEnabled = false;
+        HeaderStatusText.Text = "界面错误，已禁用处置";
+        FooterText.Text = "请导出已有记录并重新启动。已发出的管理员操作需核对受保护结果。";
     }
 
     private void ApplyInstallationSecurityStatus()
@@ -680,7 +773,24 @@ public partial class MainWindow : Window
 
     private async void RefreshInstallation_Click(object sender, RoutedEventArgs e)
     {
-        if (!_busy) await RefreshInstallationSecurityAsync();
+        if (_busy) return;
+        try
+        {
+            RemediationRunResult? recovered = await _remediationClient.TryRecoverResultAsync();
+            if (recovered is not null)
+            {
+                _caseResult = recovered;
+                if (_caseBatch is not null && !_caseBatch.Results.Any(item => item.PlanId == recovered.PlanId))
+                    _caseBatch.Results.Add(recovered);
+                _reportNeedsRefresh = true;
+                UpdateBatchResults();
+                FooterText.Text = "已读取迟到的管理员结果，请导出记录并重新扫描后再处置。";
+            }
+            else if (_remediationClient.HasUnresolvedExecution)
+                FooterText.Text = "尚无确定的管理员结果，仍禁止新的处置，可导出当前记录。";
+            await RefreshInstallationSecurityAsync();
+        }
+        catch (Exception ex) { AppErrorLog.Write("RecoverBrokerResult", ex); FooterText.Text = ex.Message; }
     }
 
     private async void Elevate_Click(object sender, RoutedEventArgs e)

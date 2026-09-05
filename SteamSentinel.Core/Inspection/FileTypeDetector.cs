@@ -54,7 +54,35 @@ public static class FileTypeDetector
             head.Length,
             FileOptions.Asynchronous | FileOptions.SequentialScan))
         {
-            read = await stream.ReadAsync(head, cancellationToken);
+            read = 0;
+            while (read < head.Length)
+            {
+                int current = await stream.ReadAsync(head.AsMemory(read), cancellationToken);
+                if (current == 0) break;
+                read += current;
+            }
+
+            // A valid PE may have a DOS stub larger than the bounded recognition head.
+            // Seek directly to e_lfanew and read only the four-byte signature.
+            if (read >= 0x40 && StartsWith(head.AsSpan(0, read), "MZ"u8))
+            {
+                int peOffset = BinaryPrimitives.ReadInt32LittleEndian(head.AsSpan(0x3C, sizeof(int)));
+                if (peOffset >= 0x40 && peOffset > read - 4 && peOffset <= stream.Length - 4)
+                {
+                    stream.Position = peOffset;
+                    byte[] signature = new byte[4];
+                    int signatureBytes = 0;
+                    while (signatureBytes < signature.Length)
+                    {
+                        int current = await stream.ReadAsync(signature.AsMemory(signatureBytes), cancellationToken);
+                        if (current == 0) break;
+                        signatureBytes += current;
+                    }
+                    if (signatureBytes == 4 && signature.AsSpan().SequenceEqual("PE\0\0"u8))
+                        return CreateResult(DetectedFileType.PortableExecutable,
+                            Path.GetExtension(displayPath ?? path));
+                }
+            }
         }
 
         return Detect(head.AsSpan(0, read), Path.GetExtension(displayPath ?? path));
@@ -64,6 +92,12 @@ public static class FileTypeDetector
     {
         extension = extension?.ToLowerInvariant() ?? string.Empty;
         DetectedFileType type = DetectCore(head, extension);
+        return CreateResult(type, extension);
+    }
+
+    private static FileTypeResult CreateResult(DetectedFileType type, string? extension)
+    {
+        extension = extension?.ToLowerInvariant() ?? string.Empty;
         string? expected = ExpectedExtension(type);
         bool mismatch = IsMeaningfulMismatch(type, extension);
         bool archive = type is DetectedFileType.Zip or DetectedFileType.Rar or
@@ -81,7 +115,7 @@ public static class FileTypeDetector
             return DetectedFileType.Empty;
         }
 
-        if (StartsWith(data, "MZ"u8)) return DetectedFileType.PortableExecutable;
+        if (IsPortableExecutable(data)) return DetectedFileType.PortableExecutable;
         if (StartsWith(data, "MSCF"u8)) return DetectedFileType.Cabinet;
         if (StartsWith(data, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])) return DetectedFileType.CompoundDocument;
         if (StartsWith(data, [0x50, 0x4B, 0x03, 0x04]) ||
@@ -114,6 +148,14 @@ public static class FileTypeDetector
     private static bool StartsWith(ReadOnlySpan<byte> data, ReadOnlySpan<byte> prefix) =>
         data.Length >= prefix.Length && data[..prefix.Length].SequenceEqual(prefix);
 
+    private static bool IsPortableExecutable(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 0x40 || !StartsWith(data, "MZ"u8)) return false;
+        int peOffset = BinaryPrimitives.ReadInt32LittleEndian(data.Slice(0x3C, sizeof(int)));
+        return peOffset >= 0x40 && peOffset <= data.Length - 4 &&
+               data.Slice(peOffset, 4).SequenceEqual("PE\0\0"u8);
+    }
+
     private static bool StartsWithIgnoreCase(ReadOnlySpan<byte> data, string text)
     {
         if (data.Length < text.Length) return false;
@@ -136,13 +178,23 @@ public static class FileTypeDetector
         {
             DetectedFileType.PortableExecutable => extension is not (".exe" or ".dll" or ".scr" or ".com" or ".cpl" or ".sys" or ".pyd" or ".safe_disabled"),
             DetectedFileType.CompoundDocument => extension is not (".msi" or ".msp" or ".doc" or ".xls" or ".ppt" or ".msg"),
-            DetectedFileType.Zip => extension is not (".zip" or ".zipx" or ".jar" or ".docx" or ".xlsx" or ".pptx" or ".nupkg"),
+            DetectedFileType.Zip => extension is not (".zip" or ".zipx" or ".jar" or ".docx" or ".docm" or ".dotx" or ".dotm" or
+                ".xlsx" or ".xlsm" or ".xltx" or ".xltm" or ".pptx" or ".pptm" or ".potx" or ".potm" or ".ppsx" or ".ppsm" or
+                ".nupkg" or ".vsix" or ".apk" or ".aab" or ".epub" or ".odt" or ".ods" or ".odp"),
             DetectedFileType.Rar => extension != ".rar",
             DetectedFileType.Cabinet => extension != ".cab",
             DetectedFileType.SevenZip => extension != ".7z",
             DetectedFileType.GZip => extension is not (".gz" or ".gzip" or ".tgz"),
+            DetectedFileType.BZip2 => extension is not (".bz2" or ".tbz" or ".tbz2"),
+            DetectedFileType.Xz => extension is not (".xz" or ".txz"),
+            DetectedFileType.Zstandard => extension is not (".zst" or ".zstd" or ".tzst"),
+            DetectedFileType.Tar => extension is not (".tar" or ".tgz" or ".tbz" or ".tbz2" or ".txz" or ".tzst"),
             DetectedFileType.Mp4 => extension is not (".mp4" or ".m4v" or ".mov"),
             DetectedFileType.Shortcut => extension != ".lnk",
+            DetectedFileType.Pdf => extension != ".pdf",
+            DetectedFileType.Png => extension != ".png",
+            DetectedFileType.Jpeg => extension is not (".jpg" or ".jpeg" or ".jpe"),
+            DetectedFileType.Gif => extension != ".gif",
             _ => false
         };
     }
@@ -162,6 +214,10 @@ public static class FileTypeDetector
         DetectedFileType.Tar => ".tar",
         DetectedFileType.Mp4 => ".mp4",
         DetectedFileType.Shortcut => ".lnk",
+        DetectedFileType.Pdf => ".pdf",
+        DetectedFileType.Png => ".png",
+        DetectedFileType.Jpeg => ".jpg/.jpeg",
+        DetectedFileType.Gif => ".gif",
         _ => null
     };
 
