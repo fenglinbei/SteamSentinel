@@ -72,6 +72,43 @@ jobs:
             throw "Expected .NET SDK $expected, got $actual."
           }
 
+      - name: Install and verify archive fixture tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Test-only dependency; never copied into SteamSentinel release artifacts.
+          # Fixed official installer: https://www.rarlab.com/download.htm
+          $installer = Join-Path $env:RUNNER_TEMP 'winrar-x64-723.exe'
+          if (Test-Path -LiteralPath $installer) {
+            throw 'Refusing to overwrite an existing archive-tool installer.'
+          }
+          Invoke-WebRequest -Uri 'https://www.rarlab.com/rar/winrar-x64-723.exe' `
+            -OutFile $installer -TimeoutSec 120
+          $expectedHash = '8FF0DAF3ED564CC743C0E23FF2E253997FFC74460F9673F0B6DD037B2DB4CE7B'
+          if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne $expectedHash) {
+            throw 'WinRAR 7.23 installer SHA-256 mismatch.'
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or
+              $signature.SignerCertificate.GetNameInfo('SimpleName', $false) -ne 'win.rar GmbH' -or
+              $null -eq $signature.TimeStamperCertificate) {
+            throw 'WinRAR installer publisher signature or timestamp validation failed.'
+          }
+          if ((Get-Item -LiteralPath $installer).VersionInfo.ProductVersion -ne '7.23.0') {
+            throw 'WinRAR installer version does not match the pinned dependency.'
+          }
+          $install = Start-Process -FilePath $installer -ArgumentList '-s1', '-d"C:\Program Files\WinRAR"' `
+            -WindowStyle Hidden -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "WinRAR fixture-tool installation failed ($($install.ExitCode))."
+          }
+          foreach ($tool in @('C:\Program Files\7-Zip\7z.exe', 'C:\Program Files\WinRAR\Rar.exe')) {
+            if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+              throw "Required archive fixture tool is missing: $tool"
+            }
+            Write-Host "$tool : $((Get-Item -LiteralPath $tool).VersionInfo.ProductVersion)"
+          }
+
       - name: Restore locked dependencies
         shell: pwsh
         run: |

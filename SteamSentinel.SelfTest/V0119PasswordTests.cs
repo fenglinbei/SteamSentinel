@@ -100,7 +100,10 @@ internal static partial class Program
             string archive = Path.Combine(directory, name + (isRar ? ".rar" : format == "7z" ? ".7z" : ".zip"));
             ProcessStartInfo start = new(isRar ? rar! : sevenZip)
             {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 WorkingDirectory = directory
             };
             // All command-line secrets here are generated fixture constants, never user passwords.
@@ -343,10 +346,19 @@ internal static partial class Program
 
     private static ScanOptions V0119PasswordOptions(string[] roots, int entries = 512, long entryBytes = 1024 * 1024) => new()
     {
-        Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false,
-        InspectArchives = true, HashEveryFile = true, MaximumContentBytes = long.MaxValue,
-        MaximumArchiveEntries = entries, MaximumEntryBytes = entryBytes, MaximumExpandedBytes = 16 * 1024 * 1024,
-        MaximumArchiveDepth = 8, CustomRoots = [.. roots]
+        Mode = ScanMode.Custom,
+        IncludeSystem = false,
+        IncludeSteam = false,
+        IncludeWorkshop = false,
+        UseAmsi = false,
+        InspectArchives = true,
+        HashEveryFile = true,
+        MaximumContentBytes = long.MaxValue,
+        MaximumArchiveEntries = entries,
+        MaximumEntryBytes = entryBytes,
+        MaximumExpandedBytes = 16 * 1024 * 1024,
+        MaximumArchiveDepth = 8,
+        CustomRoots = [.. roots]
     };
 
     private sealed class V0119PasswordProvider(Func<ArchivePasswordRequest, int, ArchivePasswordResponse> respond) : IArchivePasswordProvider
