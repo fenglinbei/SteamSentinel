@@ -18,6 +18,12 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
         CancellationToken cancellationToken = default)
     {
         if (pass is < 1 or > 2 || result.Verifications.Count >= 2) throw new InvalidOperationException("验证最多两轮。");
+        if (result.ExecutionStatus is RemediationExecutionStatus.SkippedDependency or RemediationExecutionStatus.ExecutionUnknown)
+        {
+            result.VerificationStatus = RemediationVerificationStatus.Unknown;
+            result.VerificationSummary = "动作未确认执行；当前状态不作为本次处置成功的依据。";
+            return;
+        }
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(ProbeTimeout);
         RemediationVerificationObservation observation;
@@ -40,6 +46,11 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
             result.Verifications.Any(item => IsClear(item.Status)))
             status = RemediationVerificationStatus.Reappeared;
         string message = Limit(observation.Message, MaximumMessageCharacters);
+        if (result.ExecutionStatus == RemediationExecutionStatus.Failed && IsClear(status))
+        {
+            status = RemediationVerificationStatus.Unknown;
+            message = "动作执行失败；当前未见目标残留不能改写为处置成功。" + message;
+        }
         if (status == RemediationVerificationStatus.Reappeared) message = "首次验证通过后目标再次出现/状态回退，" + message;
         result.Verifications.Add(new() { Pass = pass, Status = status, Message = Limit(message, MaximumMessageCharacters) });
         result.VerificationStatus = status;

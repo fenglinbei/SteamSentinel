@@ -87,6 +87,7 @@
                                 <Button x:Name="FileScanButton" Content="扫描文件" Click="FileScan_Click" />
                                 <Button x:Name="FolderScanButton" Content="扫描目录" Click="FolderScan_Click" />
                                 <Button x:Name="RetryPasswordsButton" Content="重试未解密内容" IsEnabled="False" Click="RetryPasswords_Click" />
+                                <Button x:Name="ScanSettingsButton" Content="扫描限制设置" Click="ScanSettings_Click" />
                                 <Button x:Name="CancelScanButton" Content="取消" IsEnabled="False" Click="CancelScan_Click" />
                             </WrapPanel>
                             <StackPanel x:Name="ScanOptionsContainer" Grid.Row="1" Margin="0,5,0,0">
@@ -94,7 +95,7 @@
                             <ScrollViewer x:Name="ScanOptionsScroll" MaxHeight="126" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <StackPanel Margin="0,6,0,0">
                             <TextBlock x:Name="ScanScopeText" TextWrapping="Wrap" Foreground="#475467" Margin="0,0,0,6" Text="快速扫描：Steam 运行状态与本地工坊、MOD、插件；视频先查结构和尾随内容，不是全盘扫描。" />
-                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Text="快速扫描优先检查关联落点和启动型内容，文件哈希预算 1 GiB，另为小型启动文件保留 128 MiB，单文件超过 256 MiB 时不完整读取。完整内容扫描不再设置整轮哈希字节上限，但只检查所选范围，不是全盘查杀。加密内容需要正确密码，格式、权限、文件数与解压安全上限仍可能限制检查。" />
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Text="快速扫描优先检查关联落点和启动型内容。大小、深度、读取量、时间与临时磁盘等预算可在“扫描限制设置”调整，快速与完整／自选模式分别保存。报告记录本轮实际设置及未完成原因。完整内容扫描只检查所选范围，不是全盘查杀。" />
                             <WrapPanel>
                                 <TextBlock Text="工坊范围" VerticalAlignment="Center" Margin="0,0,8,8" />
                                 <ComboBox x:Name="WorkshopScopeComboBox" AutomationProperties.Name="工坊扫描范围" DisplayMemberPath="Label" SelectedValuePath="AppId" MinWidth="160" MaxWidth="250" Margin="0,0,18,8" ToolTip="只限制工坊内容，Steam 客户端、插件和关联启动项仍会检查。" />
@@ -102,6 +103,7 @@
                                 <CheckBox x:Name="ExecutionHistoryCheckBox" Margin="0,0,18,8" Content="检查可疑运行历史" ToolTip="默认关闭，只输出可疑执行链提示，不导出完整运行命令。" />
                                 <CheckBox x:Name="ArchiveCheckBox" IsChecked="True" Margin="0,0,22,0" Content="递归检查压缩包" />
                                 <CheckBox x:Name="AmsiCheckBox" IsChecked="True" Margin="0,0,22,0" Content="使用本机反恶意软件接口（AMSI）辅助扫描" />
+                                <CheckBox x:Name="DeepSignatureCheckBox" IsChecked="True" Margin="0,0,22,0" Content="离线核验内容签名" ToolTip="仅按本地可用信任信息核验文件签名；签名与恶意性分别记录。" />
                                 <CheckBox x:Name="DomainBlockCheckBox" IsChecked="True" Content="处置时阻断已知恶意域名" />
                             </WrapPanel>
                             </StackPanel>
@@ -126,7 +128,7 @@
                     </Border>
 
                     <Grid x:Name="ScanProgressSummary" Grid.Row="1" Margin="0,7,0,7">
-                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -137,6 +139,8 @@
                         </DockPanel>
                         <ProgressBar x:Name="ScanProgressBar" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,4,0,0" Height="3" IsIndeterminate="False" />
                         <TextBlock x:Name="FindingCountText" Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="0 项发现" />
+                        <TextBlock x:Name="FindingHandlingSummaryText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#475467"
+                                   Text="尚无处理资格统计" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                     </Grid>
 
                     <TabControl Grid.Row="2" x:Name="ResultTabs" SelectionChanged="ResultTabs_SelectionChanged">
@@ -149,15 +153,25 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center" IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
-                                                  IsEnabled="{Binding CanSelect}" />
+                                                  IsEnabled="{Binding CanSelect}" ToolTip="{Binding HandlingDetails}" ToolTipService.ShowOnDisabled="True" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="严重度" Binding="{Binding Severity}" IsReadOnly="True" Width="92" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
-                            <DataGridTextColumn Header="分类" Binding="{Binding Category}" IsReadOnly="True" Width="82" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                            <DataGridTextColumn Header="严重度" Binding="{Binding Severity}" IsReadOnly="True" Width="72" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                            <DataGridTextColumn Header="分类" Binding="{Binding Category}" IsReadOnly="True" Width="64" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
                             <DataGridTextColumn Header="分数" Binding="{Binding Score}" IsReadOnly="True" Width="48" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
-                            <DataGridTextColumn Header="发现" Binding="{Binding Title}" IsReadOnly="True" Width="2*" MinWidth="128" ElementStyle="{StaticResource GridPathText}" />
-                            <DataGridTextColumn Header="目标" Binding="{Binding Target}" IsReadOnly="True" Width="3*" MinWidth="160" ElementStyle="{StaticResource GridPathText}" />
+                            <DataGridTextColumn Header="发现" Binding="{Binding Title}" IsReadOnly="True" Width="2*" MinWidth="110" ElementStyle="{StaticResource GridPathText}" />
+                            <DataGridTextColumn Header="目标" Binding="{Binding Target}" IsReadOnly="True" Width="2*" MinWidth="120" ElementStyle="{StaticResource GridPathText}" />
+                            <DataGridTemplateColumn Header="处理状态与原因" Width="3*" MinWidth="174" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel ToolTip="{Binding HandlingDetails}" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding HandlingLabel}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding HandlingReason}" FontSize="11" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                     </TabItem>
@@ -194,6 +208,80 @@
                             </DataGrid>
                         </Grid>
                     </TabItem>
+                    <TabItem x:Name="TrustProxyTab" Header="代理与证书">
+                        <Grid x:Name="TrustProxyPage" Margin="8">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="TrustProxyStatusText" Text="尚未检查代理与证书" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                                <Button x:Name="TrustProxyScanButton" Grid.Column="1" Content="检查代理与证书" Click="TrustProxyScan_Click" Margin="0"
+                                        ToolTip="只读检查本机代理配置与证书；不连接外部地址，不修改配置。无需管理员权限。" ToolTipService.ShowOnDisabled="True" />
+                            </Grid>
+                            <TextBlock x:Name="TrustProxyScopeText" Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#475467" Text="仅采集本地配置与证书，不下载 PAC、不访问目标地址；读取完整不代表配置安全。"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBox x:Name="TrustProxyDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                                     AutomationProperties.Name="代理与证书诊断记录，只读"
+                                     Text="点击“检查代理与证书”后，这里会列出每项采集状态、代理配置来源、证书存储区及证书摘要。已有扫描发现会保留。" />
+                        </Grid>
+                    </TabItem>
+                    <TabItem x:Name="RelatedComponentsTab" Header="组件关联">
+                        <Grid x:Name="RelatedComponentsPage" Margin="8">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <TextBlock x:Name="RelatedComponentsStatusText" Text="尚无组件关联记录" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBlock x:Name="RelatedComponentsScopeText" Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#475467"
+                                       Text="仅记录路径关系；磁盘文件核验不代表进程内存内容，写入者仍未定位。"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBox x:Name="RelatedComponentsDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                                     AutomationProperties.Name="组件关联检查记录，只读"
+                                     Text="正常扫描完成关联检查后，这里显示来源、宿主身份、候选原因、受限内容检查与各轮预算。关联记录不会自行生成处理权限。" />
+                        </Grid>
+                    </TabItem>
+                    <TabItem x:Name="CasesTab" Header="病例复验">
+                        <Grid Margin="8">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <ComboBox x:Name="CaseListComboBox" MinWidth="80" Margin="0,0,6,0" VerticalContentAlignment="Center" ToolTip="已保存的本账户病例；选择后可只读复验。"/>
+                                <Button x:Name="CaseRefreshButton" Grid.Column="1" Content="读取病例" Click="CaseRefresh_Click" Margin="0,0,6,0"/>
+                                <Button x:Name="CaseRecheckButton" Grid.Column="2" Content="复验所选病例" Click="CaseRecheck_Click" Margin="0"/>
+                                <Button x:Name="CaseExportButton" Grid.Column="3" Content="导出病例" Click="CaseExport_Click" Margin="6,0,0,0"/>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#475467" Text="重启或重新登录后，重新打开程序并复验；不会重放旧计划或自动重启。" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                            <TextBox x:Name="CaseDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                                     AutomationProperties.Name="病例跨会话复验记录，只读" Text="尚无已保存病例。确认处置后会在本账户保存计划、执行结果和处置前会话身份。"/>
+                        </Grid>
+                    </TabItem>
+                    <TabItem x:Name="ContainerTab" Header="容器检查">
+                        <Grid x:Name="ContainerPage" Margin="8">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <TextBlock x:Name="ContainerStatusText" Text="尚无容器递归检查记录" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <WrapPanel x:Name="ContainerActionsBar" Grid.Row="1" Margin="0,5,0,4">
+                                <Button x:Name="ContainerRecheckButton" Content="补查原始外层/卷组" Click="ContainerRecheck_Click" IsEnabled="False" Margin="0,0,6,3"
+                                        ToolTip="重新扫描所选节点所属原始文件或卷组，生成新报告；不扫描已删除的临时成员，不写出恢复内容。"/>
+                                <Button x:Name="ContainerSupplementButton" Content="选择补卷目录后补查" Click="ContainerSupplement_Click" IsEnabled="False" Margin="0,0,6,3"
+                                        ToolTip="仅在你明确选择的本地目录中寻找补充分卷，然后重新检查原始卷组。"/>
+                                <Button x:Name="ContainerRecoveryButton" Content="选择恢复目录并重扫" Click="ContainerRecovery_Click" IsEnabled="False" Margin="0,0,6,3"
+                                        ToolTip="明确选择独立目录后，重新扫描并请求写出可恢复内容；不会启动或执行输出。普通导出报告不包含这些内容。"/>
+                                <Button x:Name="ContainerFullDetailsButton" Content="完整记录" Click="ContainerFullDetails_Click" IsEnabled="False" Margin="0,0,6,3"/>
+                                <Button x:Name="ContainerExportButton" Content="导出报告" Click="Export_Click" IsEnabled="False" Margin="0,0,0,3"/>
+                            </WrapPanel>
+                            <ComboBox x:Name="ContainerNodesComboBox" Grid.Row="2" Margin="0,0,0,5" MinWidth="80"
+                                      SelectionChanged="ContainerNodes_SelectionChanged" IsEnabled="False"
+                                      AutomationProperties.Name="选择容器节点与阶段链" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}"/></DataTemplate></ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <TextBox x:Name="ContainerDetailsText" Grid.Row="3" IsReadOnly="True" IsUndoEnabled="False" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                                     AutomationProperties.Name="容器层级、完整路径、五阶段与预算记录，只读可复制"
+                                     Text="扫描文件或目录后，这里显示每层容器关系、完整性、内容检测和预算。可选择文本并按 Ctrl+C 复制。"/>
+                        </Grid>
+                    </TabItem>
                     </TabControl>
 
                     <Expander x:Name="FindingDetailCard" Grid.Row="3" Header="所选项详情 · 完整路径与证据" IsExpanded="True" Margin="0,7,0,0" Background="White" Expanded="FindingDetails_Expanded">
@@ -223,7 +311,7 @@
 
                     <DockPanel x:Name="SelectionActionsBar" Grid.Row="4" Margin="0,8,0,0" LastChildFill="True">
                         <Button x:Name="RemediateButton" DockPanel.Dock="Right" VerticalAlignment="Top" Margin="8,0,0,0"
-                                IsEnabled="False" Content="预览并处置所选项" Click="Remediate_Click">
+                                IsEnabled="False" Content="预览并处置所选项" Click="Remediate_Click" ToolTipService.ShowOnDisabled="True">
                             <Button.Style><Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
                                 <Setter Property="Visibility" Value="Collapsed"/>
                                 <Style.Triggers><DataTrigger Binding="{Binding SelectedIndex, ElementName=ResultTabs}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
@@ -248,9 +336,9 @@
                                 <Setter Property="Visibility" Value="Collapsed"/>
                                 <Style.Triggers><DataTrigger Binding="{Binding SelectedIndex, ElementName=ResultTabs}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
                             </Style></WrapPanel.Style>
-                            <Button x:Name="SelectAllButton" Content="全选可处置项" Click="SelectAll_Click" />
+                            <Button x:Name="SelectAllButton" Content="全选可处置项" Click="SelectAll_Click" ToolTipService.ShowOnDisabled="True" />
                             <Button x:Name="ClearSelectionButton" Content="清除选择" Click="ClearSelection_Click" />
-                            <Button x:Name="ReviewFindingButton" Content="进一步检查" IsEnabled="False" Click="ReviewFinding_Click" ToolTip="检查当前选中项的实际文件和关联启动入口，不执行文件，也不会自动隔离。" />
+                            <Button x:Name="ReviewFindingButton" Content="进一步检查" IsEnabled="False" Click="ReviewFinding_Click" ToolTip="检查当前选中项的实际文件和关联启动入口，不执行文件，也不会自动隔离。" ToolTipService.ShowOnDisabled="True" />
                             <Button x:Name="OccupancyButton" Content="查看占用" IsEnabled="False" Click="Occupancy_Click" ToolTip="只读查询谁正在使用所选文件，不关闭程序或句柄。" />
                             </WrapPanel>
                         </WrapPanel>

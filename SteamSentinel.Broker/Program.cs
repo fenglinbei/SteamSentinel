@@ -1,5 +1,6 @@
 using System.Security.Principal;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Broker;
@@ -16,6 +17,7 @@ internal static class Program
         string expectedPlanSha256 = args[1];
         string? resultPath = null;
         Guid boundPlanId = Guid.Empty;
+        string boundPlanIdentity = string.Empty;
         RemediationRunResult? result = null;
         BrokerResultChannel? resultChannel = null;
         BrokerMutationLease? mutationLease = null;
@@ -28,6 +30,7 @@ internal static class Program
 
             RemediationPlan plan = await BrokerRequestReader.ReadAsync(planPath, expectedPlanSha256);
             boundPlanId = plan.PlanId;
+            boundPlanIdentity = RemediationPlanIdentity.Fingerprint(plan);
             MachineStateSecurity.EnsureProtectedRoots();
             resultPath = Path.Combine(AppPaths.ResultsRoot, $"result-{plan.PlanId:N}.json");
             if (Directory.Exists(resultPath))
@@ -51,7 +54,9 @@ internal static class Program
                 result = new RemediationRunResult
                 {
                     PlanId = plan.PlanId,
+                    PlanIdentitySha256 = boundPlanIdentity,
                     Success = false,
+                    Disposition = RemediationRunDisposition.NotStarted,
                     CompletedAtUtc = DateTimeOffset.UtcNow,
                     Errors = { "另一个 SteamSentinel 管理员处置仍在运行；本计划尚未执行任何动作，请等待其完成后重新扫描。" }
                 };
@@ -64,7 +69,9 @@ internal static class Program
                 result = new RemediationRunResult
                 {
                     PlanId = plan.PlanId,
+                    PlanIdentitySha256 = boundPlanIdentity,
                     Success = false,
+                    Disposition = RemediationRunDisposition.NotStarted,
                     CompletedAtUtc = DateTimeOffset.UtcNow,
                     Errors = { "用户在管理员确认窗口取消了处置。" }
                 };
@@ -84,7 +91,9 @@ internal static class Program
             result ??= new RemediationRunResult
             {
                 PlanId = boundPlanId,
+                PlanIdentitySha256 = boundPlanIdentity,
                 Success = false,
+                Disposition = RemediationRunDisposition.ExecutionUnknown,
                 CompletedAtUtc = DateTimeOffset.UtcNow,
                 Errors = { $"{ex.GetType().Name}: {ex.Message}" }
             };

@@ -14,6 +14,15 @@ internal static class StreamingStringInspection
     internal static async Task<(HashSet<string> Raw, HashSet<string> Script)> ReadAsync(
         string path, IEnumerable<string> ruleTokens, IEnumerable<string> domainTokens, long limit, CancellationToken token)
     {
+        await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return await ReadAsync(stream, ruleTokens, domainTokens, limit, token);
+    }
+
+    internal static async Task<(HashSet<string> Raw, HashSet<string> Script)> ReadAsync(
+        Stream stream, IEnumerable<string> ruleTokens, IEnumerable<string> domainTokens, long limit, CancellationToken token)
+    {
+        stream.Position = 0;
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
         HashSet<string> domains = domainTokens.Where(value => !string.IsNullOrWhiteSpace(value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -23,8 +32,6 @@ internal static class StreamingStringInspection
         byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkBytes + OverlapBytes);
         try
         {
-            await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
             long total = 0;
             int retained = 0;
             while (true)

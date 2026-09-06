@@ -8,4 +8,4 @@ SteamSentinel 由 **fenglinbei** 按 [Apache License 2.0](LICENSE) 授权。
 - 发行包应同时包含 `LICENSE` 与 `NOTICE`，不得移除适用的版权、专利、商标和归属声明。
 - 修改后再分发时，应对修改过的文件作出醒目说明，并保留许可证要求的声明。
 
-SharpCompress、Microsoft .NET 自包含运行时及其他第三方组件继续适用各自的许可证，相关信息见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 及发行包内随附的第三方许可证文件。
+SharpCompress、UnRAR 衍生的密码/完整性兼容部分、BLAKE2 参考实现改写部分、Microsoft .NET 自包含运行时及其他第三方组件继续适用各自的许可证，项目 Apache-2.0 声明不取代这些条款。准确来源与许可全文见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)、源文件归属注释及发行包内随附的第三方许可证文件。

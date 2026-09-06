@@ -36,7 +36,7 @@ public static class CoveragePresentation
             {
                 "QUICK-MEDIA-STRUCTURE" => "已检查 MP4 格式、顶层结构和尾随数据，未读取全部媒体数据进行哈希比对。",
                 "QUICK-CONTENT-NOT-HASHED" => "快速扫描仅识别了真实格式，未读取或哈希完整文件内容。",
-                "QUICK-FILE-SIZE" => "快速扫描文件超过 256 MiB，未完整读取，已进行真实格式识别及适用的媒体结构检查。",
+                "QUICK-FILE-SIZE" => "文件超过本轮快速扫描单文件大小设置，未完整读取；具体数值见本轮扫描预算。已进行真实格式识别及适用的媒体结构检查。",
                 "CONTENT-BYTE-BUDGET" => "文件超过本次剩余读取预算，未完整读取，已进行真实格式识别及适用的媒体结构检查。",
                 _ => aggregate.RuleId
             };
@@ -53,13 +53,16 @@ public static class CoveragePresentation
     {
         (string kind, string next, bool full) = rule switch
         {
+            "TRUST-PROXY-COVERAGE" or "TRUST-PROXY-DIAGNOSTIC-FAILED" => ("证书与代理诊断未完成", "查看具体来源和读取状态，可重新执行“检查代理与证书”或导出记录。完整内容扫描不能代替配置与证书检查。", false),
+            "SYSTEM-SCAN-INCOMPLETE" => ("系统检查未完成", "已读取的记录仍可导出；请重新执行含系统检查的扫描。单独补查文件内容不能代替系统检查。", false),
             "QUICK-MEDIA-STRUCTURE" => ("视频已做结构检查，未做完整比对", FullScanAction + "，将对整个文件进行哈希比对。", true),
             "QUICK-CONTENT-NOT-HASHED" => ("快速扫描未做完整内容比对", FullScanAction + "。", true),
-            "QUICK-FILE-SIZE" or "CONTENT-BYTE-BUDGET" => ("达到本次读取上限", FullScanAction + "。若仍达到上限，可单独选择该文件或目录扫描。", true),
+            "QUICK-FILE-SIZE" or "CONTENT-BYTE-BUDGET" => ("达到本次读取上限", "可在“扫描限制设置”调整单文件与累计读取预算，再" + FullScanAction + "。", true),
+            "STRING-ENGINE-SIZE-LIMIT" or "AMSI-ENGINE-SIZE-LIMIT" => ("正文检查达到大小设置", "可在“扫描限制设置”调整字符串或 AMSI 单文件大小，再补查；调高 AMSI 大小会增加内存占用。", true),
             "ARCHIVE-NOT-REQUESTED" or "COMPOUND-CONTENT-NOT-EXPANDED" => ("压缩内容未展开", FullScanAction + "，需开启压缩内容检查，仍受格式与安全上限限制。", true),
             "ARCHIVE-PASSWORD-FAILED" or "ARCHIVE-ENCRYPTED-NOT-SCANNED" or "ARCHIVE-ENCRYPTED-DEFERRED" => ("加密内容未解开", "先准备正确的外层和内层密码，再" + FullScanAction + "，也可点击“重试未解密内容”。", true),
             "CONTENT-SCAN-FAILED" when detail.Contains("ScanResourceLimitException") =>
-                ("本轮内容检查达到安全上限", "本次触发扫描安全边界，不等于系统内存不足。请查看具体上限，用“扫描目录”分批检查剩余内容。已完成部分的结果仍保留，无需关闭防护。", false),
+                ("本轮内容检查达到安全上限", "本次触发扫描预算或组件边界，不等于系统内存不足。请查看具体原因，在“扫描限制设置”调整对应预算，或用“扫描目录”分批检查。已完成部分的结果仍保留，无需关闭防护。", false),
             "CONTENT-SCAN-FAILED" when detail.Contains("OutOfMemoryException") =>
                 ("扫描组件内存分配失败", "扫描组件发生内存分配失败，请导出报告中的诊断记录，再分批检查剩余内容。已完成部分的结果仍保留，无需关闭防护。", false),
             "CONTENT-SCAN-FAILED" or "CONTENT-SCAN-CANCELLED" => ("部分检查未执行", "确认扫描组件可用后重新扫描，已完成部分的结果仍保留。", false),
@@ -67,7 +70,7 @@ public static class CoveragePresentation
             _ when detail.Contains("读取达到") || detail.Contains("字节预算") => ("达到本次读取上限", FullScanAction + "。若仍达到上限，请单独扫描较小目录。", true),
             _ when detail.Contains("AMSI", StringComparison.OrdinalIgnoreCase) => ("安全软件辅助检查不可用", "检查本机安全软件是否正常开启，再重试。完整内容扫描不能代替不可用的安全软件接口。", false),
             _ when detail.Contains("取消") || detail.Contains("尚未开始") || detail.Contains("启动失败") => ("部分检查未执行", "确认扫描组件可用后重新扫描，已完成部分的结果仍保留。", false),
-            _ when detail.Contains("上限") || detail.Contains("超过扫描限制") || detail.Contains("嵌套深度") => ("达到安全检查上限", "可单独扫描较小目录，压缩比、嵌套层数等安全上限不会因完整扫描而取消。不要为检查而运行安装包。", false),
+            _ when detail.Contains("上限") || detail.Contains("超过扫描限制") || detail.Contains("嵌套深度") => ("达到安全检查上限", "可在“扫描限制设置”调整压缩比、嵌套深度等对应预算，也可分批扫描较小目录。预算同时生效，调高会增加资源消耗。不要为检查而运行安装包。", false),
             _ => ("读取受限或其他检查范围说明", "请查看具体原因。访问受限、文件损坏或格式不支持时，完整内容扫描不一定能补齐，可导出报告进一步核对。", false)
         };
         return new(kind, target, detail, next, full);

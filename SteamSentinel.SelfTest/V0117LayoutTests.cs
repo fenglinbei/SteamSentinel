@@ -35,6 +35,7 @@ internal static partial class Program
                 app.InitializeComponent();
                 app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 TestV0117Layout(output);
+                TestScanSettingsUi(output);
             }
             catch (Exception ex) { error = ex; }
             finally { app?.Shutdown(); }
@@ -101,13 +102,15 @@ internal static partial class Program
                 layout.Refresh();
                 ((Expander)window.FindName("FindingDetailCard")).IsExpanded = true;
                 layout.Refresh();
-                Check($"UI {size} 展开证据不会遮挡操作栏", UiLayoutFixtures.ResultButtons.All(name => layout.IsFullyVisible((FrameworkElement)window.FindName(name))) && findings.ActualHeight >= 48);
+                Check($"UI {size} 展开证据仍显示完整结果行且不会遮挡操作栏", UiLayoutFixtures.ResultButtons.All(name => layout.IsFullyVisible((FrameworkElement)window.FindName(name))) &&
+                    findings.ItemContainerGenerator.ContainerFromIndex(0) is FrameworkElement detailsFirst && layout.IsFullyVisible(detailsFirst));
                 if (output is not null) layout.Save("layout-details-" + size, output);
                 ((Expander)window.FindName("FindingDetailCard")).IsExpanded = false;
                 ((Expander)window.FindName("ScanOptionsExpander")).IsExpanded = true;
                 layout.Refresh();
-                Check($"UI {size} 展开扫描选项仍可扫描导出和处置", UiLayoutFixtures.ScanButtons.Concat(UiLayoutFixtures.ResultButtons).All(name =>
-                    layout.IsFullyVisible((FrameworkElement)window.FindName(name))) && findings.ActualHeight >= 48);
+                Check($"UI {size} 展开扫描选项仍显示完整结果行并可扫描导出和处置", UiLayoutFixtures.ScanButtons.Concat(UiLayoutFixtures.ResultButtons).All(name =>
+                    layout.IsFullyVisible((FrameworkElement)window.FindName(name))) &&
+                    findings.ItemContainerGenerator.ContainerFromIndex(0) is FrameworkElement optionsFirst && layout.IsFullyVisible(optionsFirst));
                 if (output is not null) layout.Save("layout-options-" + size, output);
                 ((Expander)window.FindName("ScanOptionsExpander")).IsExpanded = false;
                 TabControl results = (TabControl)window.FindName("ResultTabs");
@@ -139,14 +142,16 @@ internal static partial class Program
                 typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [true]);
                 window.ShowActivity(MainWindow.ActivityPhase.Preparing);
                 layout.Refresh();
-                Check($"UI {size} 活动状态不覆盖扫描与处置按钮", UiLayoutFixtures.ScanButtons.Concat(UiLayoutFixtures.ResultButtons).All(name =>
-                    layout.IsFullyVisible((FrameworkElement)window.FindName(name))) && findings.ActualHeight >= 48);
+                Check($"UI {size} 活动状态显示完整结果行且不覆盖扫描与处置按钮", UiLayoutFixtures.ScanButtons.Concat(UiLayoutFixtures.ResultButtons).All(name =>
+                    layout.IsFullyVisible((FrameworkElement)window.FindName(name))) &&
+                    findings.ItemContainerGenerator.ContainerFromIndex(0) is FrameworkElement activeFirst && layout.IsFullyVisible(activeFirst));
                 if (output is not null) layout.Save("layout-activity-" + size, output);
                 Expander activeOptions = (Expander)window.FindName("ScanOptionsExpander");
                 if (activeOptions.IsEnabled) activeOptions.IsExpanded = true;
                 layout.Refresh();
-                Check($"UI {size} 活动期间展开选项仍保留有效结果行与按钮", UiLayoutFixtures.ScanButtons.Concat(UiLayoutFixtures.ResultButtons).All(name =>
-                    layout.IsFullyVisible((FrameworkElement)window.FindName(name))) && findings.ActualHeight >= 48);
+                Check($"UI {size} 活动期间展开选项仍显示完整结果行与按钮", UiLayoutFixtures.ScanButtons.Concat(UiLayoutFixtures.ResultButtons).All(name =>
+                    layout.IsFullyVisible((FrameworkElement)window.FindName(name))) &&
+                    findings.ItemContainerGenerator.ContainerFromIndex(0) is FrameworkElement activeOptionsFirst && layout.IsFullyVisible(activeOptionsFirst));
                 if (output is not null) layout.Save("layout-activity-options-" + size, output);
                 activeOptions.IsExpanded = false;
                 ((TabControl)window.FindName("MainTabs")).SelectedIndex = 1;
@@ -251,6 +256,10 @@ internal static partial class Program
         }
         TestV0119TableAndButtonConsistency(output);
         TestV0119Summary(output);
+        TestTrustProxyUi(output);
+        TestPhase2RelatedUi(output);
+        TestPhase3CaseUi(output);
+        TestV020ContainerUi(output);
         TestV0119PasswordUi(output);
     }
 
@@ -269,7 +278,9 @@ internal static partial class Program
                 Check($"UI 表格 {size} 两条信息提示仍是不可处置的真实绑定", findings.Items.Count == 2 &&
                     window.Findings.All(finding => finding.Severity == "信息" && !finding.CanSelect) &&
                     !((Button)window.FindName("RemediateButton")).IsEnabled);
-                Check($"UI 表格 {size} 单行风险行高为30至34像素", first.ActualHeight is >= 30 and <= 34);
+                Check($"UI 表格 {size} 处理状态与原因双行可读且行高有界", first.ActualHeight is >= 38 and <= 52 &&
+                    findings.Columns.Count == 7 && findings.Columns[6].GetCellContent(first) is { } handling &&
+                    UiLayoutHarness.Descendants<TextBlock>(handling).Count(text => !string.IsNullOrWhiteSpace(text.Text)) >= 2);
                 Check($"UI 表格 {size} 真实单元格保留左右8上下3像素留白", layout.CellsHaveRealPadding(findings));
                 Check($"UI 表格 {size} 严重度分类分数与处置复选框居中", new[] { 1, 2, 3 }.All(column => layout.CellTextIsCentered(findings, 0, column)) &&
                     layout.CellCheckIsCentered(findings, 0, 0));

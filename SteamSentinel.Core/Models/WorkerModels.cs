@@ -48,6 +48,10 @@ public static class ScanReportMerger
         };
         merged.ContentScanSettings = second.ContentScanSettings ?? first.ContentScanSettings;
         merged.WorkerDiagnostics = second.WorkerDiagnostics ?? first.WorkerDiagnostics;
+        merged.TrustProxyDiagnostics = second.TrustProxyDiagnostics ?? first.TrustProxyDiagnostics;
+        merged.RelatedComponentDiagnostics = second.RelatedComponentDiagnostics ?? first.RelatedComponentDiagnostics;
+        merged.Containers = Reporting.ContainerReportMerger.Merge(first, second);
+        if (merged.Containers is { Complete: false }) merged.Coverage = ScanCoverage.Partial;
         merged.Roots.AddRange(first.Roots.Concat(second.Roots).Distinct(StringComparer.OrdinalIgnoreCase));
         merged.CandidateRoots.AddRange(first.CandidateRoots.Concat(second.CandidateRoots).Distinct(StringComparer.OrdinalIgnoreCase));
         merged.ContentSources.AddRange(first.ContentSources.Concat(second.ContentSources).Distinct(StringComparer.OrdinalIgnoreCase));

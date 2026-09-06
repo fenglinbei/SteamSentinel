@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using SteamSentinel.App.Dialogs;
 
 namespace SteamSentinel.App;
@@ -14,6 +15,21 @@ public partial class MainWindow
         // changes when the header and optional panels are compacted.
         bool compact = WindowLayout.ActualHeight < 680;
         bool shortViewport = WindowLayout.ActualHeight < 540;
+        // Keep the eligibility counts alongside the stage on constrained viewports.
+        // The detailed progress instruction remains available in the header and its tooltip.
+        bool condensedSummary = shortViewport || compact && ActivityPanel.Visibility == Visibility.Visible;
+        ProgressStageText.MaxWidth = condensedSummary ? 100 : 200;
+        ProgressItemText.Visibility = condensedSummary ? Visibility.Collapsed : Visibility.Visible;
+        Grid.SetRow(FindingHandlingSummaryText, condensedSummary ? 0 : 2);
+        Grid.SetColumnSpan(FindingHandlingSummaryText, condensedSummary ? 1 : 2);
+        FindingHandlingSummaryText.Margin = condensedSummary ? new Thickness(110, 0, 0, 0) : new Thickness(0, 4, 0, 0);
+        FindingHandlingSummaryText.VerticalAlignment = VerticalAlignment.Center;
+        TrustProxyPage.Margin = new Thickness(shortViewport ? 4 : 8);
+        TrustProxyScopeText.Margin = shortViewport ? new Thickness(0, 3, 0, 3) : new Thickness(0, 5, 0, 6);
+        RelatedComponentsPage.Margin = new Thickness(shortViewport ? 4 : 8);
+        RelatedComponentsScopeText.Margin = shortViewport ? new Thickness(0, 3, 0, 3) : new Thickness(0, 5, 0, 6);
+        ContainerPage.Margin = new Thickness(shortViewport ? 4 : 8);
+        ContainerActionsBar.Margin = shortViewport ? new Thickness(0, 3, 0, 2) : new Thickness(0, 5, 0, 4);
         // On very short windows the active-operation banner replaces branding;
         // retain the result count, live scan status, and all operation controls.
         UpdateCompactHeader();
@@ -25,8 +41,12 @@ public partial class MainWindow
         ScanProgressSummary.Margin = new Thickness(0, shortViewport ? 4 : 7, 0, shortViewport ? 4 : 7);
         FindingDetailCard.Margin = new Thickness(0, shortViewport ? 3 : 7, 0, 0);
         SelectionActionsBar.Margin = new Thickness(0, shortViewport ? 4 : 8, 0, 0);
-        FindingDetailScroll.Height = compact ? 48 : 100;
-        ScanOptionsScroll.MaxHeight = Math.Clamp(e.NewSize.Height - 310, 48, 126);
+        FindingDetailScroll.Height = shortViewport ? 30 : compact ? 48 : 100;
+        // A complete two-line finding needs more space than the former single-line row.
+        // On constrained windows keep optional text scrollable while reserving that row.
+        ScanOptionsScroll.MaxHeight = compact
+            ? Math.Clamp(e.NewSize.Height - 330, 30, 90)
+            : Math.Clamp(e.NewSize.Height - 310, 48, 126);
         // Collapse optional evidence on entering a short viewport, not on every
         // layout pass. The user may still open it without hiding the action bar.
         if (_compactLayout != compact)

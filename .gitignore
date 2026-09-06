@@ -29,6 +29,7 @@ Thumbs.db
 *.tmp
 *.bak
 reports/
+outputs/
 evidence/
 quarantine/
 plans/

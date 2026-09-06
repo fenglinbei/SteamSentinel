@@ -9,14 +9,25 @@ public sealed class ScanCoordinator
 {
     private readonly RuleSet _rules;
     private readonly SteamLayout? _layoutOverride;
+    private readonly bool _allowRelatedSignatureProbe;
 
-    public ScanCoordinator(RuleSet? rules = null, SteamLayout? layout = null)
+    public ScanCoordinator(RuleSet? rules = null, SteamLayout? layout = null, bool allowRelatedSignatureProbe = false)
     {
         _rules = rules ?? RuleLoader.LoadEmbedded();
         _layoutOverride = layout;
+        _allowRelatedSignatureProbe = allowRelatedSignatureProbe;
     }
 
     public RuleSet Rules => _rules;
+
+    public Task<ScanReport> RunTrustProxyDiagnosticsAsync(IProgress<ScanProgress>? progress = null,
+        CancellationToken cancellationToken = default) => Task.Run(() =>
+    {
+        ScanReport report = new() { Mode = ScanMode.Custom, RuleSetVersion = _rules.Version };
+        new TrustProxyDiagnosticScanner().Collect(report, progress, cancellationToken);
+        report.CompletedAtUtc = DateTimeOffset.UtcNow;
+        return report;
+    });
 
     public async Task<ScanReport> RunAsync(
         ScanOptions options,
@@ -43,7 +54,7 @@ public sealed class ScanCoordinator
                 "内容阶段工坊范围：" + (options.IncludeWorkshop ? options.WorkshopAppIds.Count == 0 ? "全部已发现的本地工坊" : string.Join("，", options.WorkshopAppIds) : "未额外检查工坊"));
             report.ScopeNotes.Add(options.IncludeDownloadLocations ? "已额外包含下载、桌面与临时目录，资料和样本库也可能进入扫描。" : "未额外扫描下载、桌面与临时目录，已识别的关联落点除外。");
             report.ScopeNotes.Add((options.MaximumContentBytes == long.MaxValue ? "内容阶段不设整轮哈希字节上限，仍保留文件数、内存与解压安全限制" : $"内容阶段文件哈希读取预算：{options.MaximumContentBytes / 1024 / 1024:N0} MiB") +
-                (options.Mode == ScanMode.Quick ? "，另为小型启动文件保留最多 128 MiB。" : "。") +
+                (options.Mode == ScanMode.Quick ? $"，另为小型启动文件保留最多 {options.MaximumQuickPriorityBytes / 1048576m:0.########} MiB。" : "。") +
                 (options.InspectArchives ? "已开启压缩内容检查。" : "未开启压缩内容检查。"));
         }
         if (options.WorkshopAppIds.Count > 0) MarkPartial(report, "本次只检查所选工坊 AppID：" + string.Join("，", options.WorkshopAppIds) + "，不能作为全部工坊复扫。");
@@ -91,6 +102,15 @@ public sealed class ScanCoordinator
             {
                 progress?.Report(new ScanProgress("关联检查", "启动目标与已加载模块", 0, null, "定位实际落点与恶意组件链"));
                 await new RelatedArtifactScanner(_rules).CollectAsync(layout, report, options, cancellationToken);
+            }
+
+            if (options.IncludeSystem)
+                new RelatedComponentPipeline(_rules).CollectInitial(report, options, progress, cancellationToken);
+            if (options.RelatedSignaturePaths.Count > 0)
+            {
+                if (!_allowRelatedSignatureProbe) MarkPartial(report, "宿主签名检查未运行：此调用没有启用受限扫描组件能力。");
+                else await new RelatedSignatureProbe().CollectAsync(report, options.RelatedSignaturePaths,
+                    options.MaximumRelatedSignatureBytes, cancellationToken, Checkpoint);
             }
 
             using ContentScanner contentScanner = new(_rules);

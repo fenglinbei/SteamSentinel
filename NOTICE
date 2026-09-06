@@ -1,2 +1,11 @@
 SteamSentinel
 Copyright 2026 fenglinbei
+
+RAR password and integrity compatibility portions are adapted from UnRAR
+reference sources by Alexander Roshal, with historical SHA-1 attribution
+retained in the affected source files. See THIRD-PARTY-NOTICES.md for the
+full UnRAR terms, which apply to those portions.
+
+BLAKE2 compatibility implementation is adapted from the BLAKE2 reference
+implementation by Samuel Neves (2012), under CC0 1.0 Universal.
+Full terms and pinned source references are in THIRD-PARTY-NOTICES.md.

@@ -26,7 +26,7 @@ internal static partial class Program
         string version = properties.Descendants("VersionPrefix").Single().Value;
         string minimumTests = properties.Descendants("SteamSentinelMinimumSelfTests").Single().Value;
         bool minimumTestsValid = int.TryParse(minimumTests, out int minimumTestCount) && minimumTestCount >= 795;
-        Check("0.1.19 中央版本与机器测试基线唯一", version == "0.1.19" && minimumTestsValid &&
+        Check("0.2.0 中央版本与机器测试基线唯一", version == "0.2.0" && minimumTestsValid &&
             properties.Descendants("AssemblyVersion").Single().Value == "$(VersionPrefix).0" &&
             properties.Descendants("InformationalVersion").Single().Value == "$(VersionPrefix)+$(SteamSentinelBuildId)");
 

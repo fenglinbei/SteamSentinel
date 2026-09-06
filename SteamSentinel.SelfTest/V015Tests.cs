@@ -99,7 +99,8 @@ internal static partial class Program
         ScanReport overlay = new();
         using (ContentScanner scanner = new(rules))
             await scanner.ScanRootAsync(mp4, overlay, ContentOptions(), new NullPasswordProvider());
-        Check("MP4 尾随归档递归检测与外层处置", overlay.Findings.Any(f => f.CanRemediate && f.Target == mp4 && f.ContentPath!.Contains("尾随内容", StringComparison.Ordinal)));
+        Check("MP4 尾随归档递归检测与外层处置", overlay.Findings.Any(f => f.CanRemediate && f.Target == mp4 &&
+            f.ContentPath!.Contains("!/@range-", StringComparison.Ordinal) && f.TargetSha256 is not null));
         using (TemporaryDirectory temporary = new())
             Check("扫描临时副本不使用可执行扩展名", Path.GetExtension(temporary.CreateFilePath("danger.exe")) == ".scan");
 

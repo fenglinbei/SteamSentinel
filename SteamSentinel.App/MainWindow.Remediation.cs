@@ -70,10 +70,13 @@ public partial class MainWindow
             ShowActivity(ActivityPhase.Confirmation);
             RemediationPreviewWindow preview = new(batch) { Owner = this };
             if (preview.ShowDialog() != true) { batch.Notes.Add("用户未确认，没有执行任何批次。"); return; }
+            await BeginPersistentCaseAsync(batch, original);
             _scanCancellation.Dispose(); _scanCancellation = null; CancelScanButton.IsEnabled = false;
             _operationCommitted = true; _reportNeedsRefresh = true;
             ShowActivity(ActivityPhase.Applying, "按关联组依次执行，出现 Windows 授权时请确认，遇到失败或身份变化会暂停后续批次。");
-            await Task.Run(() => RemediationBatchPlanner.ExecuteAsync(batch, p => _remediationClient.ExecuteAsync(p), progress));
+            await Task.Run(() => RemediationBatchPlanner.ExecuteAsync(batch, ExecuteRecordedPlanAsync, progress));
+            await _caseStore.SaveAsync(_persistedCase!);
+            DisplayCaseRecord(_persistedCase!);
             // Legacy exports retain the single-plan fields only for truly single-plan sessions.
             if (batch.Plans.Count == 1) { _casePlan = batch.Plans[0]; _caseResult = batch.Results.FirstOrDefault(); }
             UpdateBatchResults();
@@ -106,6 +109,11 @@ public partial class MainWindow
         }
         finally
         {
+            if (_persistedCase is { } savedCase && savedCase.BatchSession == _caseBatch)
+            {
+                try { await _caseStore.SaveAsync(savedCase); await RefreshCaseRecordsAsync(); }
+                catch (Exception ex) { AppErrorLog.Write("SaveCaseAfterRemediation", ex); FooterText.Text = "病例保存未完成，请导出当前记录：" + ex.Message; }
+            }
             UpdateBatchResults(); _operationCommitted = false;
             _scanCancellation?.Dispose(); _scanCancellation = null; SetBusy(false);
         }

@@ -65,6 +65,33 @@ internal static partial class Program
             TestV0119Copy();
             TestV0119PasswordBoundaries();
             await TestV0119PasswordsAsync(root, rules);
+            await TestScanLimitSettingsAsync(root);
+            TestV020ContainerRanges();
+            await TestV020ArchiveVolumesAsync(root);
+            await TestV020ContainerResourcesAsync(root);
+            await TestV020ContainerExportAsync(root);
+            await TestV020ContainerMergesAsync(root);
+            await TestV020ContainerReviewAsync(root);
+            await TestV020OtherArchivesAsync(root);
+            await TestV020StructuredBudgetAsync(root);
+            TestTrustProxyProxy();
+            TestTrustProxyCertificates();
+            await TestTrustProxyDiagnosticsAsync(root);
+            TestTrustProxyBatch();
+            await TestPhase2MsiAsync(root, rules);
+            TestPhase2Discovery();
+            TestPhase2SourceBounds();
+            TestPhase2RelatedBatch();
+            await TestPhase2PipelineAsync(root);
+            await TestPhase2RelatedSignatureAsync(root);
+            await TestPhase2RelatedPresentationAsync(root);
+            await TestPhase3DependenciesAsync(root);
+            TestPhase3CertificateRepair();
+            TestPhase3CertificateAbi();
+            TestPhase3ProxyRepair();
+            await TestPhase3ConfigurationBrokerAsync();
+            await TestPhase3CasesAsync(root);
+            await TestPhase3CaseExportAsync(root);
             await TestV0117ScannerAsync(root);
             await TestV0117SecurityAsync(root);
             TestV0117ReleaseEngineering();
@@ -705,6 +732,96 @@ internal static partial class Program
     {
         switch (args[0])
         {
+            case "--scan-settings" when args.Length is 2 or 3:
+                await TestScanLimitSettingsAsync(Path.GetFullPath(args[1]), args.Length == 3 ? Path.GetFullPath(args[2]) : null);
+                Console.WriteLine($"SETTINGS_PASS={_passed};FAIL={Failures.Count}");
+                return Failures.Count == 0 ? 0 : 1;
+            case "--v020-signature" when args.Length is 3 or 4:
+                return await RunV020SignatureAsync(args[1], args[2], args.Length == 4 ? Path.GetFullPath(args[3]) : null);
+            case "--v020-worker-boundaries" when args.Length is 3 or 4:
+                return await RunV020WorkerBoundaryAsync(args[1], args[2], args.Length == 4 ? Path.GetFullPath(args[3]) : null);
+            case "--v020-post-legacy" when args.Length == 2:
+                return await RunV020PostLegacyAsync(args[1]);
+            case "--v020-legacy-archives" when args.Length == 2:
+                Directory.CreateDirectory(args[1]);
+                _v020LegacyDiagnostics = true;
+                await TestContentScannerAsync(Path.GetFullPath(args[1]), RuleLoader.LoadEmbedded());
+                await TestV015Async(Path.GetFullPath(args[1]), RuleLoader.LoadEmbedded());
+                await TestV016Async(Path.GetFullPath(args[1]), RuleLoader.LoadEmbedded());
+                await TestV0112Async(Path.GetFullPath(args[1]));
+                Console.WriteLine($"V020_LEGACY_PASS={_passed};FAIL={Failures.Count}");
+                foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
+                return Failures.Count == 0 ? 0 : 1;
+            case "--v020-topology" when args.Length == 3:
+                return await RunV020TopologyAsync(args[1], args[2], false);
+            case "--v020-worker-topology" when args.Length is 3 or 4:
+                return await RunV020TopologyAsync(args[1], args[2], true, args.Length == 4 ? Path.GetFullPath(args[3]) : null);
+            case "--v020-volumes" when args.Length == 2:
+                Directory.CreateDirectory(args[1]);
+                await TestV020ArchiveVolumesAsync(Path.GetFullPath(args[1]));
+                Console.WriteLine($"V020_VOLUME_PASS={_passed};FAIL={Failures.Count}");
+                return Failures.Count == 0 ? 0 : 1;
+            case "--v020-structured" when args.Length == 2:
+                Directory.CreateDirectory(args[1]);
+                await TestV020StructuredBudgetAsync(Path.GetFullPath(args[1]));
+                Console.WriteLine($"V020_STRUCTURED_PASS={_passed};FAIL={Failures.Count}");
+                return Failures.Count == 0 ? 0 : 1;
+            case "--v020-resources" when args.Length == 2:
+                Directory.CreateDirectory(args[1]);
+                await TestV020ContainerResourcesAsync(Path.GetFullPath(args[1]));
+                await TestV020ContainerExportAsync(Path.GetFullPath(args[1]));
+                await TestV020ContainerMergesAsync(Path.GetFullPath(args[1]));
+                await TestV020ContainerReviewAsync(Path.GetFullPath(args[1]));
+                await TestV020OtherArchivesAsync(Path.GetFullPath(args[1]));
+                await TestV020StructuredBudgetAsync(Path.GetFullPath(args[1]));
+                Console.WriteLine($"V020_RESOURCE_PASS={_passed};FAIL={Failures.Count}");
+                return Failures.Count == 0 ? 0 : 1;
+            case "--v020-tests" when args.Length == 2:
+                string v020Root = Path.GetFullPath(args[1]);
+                Directory.CreateDirectory(v020Root);
+                TestV020ContainerRanges();
+                await TestV020ArchiveVolumesAsync(v020Root);
+                await TestV020ContainerResourcesAsync(v020Root);
+                await TestV020ContainerExportAsync(v020Root);
+                await TestV020ContainerMergesAsync(v020Root);
+                await TestV020ContainerReviewAsync(v020Root);
+                await TestV020OtherArchivesAsync(v020Root);
+                await TestV020StructuredBudgetAsync(v020Root);
+                Console.WriteLine($"V020_PASS={_passed};FAIL={Failures.Count}");
+                foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
+                return Failures.Count == 0 ? 0 : 1;
+            case "--phase3-native-smoke" when args.Length == 2:
+                return await RunPhase3NativeSmokeAsync(args[1]);
+            case "--phase3-tests" when args.Length == 2:
+                string phase3Root = Path.GetFullPath(args[1]);
+                Directory.CreateDirectory(phase3Root);
+                await TestPhase3DependenciesAsync(phase3Root);
+                TestPhase3CertificateRepair();
+                TestPhase3CertificateAbi();
+                TestPhase3ProxyRepair();
+                await TestPhase3ConfigurationBrokerAsync();
+                await TestPhase3CasesAsync(phase3Root);
+                await TestPhase3CaseExportAsync(phase3Root);
+                Console.WriteLine($"PHASE3_PASS={_passed};FAIL={Failures.Count}");
+                foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
+                return Failures.Count == 0 ? 0 : 1;
+            case "--phase2-tests" when args.Length == 2:
+                string phase2Root = Path.GetFullPath(args[1]);
+                Directory.CreateDirectory(phase2Root);
+                await TestPhase2MsiAsync(phase2Root, RuleLoader.LoadEmbedded());
+                TestPhase2Discovery();
+                TestPhase2SourceBounds();
+                TestPhase2RelatedBatch();
+                await TestPhase2PipelineAsync(phase2Root);
+                await TestPhase2RelatedSignatureAsync(phase2Root);
+                await TestPhase2RelatedPresentationAsync(phase2Root);
+                Console.WriteLine($"PHASE2_PASS={_passed};FAIL={Failures.Count}");
+                foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
+                return Failures.Count == 0 ? 0 : 1;
+            case "--trust-proxy-native-smoke" when args.Length == 2:
+                return await RunTrustProxyNativeSmokeAsync(args[1]);
+            case "--phase2-native-smoke" when args.Length == 2:
+                return await RunPhase2NativeSmokeAsync(args[1]);
             case "--password-v0119" when args.Length is 2 or 3:
                 return await RunV0119PasswordsAsync(args[1], args.Length == 3 ? args[2] : null);
             case "--smoke-v0117" when args.Length is 2 or 3:

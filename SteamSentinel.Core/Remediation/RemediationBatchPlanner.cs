@@ -120,8 +120,15 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         return session;
     }
 
-    public static ScanOptions? CloneOptions(ScanOptions? options) => options is null ? null :
-        JsonSerializer.Deserialize<ScanOptions>(JsonSerializer.Serialize(options, JsonFile.Options), JsonFile.Options);
+    public static ScanOptions? CloneOptions(ScanOptions? options)
+    {
+        if (options is null) return null;
+        System.Text.Json.Nodes.JsonObject json = JsonSerializer.SerializeToNode(options, JsonFile.Options)!.AsObject();
+        // Recovery content is a one-time explicit export. A repair follow-up never carries
+        // that write authorization into another boot, logon or automatic verification.
+        json[nameof(ScanOptions.RecoveryOutputDirectory)] = null;
+        return json.Deserialize<ScanOptions>(JsonFile.Options);
+    }
 
     private static Finding[] Coalesce(IEnumerable<Finding> input) => input.GroupBy(f =>
         // Archive findings can share the same outer identity while retaining all inner evidence in the original report.

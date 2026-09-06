@@ -87,6 +87,11 @@ public sealed class Finding
     public string? SourceKind { get; set; }
     public bool IsKnownMalware { get; init; }
     public bool CanRemediate { get; init; }
+    public FindingHandlingReason HandlingReason { get; init; }
+    public string? HandlingDetails { get; init; }
+    public List<string> DiagnosticObservationIds { get; init; } = [];
+    public List<string> AssociationObservationIds { get; init; } = [];
+    public RelatedEvidenceTier? AssociationEvidenceTier { get; set; }
     public IReadOnlyList<SuggestedActionKind> SuggestedActions { get; init; } = [];
     public DateTimeOffset DetectedAtUtc { get; init; } = DateTimeOffset.UtcNow;
 }
@@ -126,6 +131,9 @@ public sealed class ScanReport
     public ScanMetrics Metrics { get; init; } = new();
     public ScanOptions? ContentScanSettings { get; set; }
     public WorkerDiagnostics? WorkerDiagnostics { get; set; }
+    public TrustProxyDiagnosticReport? TrustProxyDiagnostics { get; set; }
+    public RelatedComponentDiagnosticReport? RelatedComponentDiagnostics { get; set; }
+    public ContainerScanReport? Containers { get; set; }
 
     [JsonIgnore]
     public FindingSeverity HighestSeverity => Findings.Where(f => f.Category != FindingCategory.Coverage)
@@ -143,6 +151,8 @@ public sealed record ScanRootSummary(string Path, ScanCoverage Coverage, int Kno
 
 public sealed class ScanOptions
 {
+    private int? _maximumArchiveDepth;
+    private long? _maximumEntryBytes, _maximumExpandedBytes;
     public ScanMode Mode { get; init; } = ScanMode.Quick;
     public bool IncludeSystem { get; init; } = true;
     public bool IncludeSteam { get; init; } = true;
@@ -151,14 +161,30 @@ public sealed class ScanOptions
     public bool IncludeDownloadLocations { get; init; }
     public bool IncludeExecutionHistory { get; init; }
     public List<string> RelatedRoots { get; init; } = [];
+    public List<string> RelatedSignaturePaths { get; init; } = [];
+    public long MaximumRelatedSignatureBytes { get; init; }
     public List<string> WorkshopAppIds { get; init; } = [];
     public long MaximumContentBytes { get; init; } = long.MaxValue;
+    public long MaximumQuickFileBytes { get; init; } = 256L * 1024 * 1024;
+    public long MaximumQuickPriorityBytes { get; init; } = 128L * 1024 * 1024;
+    public long MaximumQuickPriorityFileBytes { get; init; } = 8L * 1024 * 1024;
+    public long MaximumStringScanBytes { get; init; } = 32L * 1024 * 1024;
+    public long MaximumAmsiBytes { get; init; } = 32L * 1024 * 1024;
+    public long MaximumWorkerMemoryBytes { get; init; } = 1024L * 1024 * 1024;
+    public int MaximumReportRecords { get; init; } = 20_000;
+    public long MaximumReportTextCharacters { get; init; } = 8 * 1024 * 1024;
+    public int MaximumStructureDurationSeconds { get; init; } = 15;
+    public ContainerRangeLimits? RangeLimits { get; init; }
     public bool InspectArchives { get; init; } = true;
     public bool UseAmsi { get; init; } = true;
     public bool HashEveryFile { get; init; }
-    public int MaximumArchiveDepth { get; init; } = 4;
-    public long MaximumEntryBytes { get; init; } = 256L * 1024 * 1024;
-    public long MaximumExpandedBytes { get; init; } = 2L * 1024 * 1024 * 1024;
+    public int MaximumArchiveDepth { get => _maximumArchiveDepth ?? (Mode == ScanMode.Quick ? 4 : 12); init => _maximumArchiveDepth = value; }
+    public long MaximumEntryBytes { get => _maximumEntryBytes ?? (Mode == ScanMode.Quick ? 256L * 1024 * 1024 : 8L * 1024 * 1024 * 1024); init => _maximumEntryBytes = value; }
+    public long MaximumExpandedBytes { get => _maximumExpandedBytes ?? (Mode == ScanMode.Quick ? 2L * 1024 * 1024 * 1024 : 32L * 1024 * 1024 * 1024); init => _maximumExpandedBytes = value; }
+    public ContainerResourceLimits? ContainerLimits { get; init; }
+    public bool InspectDeepSignatures { get; init; } = true;
+    public List<string> SupplementalVolumeDirectories { get; init; } = [];
+    public string? RecoveryOutputDirectory { get; init; }
     public int MaximumArchiveEntries { get; init; } = 20_000;
     public double MaximumCompressionRatio { get; init; } = 500;
     public int MaximumFiles { get; init; } = 200_000;

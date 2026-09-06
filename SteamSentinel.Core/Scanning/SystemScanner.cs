@@ -50,7 +50,7 @@ public sealed partial class SystemScanner
         ScanServiceRegistry(report);
 
         progress?.Report(new ScanProgress("系统扫描", "安全与网络配置", 0, null, "检查代理、hosts、Defender 和防火墙"));
-        ScanProxy(report);
+        new TrustProxyDiagnosticScanner().Collect(report, progress, cancellationToken);
         ScanHosts(report);
         await ScanSecurityControlsAsync(report, cancellationToken);
     }
@@ -442,35 +442,6 @@ public sealed partial class SystemScanner
         catch
         {
             // Standard users may have restricted service key access.
-        }
-    }
-
-    private static void ScanProxy(ScanReport report)
-    {
-        try
-        {
-            using RegistryKey? key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Internet Settings");
-            int enabled = Convert.ToInt32(key?.GetValue("ProxyEnable") ?? 0);
-            string server = key?.GetValue("ProxyServer")?.ToString() ?? string.Empty;
-            string pac = key?.GetValue("AutoConfigURL")?.ToString() ?? string.Empty;
-            if (enabled == 0 && string.IsNullOrWhiteSpace(pac)) return;
-            report.Findings.Add(new Finding
-            {
-                RuleId = "NETWORK-PROXY-PRESENT",
-                Category = FindingCategory.Network,
-                Severity = FindingSeverity.Information,
-                Score = 5,
-                Title = "检测到用户代理配置",
-                Description = "代理本身不是恶意证据，Clash、调试代理和企业网络都可能合法使用。",
-                Target = enabled != 0 ? server : pac,
-                Evidence = $"ProxyEnable={enabled}; ProxyServer={server}; AutoConfigURL={pac}",
-                CanRemediate = false,
-                SuggestedActions = [SuggestedActionKind.ReviewOnly]
-            });
-        }
-        catch
-        {
-            // Ignore unreadable user proxy settings.
         }
     }
 

@@ -39,6 +39,7 @@ internal static class Program
                 await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Failed, Error = "工作进程没有收到有效启动请求。" });
                 return 2;
             }
+            ContainerRequestValidation.Validate(start.Options, Path.Combine(Environment.CurrentDirectory, "recovery"));
 
             using CancellationTokenSource scanCancellation = new();
             Channel<ArchivePasswordResponse> responses = Channel.CreateBounded<ArchivePasswordResponse>(8);
@@ -107,7 +108,7 @@ internal static class Program
                 lastCoverageOccurrences = coverageOccurrences;
                 lastCheckpoint = Environment.TickCount64;
             }
-            ScanCoordinator coordinator = new();
+            ScanCoordinator coordinator = new(allowRelatedSignatureProbe: true);
             ScanReport report = await coordinator.RunAsync(start.Options, passwordProvider, progress,
                 cancellationToken: scanCancellation.Token, checkpoint: Checkpoint);
             scanCancellation.Token.ThrowIfCancellationRequested();

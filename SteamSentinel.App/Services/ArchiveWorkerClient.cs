@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using SteamSentinel.App.Native;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Scanning;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.App.Services;
@@ -14,12 +15,64 @@ internal sealed class ArchiveWorkerClient
     public ArchiveWorkerClient(string? workerPathOverride = null) =>
         _workerPathOverride = workerPathOverride;
 
+    internal static TimeSpan ScanHardTimeout(ScanOptions options)
+    {
+        if (options.ContainerLimits is { } limits) ContainerResourceBudget.Validate(limits);
+        int seconds = options.ContainerLimits?.MaximumDurationSeconds ?? (options.Mode == ScanMode.Quick ? 300 : 1800);
+        // The scanner owns its cooperative deadline. A separate launcher deadline also bounds
+        // native decoders and signature providers that never return to the scanner's checks.
+        return TimeSpan.FromSeconds(seconds + 5);
+    }
+
+    internal static ScanOptions CopyOptions(ScanOptions o, string? recoveryDirectory = null) => new()
+    {
+        Mode = o.Mode,
+        IncludeSystem = o.IncludeSystem,
+        IncludeSteam = o.IncludeSteam,
+        IncludeWorkshop = o.IncludeWorkshop,
+        IncludeRelatedContent = o.IncludeRelatedContent,
+        IncludeDownloadLocations = o.IncludeDownloadLocations,
+        IncludeExecutionHistory = o.IncludeExecutionHistory,
+        RelatedRoots = [.. o.RelatedRoots],
+        RelatedSignaturePaths = [.. o.RelatedSignaturePaths],
+        MaximumRelatedSignatureBytes = o.MaximumRelatedSignatureBytes,
+        WorkshopAppIds = [.. o.WorkshopAppIds],
+        MaximumContentBytes = o.MaximumContentBytes,
+        MaximumQuickFileBytes = o.MaximumQuickFileBytes,
+        MaximumQuickPriorityBytes = o.MaximumQuickPriorityBytes,
+        MaximumQuickPriorityFileBytes = o.MaximumQuickPriorityFileBytes,
+        MaximumStringScanBytes = o.MaximumStringScanBytes,
+        MaximumAmsiBytes = o.MaximumAmsiBytes,
+        MaximumWorkerMemoryBytes = o.MaximumWorkerMemoryBytes,
+        MaximumReportRecords = o.MaximumReportRecords,
+        MaximumReportTextCharacters = o.MaximumReportTextCharacters,
+        MaximumStructureDurationSeconds = o.MaximumStructureDurationSeconds,
+        RangeLimits = o.RangeLimits,
+        InspectArchives = o.InspectArchives,
+        UseAmsi = o.UseAmsi,
+        HashEveryFile = o.HashEveryFile,
+        MaximumArchiveDepth = o.MaximumArchiveDepth,
+        MaximumEntryBytes = o.MaximumEntryBytes,
+        MaximumExpandedBytes = o.MaximumExpandedBytes,
+        ContainerLimits = o.ContainerLimits,
+        InspectDeepSignatures = o.InspectDeepSignatures,
+        SupplementalVolumeDirectories = [.. o.SupplementalVolumeDirectories],
+        RecoveryOutputDirectory = recoveryDirectory,
+        MaximumArchiveEntries = o.MaximumArchiveEntries,
+        MaximumCompressionRatio = o.MaximumCompressionRatio,
+        MaximumFiles = o.MaximumFiles,
+        CustomRoots = [.. o.CustomRoots],
+        ExcludedRoots = [.. o.ExcludedRoots]
+    };
+
     public async Task<ScanReport> RunAsync(
         ScanOptions options,
         Func<ArchivePasswordRequest, CancellationToken, Task<ArchivePasswordResponse>> passwordCallback,
         IProgress<ScanProgress>? progress,
         CancellationToken cancellationToken)
     {
+        ContainerRequestValidation.Validate(options);
+        _ = ScanHardTimeout(options);
         string workerPath = _workerPathOverride ?? Path.Combine(AppContext.BaseDirectory, "SteamSentinel.ArchiveWorker.exe");
         if (!File.Exists(workerPath)) throw new WorkerFailureException(WorkerStage.Preflight, null, "缺少隔离内容扫描组件。", new FileNotFoundException(null, workerPath));
         string workerAssembly = Path.ChangeExtension(workerPath, ".dll");
@@ -27,17 +80,73 @@ internal sealed class ArchiveWorkerClient
             throw new WorkerFailureException(WorkerStage.Preflight, null, "缺少扫描组件 DLL，不能开始内容检查。", new FileNotFoundException(null, workerAssembly));
         await using WorkerWorkspace workspace = new();
         string workingDirectory = workspace.Path;
+        string? recoveryDirectory = options.RecoveryOutputDirectory is null ? null : Path.Combine(workingDirectory, "recovery");
+        if (recoveryDirectory is not null) Directory.CreateDirectory(recoveryDirectory);
+        ScanOptions workerOptions = CopyOptions(options, recoveryDirectory);
+
+        void PreserveSettings(ScanReport? report)
+        {
+            if (report is not null) report.ContentScanSettings = CopyOptions(options);
+        }
+        void DiscardUndeliveredRecovery(ScanReport? report)
+        {
+            PreserveSettings(report);
+            if (report?.Containers is not { } containers) return;
+            bool staged = containers.Nodes.Any(node => node.RecoveredContentAvailable);
+            containers.RecoveryOutputDirectory = null;
+            foreach (ContainerScanNode node in containers.Nodes)
+            { node.RecoveredContentAvailable = false; node.RecoveredContentName = null; }
+            if (staged && containers.Checks.Count < 512)
+                containers.Checks.Add("暂存恢复内容尚未交付到用户输出目录；本轮已停止，不能将临时文件视为已保存结果。");
+        }
+        ScanReport? producedReport = null;
+        bool recoveryExportStarted = false;
+        void PreserveExportFailure()
+        {
+            if (producedReport is null) return;
+            // The exporter clears undelivered node flags in its finally block. Retain files it
+            // already delivered, including their evidence directory, if a later copy failed.
+            if (!recoveryExportStarted || producedReport.Containers?.RecoveryOutputDirectory is null)
+                DiscardUndeliveredRecovery(producedReport);
+            else
+            {
+                PreserveSettings(producedReport);
+                if (producedReport.Containers.Checks.Count < 512)
+                    producedReport.Containers.Checks.Add("恢复内容交付未全部完成；已交付文件及对应证据保留在显示的输出目录中。");
+            }
+            producedReport.Coverage = ScanCoverage.Partial; producedReport.CompletedAtUtc = null;
+        }
 
         try
         {
-            using JobObject job = new();
+            using JobObject job = new(options.MaximumWorkerMemoryBytes);
             using RestrictedProcess worker = RestrictedProcess.Start(workerPath, workingDirectory, job);
-            return await RunProtocolAsync(worker, options, passwordCallback, progress, cancellationToken).ConfigureAwait(false);
+            ScanReport report = producedReport = await RunProtocolAsync(worker, workerOptions, passwordCallback, progress, cancellationToken).ConfigureAwait(false);
+            PreserveSettings(report);
+            if (recoveryDirectory is not null && options.RecoveryOutputDirectory is { } destination)
+            {
+                if (report.Containers is { } containers) containers.RecoveryOutputDirectory = null;
+                recoveryExportStarted = true;
+                await ContainerRecoveryExporter.CopyAsync(report, recoveryDirectory, destination, cancellationToken).ConfigureAwait(false);
+            }
+            else DiscardUndeliveredRecovery(report);
+            return report;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (WorkerFailureException) { throw; }
+        catch (WorkerCancelledException ex) { DiscardUndeliveredRecovery(ex.PartialReport); throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (producedReport is null) throw;
+            PreserveExportFailure();
+            throw new WorkerCancelledException(producedReport, cancellationToken);
+        }
+        catch (WorkerFailureException ex) { DiscardUndeliveredRecovery(ex.PartialReport); throw; }
         catch (Exception ex)
         {
+            if (producedReport is not null)
+            {
+                PreserveExportFailure();
+                throw new WorkerFailureException(WorkerStage.Scanning, null, "恢复内容交付未完成：" + ex.Message, ex) { PartialReport = producedReport };
+            }
             throw new WorkerFailureException(WorkerStage.RestrictedStart, null, ex.Message, ex);
         }
     }
@@ -45,8 +154,11 @@ internal sealed class ArchiveWorkerClient
     private static async Task<ScanReport> RunProtocolAsync(
         RestrictedProcess worker, ScanOptions options,
         Func<ArchivePasswordRequest, CancellationToken, Task<ArchivePasswordResponse>> passwordCallback,
-        IProgress<ScanProgress>? progress, CancellationToken cancellationToken)
+        IProgress<ScanProgress>? progress, CancellationToken callerCancellationToken)
     {
+        using CancellationTokenSource hardTimeout = new(ScanHardTimeout(options));
+        using CancellationTokenSource operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(callerCancellationToken, hardTimeout.Token);
+        CancellationToken cancellationToken = operationCancellation.Token;
         SemaphoreSlim inputLock = new(1, 1);
         async Task SendAsync(WorkerMessage message, CancellationToken token)
         {
@@ -72,7 +184,7 @@ internal sealed class ArchiveWorkerClient
         Task errorTask = errors.DrainAsync(worker.StandardError, errorCancellation.Token);
         WorkerStage stage = WorkerStage.Handshake;
         BoundedLineReader output = new(worker.StandardOutput);
-        ReportBatchReader batches = new();
+        ReportBatchReader batches = new(options.MaximumReportRecords);
         ScanProgress? lastProgress = null;
         WorkerDiagnostics? diagnostics = null;
         string launcherIntegrity = ProcessIntegrity.GetCurrent().ToString();
@@ -83,6 +195,8 @@ internal sealed class ArchiveWorkerClient
         {
             ScanReport partial = batches.Report ?? new ScanReport { Mode = options.Mode, ContentScanSettings = options };
             partial.Coverage = ScanCoverage.Partial;
+            partial.CompletedAtUtc = null;
+            if (partial.Containers is { } containers) containers.Complete = false;
             if (diagnostics is not null) partial.WorkerDiagnostics = diagnostics with { LauncherIntegrity = launcherIntegrity };
             else if (lastProgress is not null) partial.WorkerDiagnostics = new(lastProgress.Stage, lastProgress.CurrentItem,
                 lastProgress.Message, 0, 0, 0, DateTimeOffset.UtcNow, LauncherIntegrity: launcherIntegrity);
@@ -156,7 +270,7 @@ internal sealed class ArchiveWorkerClient
                             LastPath = lastProgress.CurrentItem,
                             Operation = lastProgress.Message
                         };
-                        ArchivePasswordResponse response = await passwordCallback(message.PasswordRequest, cancellationToken);
+                        ArchivePasswordResponse response = await passwordCallback(message.PasswordRequest, cancellationToken).WaitAsync(cancellationToken);
                         if (!string.Equals(response.RequestId, message.PasswordRequest.RequestId, StringComparison.Ordinal))
                             throw new InvalidDataException("密码响应与当前请求不匹配，已停止内容检查。");
                         _ = ArchivePasswordInput.ValidateAndGetPasswords(response);
@@ -169,11 +283,16 @@ internal sealed class ArchiveWorkerClient
                     case WorkerMessageTypes.Completed:
                         if (message.BatchCount is int expected)
                         {
-                            if (expected != batches.Count || batches.Report is null)
+                            if (expected != batches.Count || batches.Report is null || batches.HasIncompleteTrustProxyDiagnostics || batches.HasIncompleteRelatedComponentDiagnostics || batches.HasIncompleteContainers)
                                 throw new InvalidDataException("扫描结果批次缺失，不能作为完整结果。");
                             report = batches.Report;
                         }
-                        else report = message.Report;
+                        else
+                        {
+                            if (message.Report?.Containers is not null)
+                                throw new InvalidDataException("容器检查结果必须通过有界分片和结束帧传输。");
+                            report = message.Report;
+                        }
                         break;
                     case WorkerMessageTypes.Failed:
                         failure = message.Error ?? "内容扫描工作进程失败。";
@@ -188,6 +307,7 @@ internal sealed class ArchiveWorkerClient
             exitTimeout.CancelAfter(TimeSpan.FromSeconds(5));
             await worker.WaitForExitAsync(exitTimeout.Token);
             await errorTask.WaitAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (report is null || worker.ExitCode != 0)
             {
                 throw new InvalidOperationException(failure ?? "扫描组件没有正常返回完整结果。");
@@ -201,8 +321,15 @@ internal sealed class ArchiveWorkerClient
             });
             return report;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        { throw new WorkerCancelledException(Partial(), cancellationToken); }
+        catch (OperationCanceledException) when (callerCancellationToken.IsCancellationRequested)
+        { throw new WorkerCancelledException(Partial(), callerCancellationToken); }
+        catch (Exception ex) when (hardTimeout.IsCancellationRequested && !callerCancellationToken.IsCancellationRequested)
+        {
+            throw new WorkerFailureException(stage, null,
+                "ScanResourceLimitException: 内容检查达到本轮时间上限及结束宽限，已停止受限组件；此前交回的结果已保留，剩余内容尚未完成。",
+                new TimeoutException("受限内容扫描超过整轮硬超时。", ex))
+            { PartialReport = Partial() };
+        }
         catch (Exception ex)
         {
             int? exitCode = null;

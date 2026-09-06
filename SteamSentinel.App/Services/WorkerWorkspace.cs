@@ -6,6 +6,7 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
 {
     private const string Marker = ".steamsentinel-session";
     private readonly FileStream _lease;
+    private readonly string _root;
     internal string Path { get; }
 
     internal WorkerWorkspace()
@@ -13,9 +14,13 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
         string root = System.IO.Path.GetFullPath(AppPaths.WorkerTemporaryRoot);
         if (Validation.ContainsReparsePoint(root)) throw new IOException("扫描临时根目录包含重解析点。");
         Directory.CreateDirectory(root);
+        root = _root = OwnedDirectoryPhysicalPath.ResolveForCreation(root);
         CleanStaleSessions(root);
-        Path = System.IO.Path.Combine(root, Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path);
+        string candidate = System.IO.Path.Combine(root, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(candidate);
+        Path = OwnedDirectoryPhysicalPath.ResolveExisting(candidate);
+        if (!string.Equals(System.IO.Path.GetDirectoryName(Path), root, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("工作进程会话不在自有物理根目录内。");
         _lease = new FileStream(System.IO.Path.Combine(Path, Marker), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
         _lease.Write("SteamSentinel session v1"u8);
         _lease.Flush(true);
@@ -24,7 +29,7 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
     public void Dispose()
     {
         _lease.Dispose();
-        TryClean(Path);
+        TryClean(Path, _root);
     }
 
     public async ValueTask DisposeAsync()
@@ -32,7 +37,7 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
         await _lease.DisposeAsync().ConfigureAwait(false);
         for (int attempt = 0; attempt < 5; attempt++)
         {
-            if (TryClean(Path, logFailure: attempt == 4)) return;
+            if (TryClean(Path, _root, logFailure: attempt == 4)) return;
             // Windows may signal process exit just before releasing its current-directory handle.
             await Task.Delay(50 * (attempt + 1)).ConfigureAwait(false);
         }
@@ -55,16 +60,16 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
                     lease.ReadExactly(data);
                     if (!data.AsSpan().SequenceEqual("SteamSentinel session v1"u8)) continue;
                 }
-                TryClean(path);
+                TryClean(path, root);
             }
             catch (IOException) { /* Active run or concurrent cleanup: keep it. */ }
             catch (UnauthorizedAccessException) { /* Unknown ownership: keep it. */ }
         }
     }
 
-    private static bool TryClean(string path, bool logFailure = true)
+    private static bool TryClean(string path, string ownedRoot, bool logFailure = true)
     {
-        string root = System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(AppPaths.WorkerTemporaryRoot));
+        string root = System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(ownedRoot));
         string full = System.IO.Path.GetFullPath(path);
         if (!string.Equals(System.IO.Path.GetDirectoryName(full), root, StringComparison.OrdinalIgnoreCase) ||
             !Guid.TryParseExact(System.IO.Path.GetFileName(full), "N", out _)) return false;

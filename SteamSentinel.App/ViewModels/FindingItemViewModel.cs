@@ -26,16 +26,20 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
-    public bool CanSelect => Finding.CanRemediate && !(Finding.ContentPath?.Contains("!/") == true &&
-        string.IsNullOrWhiteSpace(Finding.TargetSha256));
+    public FindingHandlingInfo Handling => FindingHandlingPresentation.Get(Finding);
+    public bool CanSelect => Handling.CanSelect;
+    public string HandlingLabel => Handling.Label;
+    public string HandlingReason => Handling.Reason;
+    public string HandlingNextStep => Handling.NextStep;
+    public string HandlingDetails => Handling.Label + "：" + Handling.Reason + "\n" + Handling.NextStep;
+    public bool IsTrustProxyFinding => FindingHandlingPresentation.IsTrustProxyFinding(Finding);
     public string Severity => ReportExporter.SeverityLabel(Finding.Severity);
     public string Category => ReportExporter.CategoryLabel(Finding.Category);
     public int Score => Finding.Score;
     public string Title => Finding.Title;
     public string Target => Finding.Target;
     public string Evidence => Finding.Evidence;
-    public string Description => Finding.Description + (Finding.CanRemediate && !CanSelect
-        ? " 外层文件尚未完成哈希读取，暂不能隔离，请先对外层文件使用完整内容扫描。" : "");
+    public string Description => Finding.Description;
     public string Sha256 => Finding.Sha256 ?? string.Empty;
     public string WorkshopId => Finding.AppId is { Length: > 0 } ? $"{Finding.AppId} / {Finding.WorkshopId ?? "—"}" : Finding.WorkshopId ?? string.Empty;
 

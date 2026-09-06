@@ -24,6 +24,7 @@ public static class ReportExporter
         text.AppendLine($"- 最高严重度：**{SeverityLabel(report.HighestSeverity)}**");
         text.AppendLine($"- 执行状态：{report.ExecutionStatus}");
         text.AppendLine($"- 风险或提示数量：{report.RiskFindingCount}，不包含检查范围说明");
+        text.AppendLine("- 处理资格：" + FindingHandlingPresentation.Count(report.Findings).Summary);
         foreach (string scope in report.ScopeNotes) text.AppendLine("- 检查范围：" + Escape(scope));
         text.AppendLine();
         text.AppendLine("> “未发现已知威胁”不等同于对未知漏洞或未解密内容的绝对安全保证。");
@@ -45,8 +46,21 @@ public static class ReportExporter
             string hashBudget = settings.MaximumContentBytes == long.MaxValue ? "不设整轮哈希字节上限" :
                 $"{settings.MaximumContentBytes / 1024 / 1024:N0} MiB（{settings.MaximumContentBytes:N0} 字节）";
             text.AppendLine($"- 累计哈希预算：{hashBudget}" +
-                (settings.Mode == ScanMode.Quick ? "，另为不超过 8 MiB 的小型启动文件保留最多 128 MiB" : "") +
+                (settings.Mode == ScanMode.Quick ? $"，另为不超过 {settings.MaximumQuickPriorityFileBytes / 1048576m:0.########} MiB 的启动文件保留最多 {settings.MaximumQuickPriorityBytes / 1048576m:0.########} MiB" : "") +
                 $"，单条解压上限：{settings.MaximumEntryBytes / 1024 / 1024:N0} MiB，嵌套深度：{settings.MaximumArchiveDepth}");
+            var configured = System.Text.Json.JsonSerializer.SerializeToNode(settings)!;
+            text.AppendLine();
+            text.AppendLine("### 本轮扫描预算");
+            text.AppendLine();
+            foreach (ScanLimitDefinition field in ScanLimitSettings.Fields)
+            {
+                string[] parts = field.Key.Split('.');
+                var value = parts.Length == 1 ? configured[parts[0]] : configured[parts[0]]?[parts[1]];
+                if (value is null) continue;
+                decimal number = value.GetValue<decimal>();
+                string display = field.Key == "MaximumContentBytes" && number == long.MaxValue ? "不设该项总量限制" : $"{number / field.Scale:0.########} {field.Unit}";
+                text.AppendLine($"- {field.Label}：{display}");
+            }
         }
         if (report.WorkerDiagnostics is WorkerDiagnostics diagnostic)
         {
@@ -94,6 +108,39 @@ public static class ReportExporter
             text.AppendLine();
         }
 
+        if (report.TrustProxyDiagnostics is { } trustProxy)
+        {
+            text.AppendLine("## 证书与代理只读诊断");
+            text.AppendLine();
+            text.AppendLine("以下是本次采集的配置与公开证书，完整来源 ID、关系和公开 DER 保存在 JSON 报告中。");
+            text.AppendLine();
+            text.AppendLine("```text");
+            text.AppendLine(TrustProxyReportPresentation.Describe(trustProxy).Replace("```", "｀｀｀", StringComparison.Ordinal));
+            text.AppendLine("```");
+            text.AppendLine();
+        }
+        if (report.RelatedComponentDiagnostics is { } relatedComponents)
+        {
+            text.AppendLine("## 组件关联只读诊断");
+            text.AppendLine();
+            text.AppendLine("来源、宿主、候选组件和补查轮次单独记录；关联关系不证明写入行为，也不增加自动处理资格。完整观察 ID 与各轮状态见 JSON 报告。");
+            text.AppendLine();
+            text.AppendLine("```text");
+            text.AppendLine(RelatedComponentReportPresentation.Describe(relatedComponents).Replace("```", "｀｀｀", StringComparison.Ordinal));
+            text.AppendLine("```");
+            text.AppendLine();
+        }
+        if (report.Containers is { } containers)
+        {
+            text.AppendLine("## 容器递归、完整性与检查预算");
+            text.AppendLine();
+            text.AppendLine("以下仅保存容器元数据、原始外层/分卷身份、阶段链和本轮资源计量；不打包样本、解密内容或密码。");
+            text.AppendLine();
+            text.AppendLine("```text");
+            text.AppendLine(ContainerReportPresentation.Describe(containers).Replace("```", "｀｀｀", StringComparison.Ordinal));
+            text.AppendLine("```");
+            text.AppendLine();
+        }
         text.AppendLine("## 发现");
         text.AppendLine();
         text.AppendLine("| 严重度 | 规则 ID | 分类 | 分数 | 标题 | SHA-256 | 目标 |");
@@ -119,7 +166,18 @@ public static class ReportExporter
             text.AppendLine($"- 命中内容位置：`{Escape(finding.ContentPath ?? finding.Target)}`");
             text.AppendLine($"- 隔离目标 SHA-256：`{Escape(finding.TargetSha256 ?? "未计算/不适用")}`");
             text.AppendLine($"- 证据：{Escape(finding.Evidence)}");
-            text.AppendLine($"- 处置资格：{(finding.CanRemediate ? "可选中处置，仍需确认预览" : "仅复核")}");
+            text.AppendLine($"- 处置资格：{(FindingHandlingPresentation.Get(finding).CanSelect ? "可选中处置，仍需确认预览" : "仅复核")}");
+            FindingHandlingInfo handling = FindingHandlingPresentation.Get(finding);
+            text.AppendLine("- 处理状态：" + handling.Label + "；" + Escape(handling.Reason));
+            text.AppendLine("- 下一步：" + Escape(handling.NextStep));
+            if (!handling.CanSelect) text.AppendLine("- 执行说明：本扫描记录未执行该项修改；此状态不表示曾尝试处理并失败。");
+            if (finding.DiagnosticObservationIds.Count > 0) text.AppendLine("- 诊断观察 ID：" + Escape(string.Join(", ", finding.DiagnosticObservationIds)));
+            if (RelatedComponentReportPresentation.IsRelatedFinding(finding))
+            {
+                text.AppendLine("- 组件关联证据层级：" + RelatedComponentReportPresentation.EvidenceTierLabel(finding.AssociationEvidenceTier) + "，不代表动作授权。");
+                text.AppendLine("- 组件关联观察 ID：" + Escape(string.Join(", ", finding.AssociationObservationIds.Take(16))) +
+                    (finding.AssociationObservationIds.Count > 16 ? "；其余观察 ID 见完整 JSON。" : "；原因见组件关联只读诊断。"));
+            }
             text.AppendLine();
         }
 
@@ -166,6 +224,8 @@ public static class ReportExporter
         RemediationActionType.DisableService => "禁用关联服务",
         RemediationActionType.RemoveRelatedDefenderExclusion => "移除关联安全排除项",
         RemediationActionType.DisableRelatedFirewallRule => "禁用关联放行规则",
+        RemediationActionType.RemoveBoundCertificate => "移除已核验的精确信任证书",
+        RemediationActionType.RestoreBoundProxyConfiguration => "恢复已核验的精确代理配置",
         RemediationActionType.RemoveRegistryValue => "删除启动项",
         RemediationActionType.RemoveScheduledTask => "删除计划任务",
         RemediationActionType.RemoveDefenderExclusion => "移除 Defender 排除项",

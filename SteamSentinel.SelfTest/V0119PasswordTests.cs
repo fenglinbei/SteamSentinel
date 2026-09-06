@@ -143,6 +143,8 @@ internal static partial class Program
             V0119PasswordProvider provider = new((r, _) => Candidates(r, [wrong, wrong, alpha]));
             V0119PasswordProgress progress = new();
             ScanReport report = await Scan([archive], provider, entries: 1, progress: progress);
+            await JsonFile.WriteAtomicAsync(Path.Combine(directory, "format-" + format + "-scan.json"), report,
+                options: SteamSentinel.Core.Reporting.ReportPrivacy.ExportOptions);
             Check($"0.1.19 {format}多候选错误后正确且不重复询问", report.Coverage == ScanCoverage.Complete && provider.Requests.Count == 1 && PayloadCount(report) == 1);
             Check($"0.1.19 {format}固定候选顺序去重且失败不污染逻辑预算", progress.DirectoryAttempts == 3 &&
                 report.Metrics.ArchiveEntriesVisited == 1 && report.Metrics.ArchiveBytesExpanded == new FileInfo(payload).Length &&
@@ -157,13 +159,12 @@ internal static partial class Program
             input.CopyTo(output);
         });
         static object ArchiveBudgetFor(ContentScanner scanner) => typeof(ContentScanner)
-            .GetField("_archiveBudget", instanceFields)!.GetValue(scanner)!;
-        static long PasswordAttempts(object budget) => budget.GetType().GetProperty("PasswordDecodeAttempts", instanceFields) is { } property
-            ? (long)property.GetValue(budget)! : (long)budget.GetType().GetField("PasswordDecodeAttempts", instanceFields)!.GetValue(budget)!;
+            .GetField("_containerBudget", instanceFields)!.GetValue(scanner)!;
+        static long PasswordAttempts(object budget) => ((ContainerResourceBudget)budget).Snapshot().PasswordAttempts;
         static void SetPasswordAttempts(object budget, long value)
         {
-            if (budget.GetType().GetProperty("PasswordDecodeAttempts", instanceFields) is { } property) property.SetValue(budget, value);
-            else budget.GetType().GetField("PasswordDecodeAttempts", instanceFields)!.SetValue(budget, value);
+            while (((ContainerResourceBudget)budget).Snapshot().PasswordAttempts < value)
+                ((ContainerResourceBudget)budget).ChargePasswordAttempt();
         }
         foreach (string format in new[] { "7z", "rar" })
         {

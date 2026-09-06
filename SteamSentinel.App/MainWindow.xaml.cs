@@ -32,12 +32,17 @@ public partial class MainWindow : Window
     private ScanReport? _caseFollowUp;
     private bool _reportNeedsRefresh;
     private bool _busy;
+    private ScanLimitSettings _scanLimits = new();
+    private string? _scanSettingsLoadError;
     private bool _recoveryRequired;
     private Guid? _lastFullSystemAndContentScanId;
 
     public MainWindow()
     {
         InitializeComponent();
+        try { _scanLimits = ScanSettingsStore.Load(ScanSettingsStore.DefaultPath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        { _scanSettingsLoadError = ex.Message; ScanSettingsButton.Content = "扫描限制设置（读取失败）"; }
         Width = Math.Min(Width, SystemParameters.WorkArea.Width);
         Height = Math.Min(Height, SystemParameters.WorkArea.Height);
         MinWidth = Math.Min(MinWidth, SystemParameters.WorkArea.Width);
@@ -75,6 +80,8 @@ public partial class MainWindow : Window
                     ? "这是新的管理员窗口，请重新扫描，再核对目标并处置。若使用了另一账户，请确认扫描范围包含原用户的 Steam 与工坊目录。"
                     : "新窗口未取得管理员权限，请重新授权，扫描与报告导出仍可使用。";
             await RefreshQuarantineItemsAsync();
+            try { await RefreshCaseRecordsAsync(restorePending: true); }
+            catch (Exception ex) { _caseRecoveryUnavailable = true; CaseDetailsText.Text = "病例执行记录读取未完成：" + ex.Message; }
         }
         catch (Exception ex)
         {
@@ -83,6 +90,18 @@ public partial class MainWindow : Window
             FooterText.Text = ex.Message;
         }
         finally { SetBusy(false); }
+    }
+
+    private void ScanSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        ScanLimitsDialog dialog = new(_scanLimits, _scanSettingsLoadError) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            _scanLimits = dialog.Settings; _scanSettingsLoadError = null;
+            ScanSettingsButton.Content = "扫描限制设置";
+            FooterText.Text = "扫描限制已保存，下次扫描和补查使用当前模式设置。";
+        }
     }
 
     private async void QuickScan_Click(object sender, RoutedEventArgs e) =>
@@ -123,13 +142,15 @@ public partial class MainWindow : Window
     private void ResultTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!ReferenceEquals(e.Source, ResultTabs) || DetailDescriptionText is null) return;
-        FindingDetailCard.Visibility = ResultTabs.SelectedIndex == 2 ? Visibility.Collapsed : Visibility.Visible;
+        FindingDetailCard.Visibility = ResultTabs.SelectedIndex is 2 or 3 or 4 or 5 or 6 ? Visibility.Collapsed : Visibility.Visible;
+        SelectionActionsBar.Visibility = ResultTabs.SelectedIndex is 5 or 6 ? Visibility.Collapsed : Visibility.Visible;
         if (ResultTabs.SelectedIndex == 0) FindingsGrid_SelectionChanged(FindingsGrid, e);
         else if (ResultTabs.SelectedIndex == 1)
         {
             if (CoverageGrid.SelectedIndex < 0 && CoverageGrid.Items.Count > 0) CoverageGrid.SelectedIndex = 0;
             CoverageGrid_SelectionChanged(CoverageGrid, e);
         }
+        UpdateFindingActions();
     }
 
     internal static List<string> CoverageTargets(CoverageGroup group) => group.Entries.Select(i => i.Target)
@@ -183,7 +204,9 @@ public partial class MainWindow : Window
             "ARCHIVE-PASSWORD-FAILED" or "ARCHIVE-ENCRYPTED-NOT-SCANNED" or "ARCHIVE-ENCRYPTED-DEFERRED")
         .Select(f => f.Target).Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-    private async Task StartScanAsync(ScanMode mode, List<string> customRoots, bool reviewRelated = false)
+    private async Task StartScanAsync(ScanMode mode, List<string> customRoots, bool reviewRelated = false,
+        ScanOptions? suppliedContentOptions = null,
+        Func<ScanOptions, IProgress<ScanProgress>, CancellationToken, Task<ScanReport>>? contentRunner = null)
     {
         if (_busy) return;
         SetBusy(true);
@@ -195,6 +218,11 @@ public partial class MainWindow : Window
         CoverSelectedButton.IsEnabled = false;
         ResultTabs.SelectedIndex = 0;
         _lastReport = null;
+        _trustProxyBaseReport = null;
+        _trustProxyMergedReport = null;
+        DisplayTrustProxyDiagnostics(null);
+        DisplayRelatedComponentDiagnostics(null);
+        DisplayContainers(null);
         _lastFullSystemAndContentScanId = null;
         _reportNeedsRefresh = false;
         HeaderStatusText.Text = "正在扫描";
@@ -205,6 +233,7 @@ public partial class MainWindow : Window
             _ => "正在检查所选文件或目录"
         };
         FindingCountText.Text = "0 项风险或提示";
+        FindingHandlingSummaryText.Text = "扫描中，处理资格尚待核验";
         ScanProgressBar.IsIndeterminate = true;
         ScanProgressBar.Value = 0;
         _scanCancellation = new CancellationTokenSource();
@@ -231,7 +260,7 @@ public partial class MainWindow : Window
                     ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot, AppPaths.WorkerTemporaryRoot]
                 };
                 systemReport = await Task.Run(
-                    () => _coordinator.RunAsync(systemOptions, null, progress, token), token);
+                    () => _coordinator.RunAsync(systemOptions, null, progress, token, checkpoint: state => systemReport = state), token);
                 if (systemReport.Findings.Any(f => f.IsKnownMalware && f.Category == FindingCategory.Process && f.CanRemediate) &&
                     MessageBox.Show(this, "已发现运行中的威胁关联，后续内容扫描可能较久。是否先查看结果并处置？选择“是”会暂停后续检查，不会自动停止进程。",
                         "发现活动威胁", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.Yes) == MessageBoxResult.Yes)
@@ -242,7 +271,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            ScanOptions contentOptions = new()
+            ScanOptions contentOptions = suppliedContentOptions ?? new()
             {
                 Mode = mode,
                 IncludeSystem = false,
@@ -254,16 +283,38 @@ public partial class MainWindow : Window
                 RelatedRoots = mode != ScanMode.Custom ? systemReport?.CandidateRoots ?? [] : [],
                 InspectArchives = ArchiveCheckBox.IsChecked == true,
                 UseAmsi = AmsiCheckBox.IsChecked == true,
+                InspectDeepSignatures = DeepSignatureCheckBox.IsChecked == true,
                 HashEveryFile = mode != ScanMode.Quick,
                 MaximumContentBytes = mode == ScanMode.Quick ? 1024L * 1024 * 1024 : long.MaxValue,
                 CustomRoots = customRoots,
                 ExcludedRoots = [AppPaths.MachineStateRoot, AppPaths.TemporaryRoot, AppPaths.WorkerTemporaryRoot, AppContext.BaseDirectory]
             };
 
+            contentOptions = _scanLimits.Apply(contentOptions);
             contentAttempted = true;
-            ScanReport contentReport = await _workerClient.RunAsync(
-                contentOptions, RequestPasswordAsync, progress, token);
+            contentRunner ??= (settings, reporter, cancellation) => _workerClient.RunAsync(settings, RequestPasswordAsync, reporter, cancellation);
+            ScanReport contentReport = await contentRunner(contentOptions, progress, token);
             _lastReport = systemReport is null ? contentReport : ScanReportMerger.Merge(systemReport, contentReport);
+            if (_lastReport.RelatedComponentDiagnostics is not null)
+            {
+                using DispatcherProgress<ScanProgress> relatedProgress = CreateUiProgress(p =>
+                {
+                    ProgressStageText.Text = p.Stage;
+                    ProgressItemText.Text = p.CurrentItem;
+                    ActivityDetailText.Text = p.Message;
+                });
+                _lastReport = await Task.Run(() => new RelatedComponentPipeline(_coordinator.Rules).CompleteAsync(_lastReport,
+                    contentOptions, async (options, workerProgress, workerToken) =>
+                    {
+                        try { return await _workerClient.RunAsync(options, RequestPasswordAsync, workerProgress, workerToken); }
+                        catch (Exception ex) when (ex is not OutOfMemoryException)
+                        {
+                            return ScanFailureReports.PreserveSystemResults(null, ScanMode.Custom, options.CustomRoots,
+                            _coordinator.Rules.Version, ex, workerToken.IsCancellationRequested);
+                        }
+                    }, relatedProgress, token));
+                token.ThrowIfCancellationRequested();
+            }
             if (mode != ScanMode.Custom)
                 await ScanFailureReports.CollectSupplementAsync(_lastReport,
                     () => Task.Run(() => ProtectionConfiguration.CollectAsync(SteamLocator.Discover(), _lastReport, token), token));
@@ -278,18 +329,15 @@ public partial class MainWindow : Window
         catch (OperationCanceledException ex)
         {
             if (contentAttempted) PreserveScanFailure(_lastReport ?? systemReport, mode, customRoots, ex, cancelled: true);
+            else PreserveSystemStageFailure(systemReport, mode, ex, cancelled: true);
             HeaderStatusText.Text = "扫描已取消";
-            HeaderDetailText.Text = systemReport is null ? "内容检查未完成" : "已保留系统检查结果，内容检查未完成";
+            HeaderDetailText.Text = contentAttempted ? "已保留可用结果，内容检查未完成" : "已保留已读取的系统与诊断记录，系统检查未完成，内容检查尚未开始";
             FooterText.Text = "扫描已取消，加密包密码不会保留，当前结果不能作为完整复扫。";
         }
         catch (Exception ex)
         {
             if (contentAttempted) PreserveScanFailure(_lastReport ?? systemReport, mode, customRoots, ex, cancelled: false);
-            else
-            {
-                HeaderStatusText.Text = "扫描失败";
-                HeaderDetailText.Text = ex.Message;
-            }
+            else PreserveSystemStageFailure(systemReport, mode, ex, cancelled: false);
             AppErrorLog.Write("Scan", ex);
             if (!_closeWhenIdle) MessageBox.Show(this, ex.Message, "SteamSentinel 扫描失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -352,6 +400,10 @@ public partial class MainWindow : Window
         Findings.Clear();
         foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage)) Findings.Add(new FindingItemViewModel(finding));
         FindingCountText.Text = $"{Findings.Count:N0} 项风险或提示";
+        FindingHandlingSummaryText.Text = FindingHandlingPresentation.Count(report.Findings).Summary;
+        DisplayTrustProxyDiagnostics(report.TrustProxyDiagnostics);
+        DisplayRelatedComponentDiagnostics(report.RelatedComponentDiagnostics);
+        DisplayContainers(report.Containers);
         IReadOnlyList<CoverageGroup> groups = CoveragePresentation.Groups(report);
         CoverageGrid.ItemsSource = groups;
         CoverageTab.Header = groups.Count > 0 ? $"未检查内容（{groups.Count} 类）" :
@@ -362,7 +414,7 @@ public partial class MainWindow : Window
                 ? "本次所选范围内未报告跳过或未完成的检查，仍不代表电脑绝对安全。"
                 : "本次未完成全部检查，暂无可归类的原因。请查看扫描状态或导出报告。";
         ExportButton.IsEnabled = true;
-        RemediateButton.IsEnabled = !_busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && !_reportNeedsRefresh && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
+        UpdateRemediationEligibility();
         if (Findings.Count > 0) FindingsGrid.SelectedIndex = 0;
     }
 
@@ -370,6 +422,7 @@ public partial class MainWindow : Window
     {
         bool confirmed = report.Findings.Any(finding => finding.IsKnownMalware);
         bool suspicious = report.Findings.Any(finding => finding.Category != FindingCategory.Coverage && finding.Severity >= FindingSeverity.Medium);
+        FindingHandlingCounts handling = FindingHandlingPresentation.Count(report.Findings);
         if (confirmed)
         {
             bool hostEvidence = report.Findings.Any(f => f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam && f.Severity >= FindingSeverity.High);
@@ -386,6 +439,22 @@ public partial class MainWindow : Window
             HeaderStatusText.Text = "本次未执行检查，无法判断风险";
             HeaderDetailText.Text = "没有可用的检查结论，请核对扫描范围与跳过原因后重新扫描。";
         }
+        else if (handling.AttentionCount > 0)
+        {
+            HeaderStatusText.Text = $"有 {handling.AttentionCount} 项尚未处理";
+            HeaderDetailText.Text = $"待确认 {handling.NeedsReview} 项，暂不支持 {handling.Unsupported} 项，条件未满足 {handling.Blocked} 项；请查看处理状态与原因";
+        }
+        else if (handling.Actionable > 0)
+        {
+            HeaderStatusText.Text = "发现可处理项，请先核对方案";
+            HeaderDetailText.Text = $"有 {handling.Actionable} 项可选择处理，尚未执行处置";
+        }
+        else if (report.TrustProxyDiagnostics is { } diagnostic && (diagnostic.CompletedAtUtc is null ||
+            !diagnostic.Checks.Any(check => check.Required) || IncompleteDiagnosticChecks(diagnostic) > 0))
+        {
+            HeaderStatusText.Text = "代理与证书检查未完成";
+            HeaderDetailText.Text = "部分本地配置未能读取，请查看“代理与证书”中的采集状态；未读取不表示未发现。";
+        }
         else if (report.Coverage == ScanCoverage.Complete)
         {
             HeaderStatusText.Text = "本次检查已完成，未发现需处理的风险";
@@ -399,7 +468,7 @@ public partial class MainWindow : Window
                 : "仍有未检查内容，请查看“未检查内容”中的原因，并按提示补查或调整检查选项。";
         }
 
-        if (confirmed || suspicious)
+        if (confirmed || suspicious || report.Coverage != ScanCoverage.Skipped && (handling.AttentionCount > 0 || handling.Actionable > 0))
             HeaderDetailText.Text += report.Coverage == ScanCoverage.Complete
                 ? "。结论仅适用于本次所选范围。" : "；仍有未检查内容，请查看“未检查内容”并按提示补查。";
         string scanName = report.Mode == ScanMode.Quick ? "快速扫描" : "本次扫描";
@@ -415,19 +484,19 @@ public partial class MainWindow : Window
     private void FindingsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         FindingItemViewModel? item = FindingsGrid.SelectedItem as FindingItemViewModel;
-        DetailDescriptionText.Text = item is null ? string.Empty : item.Title + "\n" + item.Description;
-        if (item is not null && !item.CanSelect)
-            DetailDescriptionText.Text += "\n此项目前仅作提示，尚无足够依据执行处置。可点击“进一步检查”核对实际文件，若仍无法判断，请导出记录。";
+        DetailDescriptionText.Text = item is null ? string.Empty : item.Title + "\n" + item.Description + "\n" + item.HandlingDetails +
+            (RelatedComponentReportPresentation.IsRelatedFinding(item.Finding)
+                ? "\n" + RelatedComponentReportPresentation.DescribeFinding(item.Finding, _lastReport?.RelatedComponentDiagnostics) : string.Empty);
         DetailEvidenceText.Text = item?.Evidence ?? string.Empty;
         DetailHashText.Text = item is null ? string.Empty : $"命中内容：{item.Sha256}\n隔离目标：{item.Finding.TargetSha256 ?? "不适用"}\n内容位置：{item.Finding.ContentPath ?? item.Target}";
         DetailWorkshopText.Text = item?.WorkshopId ?? string.Empty;
-        ReviewFindingButton.IsEnabled = !_busy && item is not null;
-        OccupancyButton.IsEnabled = !_busy && item is not null;
+        UpdateFindingActions();
     }
 
     private async void Occupancy_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy || FindingsGrid.SelectedItem is not FindingItemViewModel item) return;
+        if (_busy || FindingsGrid.SelectedItem is not FindingItemViewModel item || item.IsTrustProxyFinding ||
+            RelatedComponentReportPresentation.IsRelatedFinding(item.Finding)) return;
         SetBusy(true);
         ShowActivity(ActivityPhase.Inspecting, "只读查询文件占用，单个位置最多等待 15 秒，不会关闭进程或句柄。");
         try
@@ -457,12 +526,19 @@ public partial class MainWindow : Window
     private async void ReviewFinding_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || FindingsGrid.SelectedItem is not FindingItemViewModel item) return;
+        if (item.IsTrustProxyFinding)
+        {
+            await RunTrustProxyDiagnosticsAsync();
+            return;
+        }
+        if (RelatedComponentReportPresentation.IsRelatedFinding(item.Finding) && GetRelatedFindingReviewTargets(item.Finding).Count == 0) return;
         List<string> targets;
         SetBusy(true);
         ShowActivity(ActivityPhase.Inspecting);
         try
         {
-            targets = (await Task.Run(() => new RelatedArtifactScanner(_coordinator.Rules).GetCandidatePathsAsync(item.Finding)))
+            targets = RelatedComponentReportPresentation.IsRelatedFinding(item.Finding) ? GetRelatedFindingReviewTargets(item.Finding)
+                : (await Task.Run(() => new RelatedArtifactScanner(_coordinator.Rules).GetCandidatePathsAsync(item.Finding)))
                 .Concat(FindingReviewTargets.Get(item.Finding).Where(Directory.Exists))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
@@ -505,7 +581,8 @@ public partial class MainWindow : Window
             string extension = Path.GetExtension(dialog.FileName);
             if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
                 await Task.Run(() => CaseBundleExporter.ExportAsync(dialog.FileName, _caseScan ?? _lastReport, _casePlan, _caseResult, _caseFollowUp,
-                    batches: _caseBatch, contentFollowUp: _caseContentFollowUp));
+                    batches: _caseBatch, contentFollowUp: _caseContentFollowUp, latestDiagnostics: _lastReport.TrustProxyDiagnostics,
+                    latestRelatedDiagnostics: _lastReport.RelatedComponentDiagnostics, persistedCase: _persistedCase));
             else if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
                 await Task.Run(() => ReportExporter.ExportJsonAsync(_lastReport, dialog.FileName));
             else await Task.Run(() => ReportExporter.ExportMarkdownAsync(_lastReport, dialog.FileName));
@@ -644,7 +721,18 @@ public partial class MainWindow : Window
                     }
                 }
             };
-            RemediationRunResult result = await Task.Run(() => _remediationClient.ExecuteAsync(plan));
+            RemediationCaseRecord incidentCase = new()
+            {
+                UserSid = plan.RequestedBySid,
+                Plans = [plan],
+                RequireContentFollowUp = false,
+                RequireRelatedFollowUp = false,
+                Notes = ["本记录仅保存隔离事件生命周期操作的执行状态；不重放回滚/删除，也不用于跨会话清除结论。"]
+            };
+            await _caseStore.SaveAsync(incidentCase);
+            RemediationRunResult result = await Task.Run(() => ExecuteRecordedPlanAsync(plan, incidentCase));
+            DisplayCaseRecord(incidentCase);
+            await RefreshCaseRecordsAsync();
             HideActivity();
             MessageBox.Show(this,
                 string.Join(Environment.NewLine,
@@ -673,6 +761,7 @@ public partial class MainWindow : Window
         if (busy && !wasBusy) ShowActivity(ActivityPhase.Working);
         if (!busy) HideActivity();
         QuickScanButton.IsEnabled = !busy;
+        ScanSettingsButton.IsEnabled = !busy;
         WorkshopScopeComboBox.IsEnabled = !busy;
         DownloadLocationsCheckBox.IsEnabled = !busy;
         ExecutionHistoryCheckBox.IsEnabled = !busy;
@@ -682,15 +771,21 @@ public partial class MainWindow : Window
         ArchiveCheckBox.IsEnabled = !busy;
         DomainBlockCheckBox.IsEnabled = !busy;
         AmsiCheckBox.IsEnabled = !busy;
+        DeepSignatureCheckBox.IsEnabled = !busy;
         CoverSelectedButton.IsEnabled = !busy && CoverageGrid.SelectedItem is CoverageGroup { CanFullScan: true } group && CoverageTargets(group).Count > 0;
         RetryPasswordsButton.IsEnabled = !busy && _lastReport is not null && GetPasswordRetryTargets(_lastReport).Count > 0;
         CancelScanButton.IsEnabled = busy && _scanCancellation is not null;
-        RemediateButton.IsEnabled = !busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && !_reportNeedsRefresh && _installationSecurity.IsProtected && Findings.Any(item => item.CanSelect);
+        UpdateRemediationEligibility();
         ExportButton.IsEnabled = !busy && _lastReport is not null;
-        ReviewFindingButton.IsEnabled = !busy && ResultTabs.SelectedIndex == 0 && FindingsGrid.SelectedItem is FindingItemViewModel;
-        OccupancyButton.IsEnabled = !busy && ResultTabs.SelectedIndex == 0 && FindingsGrid.SelectedItem is FindingItemViewModel;
-        RollbackButton.IsEnabled = !busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
-        DeleteIncidentButton.IsEnabled = !busy && !_recoveryRequired && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
+        UpdateFindingActions();
+        TrustProxyScanButton.IsEnabled = !busy && !_remediationClient.HasUnresolvedExecution;
+        CaseRefreshButton.IsEnabled = !busy;
+        CaseRecheckButton.IsEnabled = !busy && CaseListComboBox.Items.Count > 0;
+        CaseExportButton.IsEnabled = !busy && CaseListComboBox.Items.Count > 0;
+        CaseListComboBox.IsEnabled = !busy;
+        UpdateContainerActions();
+        RollbackButton.IsEnabled = !busy && !_recoveryRequired && !_caseRecoveryUnavailable && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
+        DeleteIncidentButton.IsEnabled = !busy && !_recoveryRequired && !_caseRecoveryUnavailable && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
         ElevateButton.IsEnabled = !busy && _installationSecurity.IsProtected && !_elevationContext.IsElevated;
         RefreshInstallationButton.IsEnabled = !busy;
         if (!busy && _closeWhenIdle && !_windowClosed)
@@ -702,7 +797,7 @@ public partial class MainWindow : Window
 
     private async Task<bool> EnsureRemediationAvailableAsync()
     {
-        if (_recoveryRequired || _remediationClient.HasUnresolvedExecution)
+        if (_recoveryRequired || _caseRecoveryUnavailable || _remediationClient.HasUnresolvedExecution)
         {
             MessageBox.Show(this, "处置状态尚未确认或界面发生过未处理错误。请导出记录并核对受保护结果，再重新打开窗口扫描。", "处置暂不可用", MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
@@ -753,7 +848,6 @@ public partial class MainWindow : Window
         InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(
             _installationSecurity.IsProtected ? "#027A48" : "#B54708"));
         string tooltip = _installationSecurity.IsProtected ? "管理员处置可用" : _installationSecurity.Message;
-        RemediateButton.ToolTip = tooltip;
         RollbackButton.ToolTip = tooltip;
         DeleteIncidentButton.ToolTip = tooltip;
         SetBusy(_busy);
@@ -780,6 +874,7 @@ public partial class MainWindow : Window
             if (recovered is not null)
             {
                 _caseResult = recovered;
+                await RecordRecoveredResultAsync(recovered);
                 if (_caseBatch is not null && !_caseBatch.Results.Any(item => item.PlanId == recovered.PlanId))
                     _caseBatch.Results.Add(recovered);
                 _reportNeedsRefresh = true;

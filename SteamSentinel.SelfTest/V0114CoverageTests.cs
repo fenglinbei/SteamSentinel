@@ -159,14 +159,26 @@ internal static partial class Program
                 entry.Write(new byte[768]);
             }
         ScanReport expanded = new();
-        await scanner.ScanRootAsync(archive, expanded, new()
+        bool expansionStopped = false;
+        try
         {
-            Mode = ScanMode.Full,
-            UseAmsi = false,
-            MaximumExpandedBytes = 1024
-        }, new NullPasswordProvider());
-        Check("Full 无全局哈希上限不取消压缩展开上限", expanded.Metrics.ArchiveBytesExpanded == 768 &&
-            expanded.Coverage == ScanCoverage.Partial && expanded.CoverageNotes.Any(n => n.Contains("累计解压数据达到上限")));
+            await scanner.ScanRootAsync(archive, expanded, new()
+            {
+                Mode = ScanMode.Full,
+                UseAmsi = false,
+                MaximumExpandedBytes = 1024
+            }, new NullPasswordProvider());
+        }
+        catch (ScanResourceLimitException ex) when (ex.Message.Contains("逻辑展开上限", StringComparison.Ordinal))
+        {
+            expansionStopped = true;
+        }
+        Check("Full 无全局哈希上限不取消整轮压缩展开上限且保留已验证前缀", expansionStopped &&
+            expanded.Metrics.ArchiveBytesExpanded == 768 && expanded.Coverage == ScanCoverage.Partial &&
+            expanded.Containers is { Complete: false } containers &&
+            containers.Resources.AcceptedExpandedBytes == 768 && containers.Nodes.Any(node =>
+                node.DisplayPath.EndsWith("!/inert-0.dat", StringComparison.Ordinal) && node.Sha256 is { Length: 64 } &&
+                node.Integrity == ContainerStageStatus.Complete && node.ContentCheck == ContainerStageStatus.LimitReached));
 
         ScanReport capped = new();
         for (int i = 0; i < CoverageAggregate.MaximumGroups; i++)

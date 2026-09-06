@@ -44,9 +44,10 @@ internal sealed partial class BrokerEngine
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default)
     {
         ValidatePlan(plan);
-        foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         _requestedBySid = plan.RequestedBySid;
-        _result = new RemediationRunResult { PlanId = plan.PlanId };
+        foreach (RemediationAction action in plan.Actions) ValidateAction(action);
+        ValidateConfigurationPlan(plan);
+        _result = new RemediationRunResult { PlanId = plan.PlanId, PlanIdentitySha256 = RemediationPlanIdentity.Fingerprint(plan) };
         _contentProofs.Clear();
         _verification = new(new WindowsRemediationStateProbe(async (script, token) =>
         {
@@ -64,25 +65,19 @@ internal sealed partial class BrokerEngine
                 IncidentId = _result.IncidentId,
                 PlanId = plan.PlanId,
                 TrustId = Guid.NewGuid(),
-                RequestedBySid = plan.RequestedBySid
+                RequestedBySid = plan.RequestedBySid,
+                ActionOrder = plan.Actions.Select(a => a.ActionId).ToList()
             };
             _result.ManifestPath = _manifestPath;
             await InitializeManifestAsync(cancellationToken);
         }
 
-        foreach (RemediationAction action in plan.Actions)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            RemediationActionResult actionResult = new()
-            {
-                ActionId = action.ActionId,
-                Type = action.Type,
-                Target = action.Target
-            };
-            try
+        Dictionary<Guid, string> preparationFailures = await PrepareConfigurationBackupsAsync(plan, cancellationToken);
+        await BrokerActionSequencer.RunAsync(plan, _result, preparationFailures,
+            async (action, token) =>
             {
                 ValidateAction(action);
-                actionResult.Message = await ExecuteActionAsync(action, cancellationToken);
+                string message = await ExecuteActionAsync(action, token);
                 if (_persistOwnManifest)
                 {
                     bool confirmedRecord = false;
@@ -92,30 +87,25 @@ internal sealed partial class BrokerEngine
                         record.MutationConfirmed = true;
                         confirmedRecord = true;
                     }
-                    if (confirmedRecord) await PersistManifestAsync(cancellationToken);
+                    if (confirmedRecord) await PersistManifestAsync(token);
                 }
-                actionResult.Success = true;
-            }
-            catch (Exception ex)
+                return message;
+            },
+            (action, actionResult, token) => _verification.ObserveAsync(action, actionResult, 1, token),
+            token => _persistOwnManifest ? PersistManifestAsync(token) : Task.CompletedTask,
+            (action, actionResult, ex) =>
             {
-                actionResult.Success = false;
-                actionResult.Message = RemediationVerification.Limit($"{ex.GetType().Name}: {ex.Message}", 700);
                 if (action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory &&
                     ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
                 {
                     actionResult.Occupancy = FileOccupancy.Inspect(action.Target, action.Type == RemediationActionType.QuarantineDirectory);
                     actionResult.Message += " " + FileOccupancy.Describe(actionResult.Occupancy);
                 }
-                _result.Errors.Add(RemediationVerification.Limit($"{action.DisplayName}: {actionResult.Message}", 1700));
-            }
-            actionResult.Message = RemediationVerification.Limit(actionResult.Message, 1700);
-            await _verification.ObserveAsync(action, actionResult, 1, cancellationToken);
-            _result.Actions.Add(actionResult);
-            if (_persistOwnManifest) await PersistManifestAsync(cancellationToken);
-        }
+            }, cancellationToken);
 
         await _verification.CompleteAsync(plan, _result, cancellationToken);
         _result.CompletedAtUtc = DateTimeOffset.UtcNow;
+        _result.Disposition = RemediationRunDisposition.Completed;
         _result.Success = _result.Errors.Count == 0 && _result.Actions.All(action => action.Success);
         if (_persistOwnManifest) await PersistManifestAsync(cancellationToken);
         return _result;
@@ -151,6 +141,7 @@ internal sealed partial class BrokerEngine
             action.Type is RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident);
         if (hasIncidentLifecycleAction && plan.Actions.Count != 1)
             throw new InvalidDataException("回滚或永久删除必须使用单独的处置计划。");
+        _ = RemediationDependencies.Build(plan.Actions);
     }
 
     private void ValidateAction(RemediationAction action)
@@ -218,6 +209,10 @@ internal sealed partial class BrokerEngine
             case RemediationActionType.DisableRelatedFirewallRule:
                 ValidateBoundAction(action);
                 break;
+            case RemediationActionType.RemoveBoundCertificate:
+            case RemediationActionType.RestoreBoundProxyConfiguration:
+                ValidateConfigurationAction(action);
+                break;
             case RemediationActionType.RollbackIncident:
             case RemediationActionType.DeleteIncident:
                 if (!Guid.TryParse(action.IncidentId ?? action.Target, out _)) throw new InvalidDataException("隔离事件 ID 无效。");
@@ -242,6 +237,8 @@ internal sealed partial class BrokerEngine
         RemediationActionType.DisableService => await DisableServiceAsync(action, cancellationToken),
         RemediationActionType.RemoveRelatedDefenderExclusion => await ChangeRelatedExclusionAsync(action, false, cancellationToken),
         RemediationActionType.DisableRelatedFirewallRule => await ChangeRelatedFirewallAsync(action, false, cancellationToken),
+        RemediationActionType.RemoveBoundCertificate or RemediationActionType.RestoreBoundProxyConfiguration =>
+            await ExecuteConfigurationActionAsync(action, cancellationToken),
         RemediationActionType.RollbackIncident => await RollbackIncidentAsync(action, cancellationToken),
         RemediationActionType.DeleteIncident => await DeleteIncidentAsync(action, cancellationToken),
         _ => throw new NotSupportedException()
@@ -533,15 +530,23 @@ internal sealed partial class BrokerEngine
         string incidentRoot = GetIncidentRoot(incidentId);
         string manifestPath = Path.Combine(incidentRoot, "manifest.json");
         QuarantineManifest manifest = await LoadTrustedManifestAsync(incidentId, incidentRoot, manifestPath, cancellationToken);
+        SetConfigurationRollbackContext(manifest, manifestPath);
         foreach (QuarantineRecord record in manifest.Records)
             ValidateQuarantineRecord(record, incidentRoot, incidentId);
         foreach (QuarantineRecord record in manifest.Records)
             await VerifyRecordedContentAsync(record, manifest, cancellationToken);
 
-        foreach (QuarantineRecord record in manifest.Records.AsEnumerable().Reverse())
+        foreach (QuarantineRecord record in RemediationDependencies.RollbackOrder(manifest))
         {
             if (record.RolledBack) continue;
-            if (!record.MutationConfirmed) throw new InvalidOperationException("上次处置操作的完成状态不确定，请人工核对；未自动恢复或覆盖当前状态。");
+            bool configurationRecord = record.Type is RemediationActionType.RemoveBoundCertificate or RemediationActionType.RestoreBoundProxyConfiguration;
+            if (configurationRecord && !record.ConfigurationMutationAttempted)
+            {
+                record.RolledBack = true; // Only a prepared backup exists; no configuration setter was attempted.
+                await PersistTrustedManifestAsync(manifestPath, manifest, cancellationToken);
+                continue;
+            }
+            if (!record.MutationConfirmed && !configurationRecord) throw new InvalidOperationException("上次处置操作的完成状态不确定，请人工核对；未自动恢复或覆盖当前状态。");
             switch (record.Type)
             {
                 case RemediationActionType.QuarantineFile:
@@ -577,6 +582,10 @@ internal sealed partial class BrokerEngine
                     break;
                 case RemediationActionType.DisableRelatedFirewallRule:
                     await ChangeRelatedFirewallAsync(FromRecord(record), true, cancellationToken);
+                    break;
+                case RemediationActionType.RemoveBoundCertificate:
+                case RemediationActionType.RestoreBoundProxyConfiguration:
+                    await RestoreConfigurationAsync(record, incidentRoot, cancellationToken);
                     break;
             }
             record.RolledBack = true;
@@ -747,6 +756,10 @@ internal sealed partial class BrokerEngine
             case RemediationActionType.RemoveRelatedDefenderExclusion:
             case RemediationActionType.DisableRelatedFirewallRule:
                 ValidateBoundAction(FromRecord(record));
+                break;
+            case RemediationActionType.RemoveBoundCertificate:
+            case RemediationActionType.RestoreBoundProxyConfiguration:
+                ValidateConfigurationRecord(record, incidentRoot);
                 break;
             case RemediationActionType.BlockKnownDomains:
                 string expectedHosts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "drivers", "etc", "hosts");

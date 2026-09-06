@@ -13,6 +13,7 @@ namespace SteamSentinel.Core.Scanning;
 public sealed record RelatedArtifactExpansion(IReadOnlyList<Finding> Findings, IReadOnlyList<string> CandidatePaths, IReadOnlyList<string> Notes)
 {
     public long VerificationBytesRead { get; init; }
+    public IReadOnlyList<string> ScopeNotes { get; init; } = [];
 }
 
 public sealed partial class RelatedArtifactScanner
@@ -30,9 +31,10 @@ public sealed partial class RelatedArtifactScanner
         new RelatedArtifactScanner(rules).MatchCoreAsync(command, report, token);
 
     /// <summary>Read-only snapshot validation. CandidatePaths must be checked by the UI's Low Worker before a second expansion.</summary>
-    public async Task<RelatedArtifactExpansion> ExpandAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token = default)
+    public async Task<RelatedArtifactExpansion> ExpandAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token = default,
+        long maximumVerificationBytes = MaximumVerificationBytes)
     {
-        RelatedArtifactScanner session = new(rules);
+        RelatedArtifactScanner session = new(rules) { _verificationByteLimit = Math.Clamp(maximumVerificationBytes, 0, MaximumVerificationBytes) };
         try { return await session.ExpandCoreAsync(selectedFindings, report, token); }
         finally
         {
@@ -204,9 +206,9 @@ public sealed partial class RelatedArtifactScanner
                 if (!await PreserveOrphanEntryAsync(finding, report, token))
                     Note(report, "所选关联项没有重新验证为可执行动作（不存在、已变化、受保护或证据不足）：" + finding.Target);
             }
-        Note(report, "本次只读检查有范围限制，不能保证找出所有重新写入文件的程序。间接启动的脚本和无法读取的进程仍需核对，执行前由管理员组件再次核验。");
+        report.ScopeNotes.Add("本次只读检查有范围限制，不能保证找出所有重新写入文件的程序。间接启动的脚本和无法读取的进程仍需核对，执行前由管理员组件再次核验。");
         return new(report.Findings.DistinctBy(f => f.Id).ToArray(), candidates.ToArray(), report.CoverageNotes.Distinct().ToArray())
-        { VerificationBytesRead = _relatedBytesHashed };
+        { VerificationBytesRead = _relatedBytesHashed, ScopeNotes = report.ScopeNotes.ToArray() };
     }
 
     private bool MatchesProof(string path, string hash) => _proofs.TryGetValue(Path.GetFullPath(path), out Finding? finding) &&

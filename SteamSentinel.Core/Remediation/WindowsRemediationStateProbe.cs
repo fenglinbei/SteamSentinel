@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Security.Principal;
 using Microsoft.Win32;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Utilities;
@@ -25,6 +26,20 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
         cancellationToken.ThrowIfCancellationRequested();
         switch (action.Type)
         {
+            case RemediationActionType.RemoveBoundCertificate:
+                if (action.BoundCertificate is null) return State(RemediationVerificationStatus.Unknown, "缺少精确证书目标。");
+                BoundCertificateProbe certificate = await Task.Run(() => new BoundCertificateRepair(new WindowsBoundCertificateStore(),
+                    () => WindowsIdentity.GetCurrent().User?.Value ?? string.Empty).Probe(action.BoundCertificate), cancellationToken);
+                return State(certificate.Status switch
+                {
+                    BoundCertificateProbeStatus.Absent => RemediationVerificationStatus.NoResidual,
+                    BoundCertificateProbeStatus.Present => RemediationVerificationStatus.ResidualDetected,
+                    _ => RemediationVerificationStatus.Unknown
+                }, certificate.Detail);
+            case RemediationActionType.RestoreBoundProxyConfiguration:
+                if (action.BoundProxy is null) return State(RemediationVerificationStatus.Unknown, "缺少精确代理目标。");
+                return await Task.Run(() => new BoundProxyRepair(new WindowsBoundProxySettings(),
+                    () => WindowsIdentity.GetCurrent().User?.Value ?? string.Empty).Probe(action.BoundProxy), cancellationToken);
             case RemediationActionType.QuarantineFile:
             case RemediationActionType.QuarantineDirectory:
                 return PathState(action.Target);

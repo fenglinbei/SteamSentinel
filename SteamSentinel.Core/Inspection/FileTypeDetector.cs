@@ -44,15 +44,17 @@ public static class FileTypeDetector
 {
     public static async Task<FileTypeResult> DetectAsync(string path, CancellationToken cancellationToken = default, string? displayPath = null)
     {
+        await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024,
+            FileOptions.Asynchronous | FileOptions.RandomAccess);
+        return await DetectAsync(stream, displayPath ?? path, cancellationToken);
+    }
+
+    public static async Task<FileTypeResult> DetectAsync(Stream stream, string displayPath, CancellationToken cancellationToken = default)
+    {
+        if (!stream.CanRead || !stream.CanSeek) throw new ArgumentException("格式识别需要可定位只读流。", nameof(stream));
+        stream.Position = 0;
         byte[] head = new byte[64 * 1024];
         int read;
-        await using (FileStream stream = new(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete,
-            head.Length,
-            FileOptions.Asynchronous | FileOptions.SequentialScan))
         {
             read = 0;
             while (read < head.Length)
@@ -80,12 +82,12 @@ public static class FileTypeDetector
                     }
                     if (signatureBytes == 4 && signature.AsSpan().SequenceEqual("PE\0\0"u8))
                         return CreateResult(DetectedFileType.PortableExecutable,
-                            Path.GetExtension(displayPath ?? path));
+                            Path.GetExtension(displayPath));
                 }
             }
         }
 
-        return Detect(head.AsSpan(0, read), Path.GetExtension(displayPath ?? path));
+        return Detect(head.AsSpan(0, read), Path.GetExtension(displayPath));
     }
 
     public static FileTypeResult Detect(ReadOnlySpan<byte> head, string? extension)

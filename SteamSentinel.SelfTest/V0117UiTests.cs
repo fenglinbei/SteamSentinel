@@ -100,7 +100,9 @@ internal static partial class Program
             using Stream member = archive.CreateEntry("inert.dat", CompressionLevel.NoCompression).Open();
             member.Write(new byte[2 * 1024 * 1024]);
         }
-        HashSet<string> before = Directory.GetDirectories(AppPaths.WorkerTemporaryRoot).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Directory.CreateDirectory(AppPaths.WorkerTemporaryRoot);
+        string temporaryRoot = OwnedDirectoryPhysicalPath.ResolveForCreation(AppPaths.WorkerTemporaryRoot);
+        HashSet<string> before = Directory.GetDirectories(temporaryRoot).ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool triggered = false, cancelled = false;
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(20));
         try
@@ -118,14 +120,14 @@ internal static partial class Program
             }, (request, _) => Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false)),
             new InlineProgress(progress =>
             {
-                if (progress.Stage != "压缩包扫描") return;
+                if (progress.Stage != "压缩包目录") return;
                 triggered = true;
                 timeout.Cancel();
             }), timeout.Token);
         }
         catch (OperationCanceledException) { cancelled = true; }
         Check("0.1.17 阶段切换不被节流丢弃且真实Low取消无临时残留", triggered && cancelled &&
-            Directory.GetDirectories(AppPaths.WorkerTemporaryRoot).All(before.Contains));
+            Directory.GetDirectories(temporaryRoot).All(before.Contains));
     }
 
     private static async Task<int> RunV0117SmokeAsync(string outputPath, string? workerOverride = null)

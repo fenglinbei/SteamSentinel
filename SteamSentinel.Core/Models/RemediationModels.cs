@@ -19,7 +19,9 @@ public enum RemediationActionType
     StopHostProcess,
     DisableService,
     RemoveRelatedDefenderExclusion,
-    DisableRelatedFirewallRule
+    DisableRelatedFirewallRule,
+    RemoveBoundCertificate,
+    RestoreBoundProxyConfiguration
 }
 
 public sealed class RemediationPlan
@@ -63,15 +65,22 @@ public sealed class RemediationAction
     public List<string> Domains { get; init; } = [];
     public string? IncidentId { get; init; }
     public string? TaskName { get; init; }
+    public Guid? ChainId { get; set; }
+    public List<Guid> DependsOnActionIds { get; init; } = [];
+    public string? ConfigurationEvidenceRuleId { get; init; }
+    public BoundCertificateTarget? BoundCertificate { get; init; }
+    public BoundProxyTarget? BoundProxy { get; init; }
 }
 
 public sealed class RemediationRunResult
 {
     public Guid PlanId { get; init; }
+    public string PlanIdentitySha256 { get; init; } = string.Empty;
     public Guid IncidentId { get; init; } = Guid.NewGuid();
     public DateTimeOffset StartedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CompletedAtUtc { get; set; }
     public bool Success { get; set; }
+    public RemediationRunDisposition Disposition { get; set; }
     public List<RemediationActionResult> Actions { get; init; } = [];
     public List<string> Errors { get; init; } = [];
     public string? ManifestPath { get; set; }
@@ -87,12 +96,17 @@ public sealed class RemediationActionResult
     public RemediationActionType Type { get; init; }
     public string Target { get; init; } = string.Empty;
     public bool Success { get; set; }
+    public RemediationExecutionStatus ExecutionStatus { get; set; }
     public string Message { get; set; } = string.Empty;
     public RemediationVerificationStatus VerificationStatus { get; set; }
     public string VerificationSummary { get; set; } = string.Empty;
     public List<RemediationVerificationObservation> Verifications { get; init; } = [];
     public FileOccupancyResult? Occupancy { get; set; }
 }
+
+public enum RemediationRunDisposition { LegacyUnknown, Completed, NotStarted, ExecutionUnknown }
+
+public enum RemediationExecutionStatus { NotStarted, Succeeded, Failed, SkippedDependency, ExecutionUnknown }
 
 public enum RemediationVerificationStatus
 {
@@ -134,6 +148,7 @@ public sealed class QuarantineManifest
     public string RequestedBySid { get; init; } = string.Empty;
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset MachineBootTimeUtc { get; init; } = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+    public List<Guid> ActionOrder { get; init; } = [];
     public List<QuarantineRecord> Records { get; init; } = [];
 }
 
@@ -162,4 +177,8 @@ public sealed class QuarantineRecord
     public string? ConfigurationSnapshot { get; init; }
     // Broker-computed proof, never copied from request confidence or a finding label.
     public string? VerifiedContentRuleId { get; init; }
+    public string? ConfigurationBackupPath { get; set; }
+    public string? ConfigurationBackupSha256 { get; set; }
+    public string? ConfigurationEvidenceRuleId { get; init; }
+    public bool ConfigurationMutationAttempted { get; set; }
 }

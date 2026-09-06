@@ -13,6 +13,7 @@ namespace SteamSentinel.SelfTest;
 
 internal static partial class Program
 {
+    private static bool _v020LegacyDiagnostics;
     private static async Task TestV016Async(string root, RuleSet rules)
     {
         string directory = Path.Combine(root, "v016");
@@ -53,6 +54,7 @@ internal static partial class Program
             if (process.ExitCode != 0) throw new InvalidOperationException("Cannot create inert archive fixture");
             return path;
         }
+        int scanOrdinal = 0;
         async Task<ScanReport> Scan(string[] paths, RecordingPasswords provider, long limit = 256L * 1024 * 1024)
         {
             ScanReport report = new();
@@ -67,6 +69,13 @@ internal static partial class Program
                 HashEveryFile = true,
                 MaximumEntryBytes = limit
             }, provider);
+            if (_v020LegacyDiagnostics)
+                await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"scan-{++scanOrdinal:D2}.json"), new
+                {
+                    Paths = paths,
+                    Requests = provider.Requests,
+                    Report = report
+                }, options: SteamSentinel.Core.Reporting.ReportPrivacy.ExportOptions);
             return report;
         }
         foreach (string format in new[] { "aes", "classic", "7z", "rar" })
@@ -112,7 +121,9 @@ internal static partial class Program
         await File.WriteAllBytesAsync(badCrc, crcBytes);
         RecordingPasswords crcProvider = new((_, _) => secret);
         ScanReport crcResult = await Scan([badCrc, one], crcProvider);
-        Check("ZIP 校验失败不缓存密码且后续文件继续", crcResult.Coverage == ScanCoverage.Partial && crcProvider.Requests.Count == 2 &&
+        Check("ZIP 校验失败不缓存密码且后续文件继续", crcResult.Coverage == ScanCoverage.Partial &&
+            crcProvider.Requests.Count(request => request.ArchivePath == one) == 1 && crcProvider.Requests.Last().PromptKind == ArchivePasswordPromptKind.Needed &&
+            crcResult.Containers?.Resources.PasswordAttempts == 2 &&
             crcResult.RootSummaries.Last().Coverage == ScanCoverage.Complete);
 
         string inner = await Encrypt("inner", "aes", otherSecret, small);

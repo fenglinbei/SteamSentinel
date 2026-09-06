@@ -17,6 +17,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
         .ToDictionary(rule => rule.Sha256, StringComparer.OrdinalIgnoreCase);
     private long _relatedBytesHashed;
     private int _relatedFilesHashed;
+    private long _verificationByteLimit = MaximumVerificationBytes;
     private readonly Dictionary<string, (FileStream Stream, string Hash)> _lockedIdentities = new(StringComparer.OrdinalIgnoreCase);
     internal long VerificationBytesRead => _relatedBytesHashed;
 
@@ -276,16 +277,22 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                 RelatedArtifactReader.ValidatePath(identity.Stream.SafeFileHandle, path);
                 return identity.Hash;
             }
-            if (_relatedFilesHashed >= 2048 || _relatedBytesHashed >= MaximumVerificationBytes)
-            { Note(report, "本批核验达到 4 GiB 或 2048 个文件上限，未核验：" + path); return null; }
+            if (_relatedFilesHashed >= 2048 || _relatedBytesHashed >= _verificationByteLimit)
+            {
+                Note(report, (_verificationByteLimit == MaximumVerificationBytes ? "本批核验达到 4 GiB 或 2048 个文件上限，未核验：" :
+                $"本批核验达到字节上限（{_verificationByteLimit} 字节）或 2048 个文件上限，未核验：") + path); return null;
+            }
             FileStream stream = RelatedArtifactReader.Open(path);
             bool retained = false;
             try
             {
                 if (stream.Length > 256L * 1024 * 1024)
                 { Note(report, "文件超过单文件 256 MiB 核验上限，未核验：" + path); return null; }
-                if (stream.Length > MaximumVerificationBytes - _relatedBytesHashed)
-                { Note(report, "本批 4 GiB 核验额度不足，未核验：" + path); return null; }
+                if (stream.Length > _verificationByteLimit - _relatedBytesHashed)
+                {
+                    Note(report, (_verificationByteLimit == MaximumVerificationBytes ? "本批核验 4 GiB 额度不足，未核验：" :
+                    "本批核验额度不足（上限 " + _verificationByteLimit + " 字节），未核验：") + path); return null;
+                }
                 _relatedFilesHashed++;
                 string hash = await Hashing.Sha256StreamAsync(stream, token, size => { _relatedBytesHashed += size; report.Metrics.BytesHashed += size; });
                 // Only one preparation expansion owns these deny-write/delete leases. Never cache across calls or execution.

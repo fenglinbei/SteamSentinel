@@ -158,14 +158,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
 
     internal static void OrderActionsForSafeExecution(List<RemediationAction> actions)
     {
-        RemediationAction[] ordered = actions
-            .Select((action, index) => (Action: action, Index: index))
-            .OrderBy(item => ExecutionPhase(item.Action.Type))
-            .ThenBy(item => item.Index)
-            .Select(item => item.Action)
-            .ToArray();
-        actions.Clear();
-        actions.AddRange(ordered);
+        RemediationDependencies.AssignAndOrder(actions);
     }
 
     private static int ExecutionPhase(RemediationActionType type) => type switch

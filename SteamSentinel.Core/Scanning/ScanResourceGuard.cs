@@ -24,8 +24,9 @@ public sealed class ScanResourceGuard(bool checkProcessMemory = false)
             _characters = 0;
             _aggregates.Clear();
         }
-        if (report.Findings.Count > MaximumRecords || report.CoverageNotes.Count > MaximumRecords ||
-            report.ContentSources.Count > MaximumRecords || report.RootSummaries.Count > MaximumRecords ||
+        int records = report.ContentScanSettings?.MaximumReportRecords ?? MaximumRecords;
+        if (report.Findings.Count > records || report.CoverageNotes.Count > records ||
+            report.ContentSources.Count > records || report.RootSummaries.Count > records ||
             report.CoverageAggregates.Count > CoverageAggregate.MaximumGroups)
             throw new ScanResourceLimitException("检查结果达到本轮记录上限，已保留此前结果。请缩小目录范围，分批检查剩余内容。");
         foreach (Finding f in report.Findings.Skip(_findings))
@@ -50,15 +51,16 @@ public sealed class ScanResourceGuard(bool checkProcessMemory = false)
         }
         _findings = report.Findings.Count; _notes = report.CoverageNotes.Count;
         _sources = report.ContentSources.Count; _roots = report.Roots.Count; _summaries = report.RootSummaries.Count;
-        if (_characters > MaximumTextCharacters)
+        if (_characters > (report.ContentScanSettings?.MaximumReportTextCharacters ?? MaximumTextCharacters))
             throw new ScanResourceLimitException("检查结果的文本量达到本轮上限，已保留此前结果。请分批检查剩余目录。");
         if (!checkProcessMemory || Environment.TickCount64 - _lastMemoryCheck < 500) return;
         _lastMemoryCheck = Environment.TickCount64;
         using Process process = Process.GetCurrentProcess();
-        if (process.PrivateMemorySize64 < 640L * 1024 * 1024) return;
+        long memoryLimit = report.ContentScanSettings?.MaximumWorkerMemoryBytes ?? 1024L * 1024 * 1024;
+        if (process.PrivateMemorySize64 < memoryLimit / 8 * 5) return;
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         process.Refresh();
-        if (process.PrivateMemorySize64 >= 768L * 1024 * 1024)
+        if (process.PrivateMemorySize64 >= memoryLimit / 4 * 3)
             throw new ScanResourceLimitException("扫描组件接近内存安全上限，已停止本轮内容检查并保留此前结果。请分批扫描，未完成的文件仍需检查。");
     }
 

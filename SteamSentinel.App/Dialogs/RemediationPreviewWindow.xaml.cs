@@ -20,8 +20,7 @@ public partial class RemediationPreviewWindow : Window
                 ConfidenceLabel(action),
                 action.DisplayName,
                 action.Target,
-                (action.ExpectedSha256 ?? action.ExpectedValueData ?? string.Empty) +
-                (action.RelatedFilePath is null ? "" : $"\n关联文件：{action.RelatedFilePath}\nSHA-256：{action.RelatedFileSha256}"),
+                RemediationCasePresentation.ActionIdentity(action),
                 action.RelatedFilePath ?? action.Target))
             .ToArray();
         GroupedActions = CollectionViewSource.GetDefaultView(Actions);
@@ -36,8 +35,7 @@ public partial class RemediationPreviewWindow : Window
         OmittedTargets = batch.Targets.Where(t => t.MissingActions.Count > 0 || t.ActionIds.Count == 0).ToArray();
         Actions = batch.Plans.SelectMany((p, i) => p.Actions.Select(action => new RemediationActionDisplayItem(
             ReportExporter.ActionLabel(action.Type), ConfidenceLabel(action), action.DisplayName, action.Target,
-            (action.ExpectedSha256 ?? action.ExpectedValueData ?? string.Empty) +
-            (action.RelatedFilePath is null ? "" : $"\n关联文件：{action.RelatedFilePath}\nSHA-256：{action.RelatedFileSha256}"),
+            RemediationCasePresentation.ActionIdentity(action),
             action.RelatedFilePath ?? action.Target, i + 1))).ToArray();
         GroupedActions = CollectionViewSource.GetDefaultView(Actions);
         DataContext = null; DataContext = this;

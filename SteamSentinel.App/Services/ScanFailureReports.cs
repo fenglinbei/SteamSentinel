@@ -4,6 +4,26 @@ namespace SteamSentinel.App.Services;
 
 internal static class ScanFailureReports
 {
+    internal static ScanReport PreserveSystemStage(ScanReport? checkpoint, ScanMode mode,
+        string rulesVersion, Exception failure, bool cancelled)
+    {
+        ScanReport report = checkpoint ?? new() { Mode = mode, RuleSetVersion = rulesVersion };
+        report.Coverage = ScanCoverage.Partial;
+        report.CompletedAtUtc = DateTimeOffset.UtcNow;
+        report.Findings.Add(new()
+        {
+            RuleId = "SYSTEM-SCAN-INCOMPLETE",
+            Category = FindingCategory.Coverage,
+            Severity = FindingSeverity.Information,
+            Title = cancelled ? "系统检查已取消" : "系统检查未完成",
+            Target = "系统与 Steam 检查",
+            Description = "已保留中断前读取的系统发现及代理与证书记录，系统阶段未完成，后续内容检查尚未开始；不能作为完整复扫。",
+            Evidence = WorkerFailureException.Limit(failure.Message),
+            HandlingReason = FindingHandlingReason.IncompleteInspection
+        });
+        return report;
+    }
+
     internal static async Task CollectSupplementAsync(ScanReport completed, Func<Task> collect)
     {
         try { await collect(); }

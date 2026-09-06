@@ -83,8 +83,16 @@ public sealed class AmsiScanner : IDisposable
     {
         if (_disposed || _context == IntPtr.Zero) return new(AmsiVerdict.Unavailable, 0, "AMSI 不可用。");
         await using FileStream input = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous);
+        return await ScanStreamAsync(input, path, maximumBytes, cancellationToken);
+    }
+
+    public async Task<AmsiScanResult> ScanStreamAsync(Stream input, string contentName,
+        long maximumBytes = 32L * 1024 * 1024, CancellationToken cancellationToken = default)
+    {
+        if (_disposed || _context == IntPtr.Zero) return new(AmsiVerdict.Unavailable, 0, "AMSI 不可用。");
+        input.Position = 0;
         long length = input.Length;
-        if (length > Math.Min(maximumBytes, 32L * 1024 * 1024))
+        if (length > Math.Min(maximumBytes, Array.MaxLength))
         {
             return new AmsiScanResult(AmsiVerdict.Error, 1, $"文件超过 AMSI 内存扫描上限 {maximumBytes} 字节，未获得引擎判定。");
         }
@@ -94,7 +102,7 @@ public sealed class AmsiScanner : IDisposable
         {
             await input.ReadExactlyAsync(bytes, cancellationToken);
             if (input.ReadByte() != -1) throw new InvalidDataException("文件在 AMSI 读取期间发生大小变化。");
-            return ScanOwnedBuffer(bytes, path);
+            return ScanOwnedBuffer(bytes, contentName);
         }
         finally
         {

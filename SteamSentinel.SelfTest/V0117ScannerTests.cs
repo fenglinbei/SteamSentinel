@@ -84,12 +84,15 @@ internal static partial class Program
         CreateSizedZip(secondArchive, "b.bin", 700);
         ScanOptions globalBudgetOptions = ScannerOptions(ScanMode.Full, maximumExpandedBytes: 1024);
         ScanReport globalBudgetReport = new();
+        bool globalBudgetStopped = false;
         using (ContentScanner scanner = new(rules))
         {
             await scanner.ScanRootAsync(firstArchive, globalBudgetReport, globalBudgetOptions, new NullPasswordProvider());
-            await scanner.ScanRootAsync(secondArchive, globalBudgetReport, globalBudgetOptions, new NullPasswordProvider());
+            try { await scanner.ScanRootAsync(secondArchive, globalBudgetReport, globalBudgetOptions, new NullPasswordProvider()); }
+            catch (ScanResourceLimitException ex) when (ex.Message.Contains("逻辑展开上限", StringComparison.Ordinal))
+            { globalBudgetStopped = true; }
         }
-        Check("归档展开预算在同一报告的多个根之间共享", globalBudgetReport.Metrics.ArchiveBytesExpanded == 700 &&
+        Check("归档展开预算在同一报告的多个根之间共享", globalBudgetStopped && globalBudgetReport.Metrics.ArchiveBytesExpanded == 700 &&
             globalBudgetReport.Coverage == ScanCoverage.Partial &&
             globalBudgetReport.RootSummaries[0].Coverage == ScanCoverage.Complete &&
             globalBudgetReport.RootSummaries[1].Coverage == ScanCoverage.Partial);
@@ -103,21 +106,29 @@ internal static partial class Program
             writer.Write("inert");
         });
         ScanReport directoryEntryReport = new();
+        bool directoryEntriesStopped = false;
         using (ContentScanner scanner = new(rules))
-            await scanner.ScanRootAsync(directoryEntries, directoryEntryReport, new ScanOptions
+        {
+            try
             {
-                Mode = ScanMode.Full,
-                IncludeSystem = false,
-                IncludeSteam = false,
-                IncludeWorkshop = false,
-                UseAmsi = false,
-                InspectArchives = true,
-                HashEveryFile = true,
-                MaximumArchiveEntries = 2
-            }, new NullPasswordProvider());
-        Check("空目录成员也消耗归档条目预算", directoryEntryReport.Coverage == ScanCoverage.Partial &&
+                await scanner.ScanRootAsync(directoryEntries, directoryEntryReport, new ScanOptions
+                {
+                    Mode = ScanMode.Full,
+                    IncludeSystem = false,
+                    IncludeSteam = false,
+                    IncludeWorkshop = false,
+                    UseAmsi = false,
+                    InspectArchives = true,
+                    HashEveryFile = true,
+                    MaximumArchiveEntries = 2
+                }, new NullPasswordProvider());
+            }
+            catch (ScanResourceLimitException ex) when (ex.Message.Contains("归档成员数量达到上限", StringComparison.Ordinal))
+            { directoryEntriesStopped = true; }
+        }
+        Check("空目录成员也消耗归档条目预算", directoryEntriesStopped && directoryEntryReport.Coverage == ScanCoverage.Partial &&
             directoryEntryReport.Metrics.ArchiveEntriesVisited == 2 &&
-            directoryEntryReport.CoverageNotes.Any(note => note.Contains("条目数达到上限", StringComparison.Ordinal)));
+            directoryEntryReport.Containers?.Nodes.All(node => !node.DisplayPath.EndsWith("!/payload.txt", StringComparison.Ordinal)) == true);
 
         string excluded = Path.Combine(directory, "excluded");
         Directory.CreateDirectory(excluded);
