@@ -2,11 +2,13 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。当前源码为 **0.3.0 开发版**，已补齐 VPet 精确规则、有界家族解码、组件关系、Steam HTML/JS/CSS 检查、ZIP 中文名称绑定及中英文显示。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，当前发布包为 2026-09-28 发布的 [v0.3.0-preview.2 自签名预发布版](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2)。已补齐 VPet 精确规则、有界家族解码、组件关系、Steam HTML/JS/CSS 检查、ZIP 中文名称绑定及中英文显示。
 
-2026-09-26 的源码构建 `0.3.0+local.basic-final2-20260926` 已通过基础完整回归 **2,348 项，0 失败、0 跳过**，并完成本轮中英文 DPI 验收，见[实施规划](docs/PLAN-0.3.0.md)。**当前暂停系统 AMSI 增强入口及实际调用**；未参与的增强项不使基础扫描显示“扫描不完整”。历史报告保持原样，真正的读取、密码、格式或缺卷等检查缺口仍会显示。无需为基础扫描安装 Norton。
+安装修订 2 修复合法 Windows 短路径导致的 `Code=UnsafePath; Path=; Mode=Preflight`，并补齐两份已验真旧图标的精确迁移。七个程序二进制与 preview.1 完全一致；**2,358 项完整回归**保留为同二进制基线，本修订未重复运行。新运行的安装维护 **56 项**、状态迁移 **43 项**均零失败、零跳过，并完成 Windows 10／11 的短路径升级、普通路径重装、531 个载荷文件核验、普通用户扫描／导出／取消及重启后复核。完整身份、证据分层和保留范围见 [0.3.0 发布状态与验收索引](docs/RELEASE-0.3.0.md)。
 
-已有双语安装候选仍是此前构建，其完整回归 **2,206 项**及安装、升级、卸载验收记录见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)；它没有被当前源码构建替换。新安装包、Windows 10 和跨物理显示器复验尚未完成，也没有新冻结。候选为未签名隔离实验 Preview，尚未公开发布。具体版本、身份与来源以包内 `VERSION.txt`、`SIGNING.txt` 和外层 `RELEASE-METADATA.json` 为准。公开发布模式要求公开受信任的代码签名证书与 RFC 3161 时间戳，否则构建会中止。项目尚未完成外部安全审计，不应把预览包当成正式公开发行版传播。
+本包已在 GitHub 公开发布为 **Pre-release**，使用 `CN=fenglinbei` 自签名证书，没有公共受信任证书链或时间戳，Windows 仍可能提示发布者不受信任。具体身份以包内 `VERSION.txt`、`SIGNING.txt` 及发行页的 `PUBLICATION-IDENTITY.json`、`RELEASE-METADATA.json` 为准。项目尚未完成外部安全审计；跨物理显示器测试暂停，旧版有条件迁移提示保留未目视检查的已接受缺口。早期感染恢复验收仍绑定原候选，不冒充本修订完整复测。
+
+**当前暂停系统 AMSI 增强入口及实际调用**；缺少该增强项不会单独使基础扫描显示“扫描不完整”。历史报告保持原样，真正的读取、密码、格式或缺卷等检查缺口仍会显示。无需为基础扫描安装 Norton。
 
 [English quick start](docs/QUICKSTART.en.md) covers installation, language selection, results, remediation, reports and rollback.
 
@@ -14,9 +16,9 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 ## 主要能力
 
-0.3.0 提供“语言 / Language”页，可选择自动 / 简体中文 / English，保存后下次启动生效。Markdown 报告和记录包可单独选择本次导出语言；同一报告对象的 JSON 不因显示语言变化。后台消息已接通可选的稳定消息 ID 和有界参数，来源原文与旧记录保留。中英文使用方法见 [语言设置与导出](docs/LANGUAGE-SETTINGS-0.3.0.md)；当前 3,473 对资源与双语安装器的实现及验收范围见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)。
+0.3.0 提供“语言 / Language”页，可选择自动 / 简体中文 / English，保存后下次启动生效。Markdown 报告和记录包可单独选择本次导出语言；同一报告对象的 JSON 不因显示语言变化。后台消息已接通可选的稳定消息 ID 和有界参数，来源原文与旧记录保留。中英文使用方法见 [语言设置与导出](docs/LANGUAGE-SETTINGS-0.3.0.md)；资源与双语安装器的早期实现记录见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)，发布验收以[当前索引](docs/RELEASE-0.3.0.md)为准。
 
-当前源码已接入第三批精确证书/代理动作、依赖阻断、持久病例与跨会话复验，见 [第三批交付说明](docs/EXACT-REMEDIATION-PHASE3.md)。真实样本与重启验收尚未完成，精确配置规则目录暂为空，当前不会仅凭 PAC 或证书名称开放自动修复。第二批的有界补查、离线宿主签名、组件关联及 MSI 静态规则见 [第二批交付说明](docs/RELATED-COMPONENTS-PHASE2.md)。
+当前源码已接入第三批精确证书/代理动作、依赖阻断、持久病例与跨会话复验，见 [第三批交付说明](docs/EXACT-REMEDIATION-PHASE3.md)。其中精确证书／代理配置的真实样本与重启验收尚未完成，精确配置规则目录暂为空，当前不会仅凭 PAC 或证书名称开放自动修复。第二批的有界补查、离线宿主签名、组件关联及 MSI 静态规则见 [第二批交付说明](docs/RELATED-COMPONENTS-PHASE2.md)。
 
 0.2.0 新增“容器检查”页，显示原始文件、MP4/PE 嵌入归档、成员和分卷的父链、五阶段状态及实际生效预算，可补查原件、明确补卷目录或主动选择恢复输出。普通报告导出只包含元数据。该专项不代表第三批真实修复、MSI/CAB 全部格式或干净 Windows 10/11 安装验收已经完成；历史需求与验收矩阵见 [0.2.0 规划](docs/ARCHIVE-SUPPORT-0.2.0.md)。
 
@@ -47,9 +49,9 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 ## 推荐运行方式
 
-开发中的第一批“诊断能力与结果解释”已接入源码：可在“代理与证书”页执行本机只读诊断，查看 8 个代理配置来源及当前用户／本机的物理 Root、CA 证书来源。结果会解释“待确认”“暂不支持”和“条件未满足”，不能选择处理的项目会保留原因和下一步；普通信息不计为未处理。诊断不连接外部地址、不修改配置，也不代表确认恶意或处理完成。范围和验证见 [第一批交付说明](docs/TRUST-PROXY-DIAGNOSTICS-PHASE1.md)。
+可在“代理与证书”页执行本机只读诊断，查看 8 个代理配置来源及当前用户／本机的物理 Root、CA 证书来源。结果会解释“待确认”“暂不支持”和“条件未满足”，不能选择处理的项目会保留原因和下一步；普通信息不计为未处理。诊断不连接外部地址、不修改配置，也不代表确认恶意或处理完成。范围和验证见 [第一批交付说明](docs/TRUST-PROXY-DIAGNOSTICS-PHASE1.md)。
 
-1. 从受信任渠道取得所需版本的安装包，先对照同目录的 `RELEASE-SHA256.txt` 文件及 `RELEASE-METADATA.json` 核对哈希和提交身份（文件名可能带版本前缀）。带 `preview` 或 `dirty` 的文件名不是正式发布。升级前退出旧版主程序和管理员窗口，使用安装包覆盖安装，不要只替换 EXE。
+1. 从 [v0.3.0-preview.2 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2)取得安装包，对照同页带版本前缀的 `RELEASE-SHA256.txt`、`PUBLICATION-IDENTITY.json` 及 `RELEASE-METADATA.json` 核对哈希和来源。当前包为自签名预发布版，程序保留原 `dirty Preview` 构建身份，来源关系见[发布索引](docs/RELEASE-0.3.0.md)。升级前退出旧版主程序和管理员窗口，使用完整安装包覆盖安装，不要只替换 EXE。遇到旧包的短路径 `UnsafePath` 错误时直接使用修订 2 重装，无需手动删除旧文件或放宽目录权限。
 2. 使用安装器安装到固定的 Program Files 目录。默认普通权限扫描，处置时自动请求 UAC，也可点击“打开管理员窗口”主动授权，不需要在快捷方式中手动配置。
 3. 首次使用先执行“快速扫描”，随后执行“完整工坊扫描”。单独收到的 MP4、压缩包或安装包可用“扫描文件/目录”。
 4. 检查结果顶部的覆盖状态。`Complete` 只表示已完成支持范围内的检查，`Partial` 不能当作“安全”。
@@ -111,6 +113,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 
 
 ## 审查入口
 
+- [0.3.0 发布状态、下载身份与验收索引](docs/RELEASE-0.3.0.md) / [English release index](docs/RELEASE-0.3.0.en.md)
 - [威胁模型](docs/THREAT-MODEL.md)
 - [测试证据](docs/TEST-EVIDENCE.md)
 - [0.2.0 容器实现与支持边界](docs/ARCHIVE-IMPLEMENTATION-0.2.0.md)
@@ -131,4 +134,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 
 
 新增“较低／低／中／高／极高／自定义”六项选择，中档保留原默认。大小、递归深度、时间、读取量、内存与临时磁盘等预算可由用户调整，快速与完整／自选模式分别保存，手动补查使用当前设置。每项说明过高或过低的影响，详细数值见 [扫描设置说明](docs/SCAN-SETTINGS.md)。
 
-0.3.0 开发版在扫描前评估资源，遇到可调整的限制时可选择“保持限制”“停止扫描”或“提高并继续”。窗口显示建议额度及风险，默认只用于本次扫描；明确勾选后才保存供以后使用。资源不足或无法确认时不能直接批准。扫描性能可选自动、低占用或高性能，在资源允许的普通文本/脚本上使用最多 2、1 或 4 路；复杂容器仍按原有顺序处理。参见 [资源授权与性能实现](docs/ADAPTIVE-SCAN-0.3.0.md)。
+0.3.0 在扫描前评估资源，遇到可调整的限制时可选择“保持限制”“停止扫描”或“提高并继续”。窗口显示建议额度及风险，默认只用于本次扫描；明确勾选后才保存供以后使用。资源不足或无法确认时不能直接批准。扫描性能可选自动、低占用或高性能，在资源允许的普通文本/脚本上使用最多 2、1 或 4 路；复杂容器仍按原有顺序处理。参见 [资源授权与性能实现](docs/ADAPTIVE-SCAN-0.3.0.md)。

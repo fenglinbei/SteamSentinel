@@ -2,15 +2,17 @@
 
 SteamSentinel is a local Windows tool for inspecting known fake Steam alert malware, related Workshop content, mods and plugins, and supported Steam modifications. It can quarantine precisely selected files and retain records for review and rollback.
 
-Version 0.3.0 is under development. Source build `0.3.0+local.basic-final2-20260926` passed **2,348 baseline regression checks, with no failures or skips**, plus the current bilingual DPI checks. See the [implementation plan](PLAN-0.3.0.md) for evidence and scope.
+Product version **0.3.0** is available as the [v0.3.0-preview.2 self-signed Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2), published on September 28, 2026. Installer revision 2 fixes failures with valid Windows short paths and adds exact migration entries for two verified legacy icons. All seven product binaries are byte-identical to preview.1.
 
-The existing laboratory installer remains the earlier **unsigned Preview** with its separate 2,206-check and installation results in [joint acceptance](JOINT-ACCEPTANCE-0.3.0.md). It has not been replaced by this source build. A new installer, Windows 10 validation and tests across physical displays remain outstanding; no new release candidate has been frozen.
+The **2,358-check full regression** is retained as the identical-binary baseline and was not rerun for this installer revision. Newly run source gates passed 56 maintenance checks and 43 machine-state checks, with no failures or skips. Windows 10 and 11 passed the final package's short-path upgrade, normal-path reinstall, 531-file verification, standard-user scan/export/cancellation and reboot checks. See the [release identity and acceptance index](RELEASE-0.3.0.en.md) for the distinction between current and historical evidence.
+
+The certificate is self-signed, with no publicly trusted chain or timestamp; Windows may report an untrusted publisher. Physical multi-monitor tests remain paused. The conditional legacy migration notice retains an accepted visual coverage gap, and earlier infection/recovery results retain their original candidate identities.
 
 The optional system AMSI enhancement is currently paused: its controls are hidden and scans do not initialize or call that engine. Its absence does not mark a baseline scan as incomplete, and Norton is not required. Historical reports keep their original findings and coverage. Actual file-read, password, format or missing-volume failures still produce inspection gaps.
 
 ## Install or upgrade
 
-Use the installer from a trusted distribution source. Check its identity and SHA-256 against the accompanying `RELEASE-METADATA.json` and `RELEASE-SHA256.txt`; filenames may include a version prefix. Read `SIGNING.txt` to check the signing status. Close both the ordinary and administrator application windows before upgrading, and install the whole package rather than replacing an individual EXE or DLL.
+Download the installer from the [v0.3.0-preview.2 release page](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2). Check its identity and SHA-256 against `PUBLICATION-IDENTITY.json`, `RELEASE-METADATA.json` and the version-prefixed `RELEASE-SHA256.txt`. Read `SIGNING.txt` to check the signing status. Close both the ordinary and administrator application windows before upgrading, and install the whole package rather than replacing an individual EXE or DLL. If an older installer reports `Code=UnsafePath; Path=; Mode=Preflight`, run revision 2 without manually deleting old files or weakening directory permissions.
 
 The installer supports English and Simplified Chinese and uses the same installation location and upgrade identity for both. Its language does not change another Windows user's application preference. Administrator remediation requires a protected, intact installation in Program Files. The portable package can scan and export reports, but administrator remediation and quarantine rollback are unavailable there.
 
@@ -39,7 +41,7 @@ An archive containing a malicious member does not by itself prove that the compu
 
 If an archive is encrypted, the password dialog lets you limit reuse to the current layer, the current outer file and its nested content, or the current scan. You can skip it and later retry undecrypted content. Skipping retains an inspection gap. Archive passwords are not stored in reports or passed on the command line.
 
-## Scan limits and performance in the current development build
+## Scan limits and performance
 
 The application estimates available memory and temporary disk space before scanning. When an adjustable limit is reached, review the current limit, proposed increase and resource risks. Choose **Keep limits**, **Stop scan**, or **Increase and continue**. Approval applies only to the current scan unless you explicitly select the option to save it for future scans in that mode. Closing the dialog keeps the limit. Waiting for your decision does not consume the scan time budget.
 
@@ -74,4 +76,4 @@ Uninstalling the application retains quarantine and machine records. Keep those 
 - User settings and reports: `%LOCALAPPDATA%\SteamSentinel`.
 - Restricted worker temporary data: `%USERPROFILE%\AppData\LocalLow\SteamSentinel`.
 - Machine quarantine and results: `%PROGRAMDATA%\SteamSentinel\Quarantine` and `%PROGRAMDATA%\SteamSentinel\Results`.
-- [Chinese overview and build instructions](../README.md), [implementation plan](PLAN-0.3.0.md), [signing](SIGNING.md), [third-party notices](../THIRD-PARTY-NOTICES.md), [Apache 2.0 license](../LICENSE).
+- [Release identity and acceptance index](RELEASE-0.3.0.en.md), [Chinese overview and build instructions](../README.md), [historical implementation plan](PLAN-0.3.0.md), [signing](SIGNING.md), [third-party notices](../THIRD-PARTY-NOTICES.md), [Apache 2.0 license](../LICENSE).

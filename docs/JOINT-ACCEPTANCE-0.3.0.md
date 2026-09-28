@@ -1,12 +1,23 @@
 # 0.3.0 后台消息、双语安装器与联合验收
 
-当前说明（2026-09-27）：本文下方保存 9 月 22 日 V2/V3 的历史实测和当时限制。后续基础扫描已停用 AMSI，不因增强缺席显示基础扫描不完整；物理跨屏测试按用户要求暂停。候选 08 的 Windows 10 桌面完整回归为 2358/0/0，Windows 11 安装生命周期已通过；原状 0.2.0 的空状态目录权限仍导致升级拒绝，已批准修复，正在准备候选 09 的真实迁移、安装与最终界面复验。历史通过不能替代新候选验收，尚未公开发布。
+当前说明（2026-09-28）：产品版本为 **0.3.0**，已公开发布[自签名预发布版 `v0.3.0-preview.2`](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2)。本修订修复合法 Windows 短路径误拒绝，补齐精确旧图标迁移和路径诊断；七个程序二进制与 preview.1 逐字节一致。发布身份、下载及完整边界见[发布说明](RELEASE-0.3.0.md)，机器可读证据见公开附件 [ACCEPTANCE-SUMMARY.json](https://github.com/fenglinbei/SteamSentinel/releases/download/v0.3.0-preview.2/ACCEPTANCE-SUMMARY.json)。
 
-Current note (2026-09-27): the following sections preserve the earlier V2/V3 evidence. Baseline scanning now leaves AMSI disabled without treating its absence as incomplete baseline coverage. Physical cross-monitor testing is paused. Candidate 08 passed 2358 Windows 10 desktop self-tests and the Windows 11 installation lifecycle. Migration of unchanged empty 0.2.0 state directories is being repaired and must be verified with candidate 09. Final candidate acceptance and public release remain incomplete.
+| 当前发布证据 | 结果及身份边界 |
+| --- | --- |
+| 安装修订重新执行 | 维护 56 项、状态迁移 43 项，0 失败、0 跳过 |
+| Windows 10 / 11 | 两机各通过 56 项维护专项；先复现旧包短路径错误，再用最终包完成短路径升级、普通路径重装和中英文安装；逐项核对 531 个载荷文件、记录与权限，并完成重启复核 |
+| 普通用户基础操作 | 两机各 4 项扫描、导出及取消检查通过；无新增临时残留 |
+| 产品回归基线 | 保留 2,358 项通过、0 失败、0 跳过结果；因七个产品二进制相同，本修订未重跑完整回归 |
+| 旧版本迁移 | 三份精确旧资源夹具迁移通过；本机真实早期安装只读预检通过，未在本机自动升级，不称为完整早期构建重装 |
+| 签名 | `SELF-SIGNED-PREVIEW`；安装器、七个程序和两机实际卸载器已核验，无公共受信任证书链或时间戳 |
+
+AMSI 增强调用暂停，不因其缺席单独显示基础扫描不完整；物理跨屏验收暂停；ISO/DVD 不在本版承诺范围；旧版有条件迁移提示尚未目视检查，为已接受保留项；TianLai 两段未解释依赖尾部继续为 `Partial`。早期 GUI、感染、隔离、恢复与重启证据仍绑定各自原候选，不能改称本修订完整重测，也不承诺整个系统无感染。
+
+Current note (2026-09-28): self-signed pre-release `v0.3.0-preview.2` is public. The installer revision passed 56 maintenance and 43 state-migration checks, plus Windows 10/11 upgrade, reinstall, standard-user smoke and reboot verification. All seven product binaries match preview.1; the 2,358-test product baseline was retained, not rerun for this revision. The V2/V3 infection and recovery evidence below retains its original artifact identities. See the [release record](RELEASE-0.3.0.md) for the published scope and accepted limits.
 
 历史更新：2026-09-22。本记录区分当时候选的实测、保留的失败和发布前缺口，不以第 5 步旧 V4 构建的结果替代当时候选。后台消息与双语安装器已实现；联合验收尚未全部完成。
 
-## 当前候选 V3：目标列修复
+## 历史候选 V3：目标列修复
 
 | 项目 | 身份 |
 | --- | --- |
@@ -99,7 +110,9 @@ Scratch 原 `quarantine-verification` 串口事件虽仍是合法 JSON，但一�
 
 2026-09-22 经用户明确批准，移除已完成独立恢复验收且关机的 `SteamSentinel-RestoreCheck-v03`（ID `4c23506b-8444-4248-a052-0a0f38a9b04c`）及 `I:\MalwareLab\RestoreChecks\v03-clean-20260920`。实际释放 38,868,942,848 B，约 36.20 GiB。已先核对全部实验 VHD 父链，确认其他磁盘不依赖该目录；原干净母机、原始导出、准备机、三台样本克隆和其余 31 个检查点均保留，清理后身份及活动磁盘路径复核不变。见 `restore-cleanup-proposal-01.json`、`restore-cleanup-result-01.json`、`current-case-isolation-02.json` 和 `I-STORAGE-REVIEW-2026-09-22.md`。历史环境验收文件记录清理前状态，继续保留。
 
-## 发布前仍需完成
+## V3 阶段记录的发布前缺口
+
+以下保留 2026-09-22/23 的计划及当时结论；后续安装、Windows 10/11 和双语复验已有上方发布证据。物理跨屏与 AMSI 健康验收已暂停，不再作为本次基础发布门槛。
 
 1. 已完成 V3 安装和实际目标显示复验。V2 交互补验覆盖安装语言选择、跨账户重新扫描、UAC 取消、预览及真实 Broker 成功/文件变化失败流程；仍需按最终发行范围补其余故障和宿主关联场景，并按最终候选变化决定复验范围。
 2. 补 Windows 10/11、不同 DPI 和完整用户路径矩阵。2026-09-23 已定位本实验环境的 AMSI 初始化故障为精简环境遗漏 `SystemDrive`，完成最小源码修复及实际 Worker 的三次独立验证；Low、Job 和错误/Partial 语义保留。同日完成 DPI 修复：原 10 项失败中的 7 项校正测量判据，3 项修复实际结果行裁切；中英文五档缩放共 3,840 项、完整原生回归 2,240 项通过，1,210 张截图完成非空内容及尺寸核验。跨缩放采用自测窗口 DPI 通知，单显示器环境尚不能代替跨物理屏拖动、远程桌面和 Windows 10 实机验收。现有 V3 安装包未替换，后续候选须按新身份复验。完整证据与边界见 [AMSI 兼容修复](AMSI-COMPATIBILITY-0.3.0.md)及 [DPI 修复](DPI-LAYOUT-0.3.0.md)。
