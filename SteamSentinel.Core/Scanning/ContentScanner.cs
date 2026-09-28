@@ -269,8 +269,10 @@ public sealed partial class ContentScanner : IDisposable
                 {
                     RuleId = "INSTALLER-STRUCTURE",
                     Category = FindingCategory.Archive,
-                    Severity = suspicious ? FindingSeverity.High : FindingSeverity.Information,
-                    Score = signals.Count > 0 ? 85 : linkedSignals.Count > 0 ? 65 : 5,
+                    Severity = suspicious ? FindingSeverity.Medium : FindingSeverity.Information,
+                    Score = suspicious ? 40 : 5,
+                    ReasonCode = suspicious ? "ScriptTokenCooccurrenceOnly" : null,
+                    HandlingReason = suspicious ? FindingHandlingReason.InsufficientEvidence : FindingHandlingReason.None,
                     TitleText = suspicious ? MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.02") : MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.03"),
                     DescriptionText = MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.04", (result.Msi?.ReadRows ?? 0), (result.Members.Count)) +
                         (suspicious ? MessageText.List(signals.Concat(linkedSignals).Take(8)).RedactSecrets() : MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.05")) +
@@ -281,8 +283,8 @@ public sealed partial class ContentScanner : IDisposable
                     TargetSha256 = _structuredParent?.OriginalTargetSha256 ?? sha256,
                     EvidenceLines = signals.Concat(linkedSignals).Concat(semantics?.Evidence.Texts ?? result.Metadata.Select(value => (MessageText)value)).Select(value => value.RedactSecrets()),
                     AssociationEvidenceTier = suspicious ? RelatedEvidenceTier.RelatedRisk : RelatedEvidenceTier.Observation,
-                    CanRemediate = signals.Count > 0,
-                    SuggestedActions = signals.Count > 0 ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
+                    CanRemediate = false,
+                    SuggestedActions = [SuggestedActionKind.ReviewOnly]
                 });
             }
         }
@@ -319,11 +321,31 @@ public sealed partial class ContentScanner : IDisposable
             List<MessageText> matches = [];
             bool Contains(string value) => signals.Raw.Contains(value);
             HeuristicMatch? combined = ContentHeuristics.Match(Contains, displayPath);
-            if (combined is null && Path.GetExtension(displayPath).ToLowerInvariant() is not (".md" or ".log" or ".lo"))
+            if (combined is null && !string.Equals(projectType, "trusted-default", StringComparison.OrdinalIgnoreCase) &&
+                Path.GetExtension(displayPath).ToLowerInvariant() is not (".md" or ".log" or ".lo"))
             {
                 IReadOnlyList<MessageText> scriptSignals = ScriptSignals.AnalyzeMessages(signals.Script.Contains);
-                if (scriptSignals.Count > 0) combined = new HeuristicMatch("HEUR-STEAM-DEPLOYMENT-CHAIN",
-                    MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.01"), MessageText.List(scriptSignals), 90);
+                if (scriptSignals.Count > 0) report.Findings.Add(new Finding
+                {
+                    RuleId = "HEUR-SCRIPT-TOKEN-COOCCURRENCE",
+                    Category = FindingCategory.File,
+                    Severity = FindingSeverity.Medium,
+                    Score = 40,
+                    ReasonCode = "ScriptTokenCooccurrenceOnly",
+                    HandlingReason = FindingHandlingReason.InsufficientEvidence,
+                    TitleText = MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.01"),
+                    DescriptionText = MessageText.Create("Scan.ScriptTokenCooccurrence.Description") + MessageText.List(scriptSignals),
+                    Target = remediationTarget,
+                    ContentPath = displayPath,
+                    EvidenceLines = signals.Observations.Select(value => MessageText.Create(
+                        "Scan.ScriptTokenCooccurrence.Window", value.Token, value.WindowByteOffset, value.Encoding,
+                        MessageText.Create(value.Normalized ? "Scan.ScriptTokenCooccurrence.Normalized" : "Scan.ScriptTokenCooccurrence.Literal"))),
+                    Sha256 = sha256,
+                    WorkshopId = workshopId,
+                    AssociationEvidenceTier = RelatedEvidenceTier.Observation,
+                    CanRemediate = false,
+                    SuggestedActions = [SuggestedActionKind.ReviewOnly]
+                });
             }
             if (combined is not null && !string.Equals(projectType, "trusted-default", StringComparison.OrdinalIgnoreCase))
                 report.Findings.Add(new Finding

@@ -21,7 +21,7 @@ public static class RelatedArtifactRelations
     public static string? FileHash(Finding finding) => finding.RelatedFilePath is not null ? finding.RelatedFileSha256 :
         finding.TargetSha256 ?? (finding.ContentPath is null || SamePath(finding.ContentPath, finding.Target) ? finding.Sha256 : null);
 
-    public static bool IsFileEvidence(Finding finding) => finding.CanRemediate &&
+    public static bool IsFileEvidence(Finding finding) => RemediationEvidencePolicy.CanRemediate(finding) &&
         finding.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile) && Validation.IsHexSha256(FileHash(finding)) &&
         finding.RelatedFilePath is null && FilePath(finding) is not null;
 
@@ -78,7 +78,7 @@ public static class RelatedArtifactRelations
             };
             if (file is null) continue;
             result.Add(file);
-            foreach (Finding related in all.Where(f => f.CanRemediate && f.RelatedFilePath is not null &&
+            foreach (Finding related in all.Where(f => RemediationEvidencePolicy.CanRemediate(f) && f.RelatedFilePath is not null &&
                 SamePath(f.RelatedFilePath, path) && hash.Equals(f.RelatedFileSha256, StringComparison.OrdinalIgnoreCase)))
             {
                 bool knownBinding = known.Contains(hash);

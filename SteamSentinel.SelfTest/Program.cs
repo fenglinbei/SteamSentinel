@@ -80,6 +80,11 @@ internal static partial class Program
             await TestV030LanguageSettingsAsync(root);
             await TestV030BackendMessagesAsync(root);
             await TestV030AdaptiveScanAsync(root);
+            await TestV030FalsePositiveStringsAsync(root);
+            await TestV030FalsePositiveFormatPathAsync(root);
+            await TestV030FalsePositiveAssociationAsync(root);
+            await TestV030FalsePositiveScriptConsumersAsync(root);
+            await TestV030RemediationEvidencePolicyAsync(root);
             TestTrustProxyProxy();
             TestTrustProxyCertificates();
             await TestTrustProxyDiagnosticsAsync(root);
@@ -785,6 +790,21 @@ internal static partial class Program
                 return await RunScanPerformanceAsync(args[1]);
             case "--scan-performance-matrix" when args.Length == 2:
                 return await RunScanPerformanceAsync(args[1], matrix: true);
+            case "--false-positive-tests" when args.Length == 2:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                try
+                {
+                    string fpRoot = Path.GetFullPath(args[1]);
+                    await TestV030FalsePositiveStringsAsync(fpRoot);
+                    await TestV030FalsePositiveFormatPathAsync(fpRoot);
+                    await TestV030FalsePositiveAssociationAsync(fpRoot);
+                    await TestV030FalsePositiveScriptConsumersAsync(fpRoot);
+                    await TestV030RemediationEvidencePolicyAsync(fpRoot);
+                    await TestPhase2MsiAsync(fpRoot, RuleLoader.LoadEmbedded());
+                }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "false-positive-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                return Failures.Count == 0 ? 0 : 1;
             case "--scan-adaptive" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));
                 try { await TestV030AdaptiveScanAsync(Path.GetFullPath(args[1])); }

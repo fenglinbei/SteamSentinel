@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Reporting;
 
 namespace SteamSentinel.App.ViewModels;
@@ -21,6 +22,7 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
         get => _isSelected;
         set
         {
+            if (value && RemediationEvidencePolicy.IsReviewOnlyEvidence(Finding)) return;
             if (_isSelected == value) return;
             _isSelected = value;
             OnPropertyChanged();

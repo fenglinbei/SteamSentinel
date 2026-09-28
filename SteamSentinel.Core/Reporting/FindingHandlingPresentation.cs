@@ -1,4 +1,5 @@
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 
 namespace SteamSentinel.Core.Reporting;
 
@@ -23,11 +24,14 @@ public static class FindingHandlingPresentation
 
     public static FindingHandlingInfo Get(Finding finding)
     {
+        if (RemediationEvidencePolicy.IsReviewOnlyEvidence(finding))
+            return new(FindingDisposition.NeedsReview, DisplayText.Get("FindingHandling.Get.13"),
+                RemediationEvidencePolicy.ReviewOnlyMessage(finding).Display, DisplayText.Get("FindingHandling.Get.17"), false);
         bool boundContainer = finding.ContentPath?.Contains("!/", StringComparison.Ordinal) != true ||
             !string.IsNullOrWhiteSpace(finding.TargetSha256);
-        if (finding.CanRemediate && boundContainer)
+        if (RemediationEvidencePolicy.CanRemediate(finding) && boundContainer)
             return new(FindingDisposition.Actionable, DisplayText.Get("FindingHandling.Get.01"), DisplayText.Get("FindingHandling.Get.02"), DisplayText.Get("FindingHandling.Get.03"), true);
-        if (finding.CanRemediate && !boundContainer)
+        if (RemediationEvidencePolicy.CanRemediate(finding) && !boundContainer)
             return new(FindingDisposition.Blocked, DisplayText.Get("FindingHandling.Get.04"), DisplayText.Get("FindingHandling.Get.05"), DisplayText.Get("FindingHandling.Get.06"), false);
         if (finding.HandlingReason == FindingHandlingReason.UnsupportedAction)
             return new(FindingDisposition.Unsupported, DisplayText.Get("FindingHandling.Get.07"), Reason("FindingHandling.Get.08", finding.HandlingDetailsText.Display), DisplayText.Get("FindingHandling.Get.09"), false);

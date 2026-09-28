@@ -138,8 +138,9 @@ public sealed partial class SystemScanner
             {
                 RuleId = "KNOWN-DROP-PATH",
                 Category = FindingCategory.File,
-                Severity = known ? FindingSeverity.Critical : FindingSeverity.High,
-                Score = known ? 100 : 70,
+                Severity = known ? FindingSeverity.Critical : FindingSeverity.Low,
+                Score = known ? 100 : 20,
+                ReasonCode = known ? null : "KnownPathOnly",
                 TitleText = known ? MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.01") : MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.02"),
                 DescriptionText = known
                     ? MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.03")

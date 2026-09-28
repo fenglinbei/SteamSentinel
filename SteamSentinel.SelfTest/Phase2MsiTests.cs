@@ -158,14 +158,14 @@ internal static partial class Program
         ScanReport linkedReport = new();
         using (ContentScanner scanner = new(rules)) await scanner.ScanRootAsync(native, linkedReport, ContentOptions(), new NullPasswordProvider());
         Finding linkedFinding = linkedReport.Findings.Single(f => f.RuleId == "INSTALLER-STRUCTURE");
-        Check("MSI 新的属性关联进入生产扫描且只供复核", linkedFinding.Score == 65 && !linkedFinding.CanRemediate && linkedFinding.SuggestedActions.SequenceEqual([SuggestedActionKind.ReviewOnly]) && !linkedFinding.IsKnownMalware);
+        Check("MSI 新的属性关联进入生产扫描且只供复核", linkedFinding.Score == 40 && linkedFinding.Severity == FindingSeverity.Medium && linkedFinding.ReasonCode == "ScriptTokenCooccurrenceOnly" && !linkedFinding.CanRemediate && linkedFinding.SuggestedActions.SequenceEqual([SuggestedActionKind.ReviewOnly]) && !linkedFinding.IsKnownMalware);
         Check("MSI 静态属性关联标注关联风险层级但不升级处置资格", linkedFinding.AssociationEvidenceTier == RelatedEvidenceTier.RelatedRisk && !linkedFinding.CanRemediate);
 
         string direct = Path.Combine(folder, "direct.msi");
         CreatePhase2MsiFixture(direct, [Phase2ActionSchema, "INSERT INTO `CustomAction` (`Action`,`Type`,`Source`,`Target`) VALUES ('literal',51,'PAYLOAD','" + MsiFixturePayload + "')"]);
         ScanReport directReport = new();
         using (ContentScanner scanner = new(rules)) await scanner.ScanRootAsync(direct, directReport, ContentOptions(), new NullPasswordProvider());
-        Check("MSI 单一 Type51 内容命中沿用既有隔离权限", directReport.Findings.Any(f => f.RuleId == "INSTALLER-STRUCTURE" && f.CanRemediate && f.Score == 85 && !f.IsKnownMalware));
+        Check("MSI 单一 Type51 静态词语不能取得隔离权限", directReport.Findings.Any(f => f.RuleId == "INSTALLER-STRUCTURE" && !f.CanRemediate && f.Score == 40 && f.Severity == FindingSeverity.Medium && f.ReasonCode == "ScriptTokenCooccurrenceOnly" && !f.IsKnownMalware));
 
         string incomplete = Path.Combine(folder, "incomplete.msi");
         CreatePhase2MsiFixture(incomplete, [Phase2ActionSchema,

@@ -5916,7 +5916,7 @@ DER SHA-256：{3}
     <value>安装包成员展开失败：</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStructuredAsync.02" xml:space="preserve">
-    <value>安装包自定义动作包含可疑内容或声明关联</value>
+    <value>安装器静态声明需要复核</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStructuredAsync.03" xml:space="preserve">
     <value>已只读检查安装包结构</value>
@@ -5931,7 +5931,7 @@ DER SHA-256：{3}
     <value>属性/文件关联为静态声明；证书或 PAC 未在表中出现，不能排除程序运行后设置。</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.01" xml:space="preserve">
-    <value>发现 Steam 插件部署或凭据收集链</value>
+    <value>发现需复核的脚本相关字符串</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.02" xml:space="preserve">
     <value>内容位置：{0}</value>
@@ -6552,7 +6552,7 @@ DER SHA-256：{3}
     <value>快捷方式超过大小上限</value>
   </data>
   <data name="Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.13" xml:space="preserve">
-    <value>快捷方式包含可疑执行链</value>
+    <value>快捷方式包含待复核的脚本词组合</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanAsync.01" xml:space="preserve">
     <value>系统扫描</value>
@@ -6609,7 +6609,7 @@ DER SHA-256：{3}
     <value>已确认恶意落地点仍然存在</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanKnownPathsAsync.02" xml:space="preserve">
-    <value>已知落地点路径需要哈希复核</value>
+    <value>仅路径与已知事件相同，需复核内容</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanKnownPathsAsync.03" xml:space="preserve">
     <value>路径与精确恶意哈希同时命中。</value>
@@ -6762,16 +6762,16 @@ DER SHA-256：{3}
     <value>空文件</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.01" xml:space="preserve">
-    <value>下载执行链与 Steam 插件或家族载荷同时出现</value>
+    <value>下载、执行及 Steam 相关词语共现</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.02" xml:space="preserve">
-    <value>Steam 插件部署同时尝试修改安全排除项</value>
+    <value>Steam 相关词语与安全排除项词语共现</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.03" xml:space="preserve">
-    <value>验证码提示与下载执行命令同时出现</value>
+    <value>验证码、下载及执行相关词语共现</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.04" xml:space="preserve">
-    <value>Steam 登录拦截、验证资料发送队列与第三方接收端点同时出现</value>
+    <value>登录、发送队列及接收端点相关词语共现</value>
   </data>
   <data name="Backend.Core.ScriptSignals.RedactSecrets.01" xml:space="preserve">
     <value>[内容已隐藏]</value>
@@ -8553,10 +8553,10 @@ DER SHA-256：{3}
     <value>服务关联未完整读取：</value>
   </data>
   <data name="Backend.Core.RelatedArtifactScanner.CollectHistory.01" xml:space="preserve">
-    <value>运行历史中出现可疑验证执行链</value>
+    <value>运行历史包含待复核的脚本词组合</value>
   </data>
   <data name="Backend.Core.RelatedArtifactScanner.CollectHistory.02" xml:space="preserve">
-    <value>历史记录不是当前仍在运行的证明，其他启动方式可能不留此记录。</value>
+    <value>这些字符串不能证明下载或执行行为。历史记录也不是当前仍在运行的证明，其他启动方式可能不留此记录。</value>
   </data>
   <data name="Backend.Core.RelatedArtifactScanner.HashAsync.01" xml:space="preserve">
     <value>本批核验达到 4 GiB 或 2048 个文件上限，未核验：</value>
@@ -11632,5 +11632,20 @@ DER SHA-256：{3}
   <data name="Remediation.FileScopeNotApproved" xml:space="preserve">
     <value>文件不在当前自动隔离允许范围，其所属处置组本次未纳入方案：{0}。请人工复核文件及其可信来源；管理员执行时仍会重新核验目标范围。</value>
     <comment>Preparation-only scope refusal; does not expand Broker authorization or change the stable reason code.</comment>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Description" xml:space="preserve">
+    <value>仅发现字符串共现，不能据此确认执行链或恶意行为，不作为自动处置依据。</value>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Window" xml:space="preserve">
+    <value>词语 {0}；解码窗口起始字节 {1}；编码 {2}；{3}。该位置不是词语的精确偏移，也不是执行证据。</value>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Normalized" xml:space="preserve">
+    <value>经有界规范化后匹配</value>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Literal" xml:space="preserve">
+    <value>字面匹配</value>
+  </data>
+  <data name="Remediation.ScriptTokenEvidenceReviewOnly" xml:space="preserve">
+    <value>这些词语或静态声明不足以授权处置（规则：{0}）。请重新扫描并人工复核；原报告保留不变。</value>
   </data>
 </root>

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using SharpCompress.Common;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
@@ -427,20 +428,23 @@ public sealed partial class ContentScanner
             }
             else shortcut = new(null, null, null, false, MessageText.Create("Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.12"));
             string command = shortcut.Target + " " + shortcut.Arguments;
-            IReadOnlyList<string> signals = ScriptSignals.Analyze(command);
+            IReadOnlyList<MessageText> signals = ScriptSignals.AnalyzeMessages(command);
             if (signals.Count > 0) context.Report.Findings.Add(new()
             {
                 RuleId = "SHORTCUT-EXECUTION-CHAIN",
                 Category = FindingCategory.File,
-                Severity = FindingSeverity.High,
-                Score = 85,
+                Severity = FindingSeverity.Medium,
+                Score = 40,
+                ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode,
                 TitleText = MessageText.Create("Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.13"),
-                DescriptionText = string.Join("，", signals),
+                DescriptionText = MessageText.List(signals),
                 Target = node.OriginalTarget,
                 Sha256 = node.Sha256,
                 EvidenceText = ScriptSignals.Redact(command),
-                CanRemediate = true,
-                SuggestedActions = [SuggestedActionKind.QuarantineFile]
+                CanRemediate = false,
+                HandlingReason = FindingHandlingReason.InsufficientEvidence,
+                HandlingDetailsText = MessageText.Create(RemediationEvidencePolicy.ReviewOnlyMessageId, "SHORTCUT-EXECUTION-CHAIN"),
+                SuggestedActions = [SuggestedActionKind.ReviewOnly]
             });
             if (!shortcut.Complete) ContainerGap(context, node, ContainerStageStatus.Partial, shortcut.Detail, "SHORTCUT-PARTIAL");
         }

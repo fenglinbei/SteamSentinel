@@ -53,7 +53,7 @@ internal static partial class Program
             UseAmsi = false,
             CustomRoots = [script]
         });
-        Check("脚本链信号跨窗口累积，不仅检查文件开头", scriptReport.Findings.Any(f => f.RuleId == "HEUR-STEAM-DEPLOYMENT-CHAIN"));
+        Check("脚本词语跨窗口累积仍只供复核", scriptReport.Findings.Any(f => f.RuleId == "HEUR-SCRIPT-TOKEN-COOCCURRENCE" && f.Severity == FindingSeverity.Medium && !f.CanRemediate));
 
         ScanReport many = new() { ContentScanSettings = options };
         for (int i = 0; i < 9000; i++)
@@ -122,7 +122,7 @@ internal static partial class Program
             HashEveryFile = true,
             CustomRoots = [fixture, second, script]
         }, NoPassword, null, timeout.Token);
-        Check("真实 Low Worker 连续分析两个 32 MiB 文件与分散脚本信号", lowLarge.Findings.Count(f => f.CanRemediate) == 3 && lowLarge.Metrics.FilesVisited == 3);
+        Check("真实 Low Worker 连续分析两个 32 MiB 文件与分散脚本信号", lowLarge.Findings.Count(f => f.CanRemediate) == 2 && lowLarge.Findings.Count(f => f.RuleId == "HEUR-SCRIPT-TOKEN-COOCCURRENCE" && !f.CanRemediate) == 1 && lowLarge.Metrics.FilesVisited == 3);
         Check("真实扫描保留内存诊断且仍在 1 GiB Job 内", lowLarge.WorkerDiagnostics is { PrivateBytes: > 0, PeakPrivateBytes: < 1024L * 1024 * 1024 });
         Console.WriteLine($"V0113_LARGE_PEAK_MIB={lowLarge.WorkerDiagnostics!.PeakPrivateBytes / 1024 / 1024}");
         string manyFiles = Path.Combine(directory, "many"); Directory.CreateDirectory(manyFiles);

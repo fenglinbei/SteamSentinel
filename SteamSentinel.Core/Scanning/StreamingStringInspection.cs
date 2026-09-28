@@ -12,7 +12,10 @@ internal static class StreamingStringInspection
     // Covers bounded Base64 expressions and literal joins in ScriptSignals, in either encoding.
     private const int OverlapBytes = 144 * 1024;
 
-    internal static async Task<(HashSet<string> Raw, HashSet<string> Script)> ReadAsync(
+    internal sealed record TokenObservation(string Token, long WindowByteOffset, string Encoding, bool Normalized);
+    internal sealed record InspectionResult(HashSet<string> Raw, HashSet<string> Script, IReadOnlyList<TokenObservation> Observations);
+
+    internal static async Task<InspectionResult> ReadAsync(
         string path, IEnumerable<string> ruleTokens, IEnumerable<string> domainTokens, long limit, CancellationToken token)
     {
         await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024,
@@ -20,7 +23,7 @@ internal static class StreamingStringInspection
         return await ReadAsync(stream, ruleTokens, domainTokens, limit, token);
     }
 
-    internal static async Task<(HashSet<string> Raw, HashSet<string> Script)> ReadAsync(
+    internal static async Task<InspectionResult> ReadAsync(
         Stream stream, IEnumerable<string> ruleTokens, IEnumerable<string> domainTokens, long limit, CancellationToken token)
     {
         stream.Position = 0;
@@ -30,6 +33,7 @@ internal static class StreamingStringInspection
         string[] needles = ruleTokens.Concat(domains).Concat(ContentHeuristics.Tokens)
             .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         HashSet<string> raw = new(StringComparer.OrdinalIgnoreCase), script = new(StringComparer.OrdinalIgnoreCase);
+        List<TokenObservation> observations = [];
         byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkBytes + OverlapBytes);
         try
         {
@@ -43,19 +47,19 @@ internal static class StreamingStringInspection
                 total += read;
                 if (total > limit) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StreamingStringInspection.ReadAsync.01"), sourceText => new InvalidDataException(sourceText));
                 int count = retained + read;
-                Inspect(Encoding.UTF8.GetString(buffer, 0, count));
+                Inspect(Encoding.UTF8.GetString(buffer, 0, count), total - count, "UTF-8");
                 // Preserve UTF-16LE byte alignment even if the stream returns a short, odd-sized read.
                 int alignment = (int)((total - count) & 1);
-                Inspect(Encoding.Unicode.GetString(buffer, alignment, (count - alignment) & ~1));
-                Inspect(Encoding.BigEndianUnicode.GetString(buffer, alignment, (count - alignment) & ~1));
+                Inspect(Encoding.Unicode.GetString(buffer, alignment, (count - alignment) & ~1), total - count + alignment, "UTF-16LE");
+                Inspect(Encoding.BigEndianUnicode.GetString(buffer, alignment, (count - alignment) & ~1), total - count + alignment, "UTF-16BE");
                 retained = Math.Min(OverlapBytes, count);
                 Buffer.BlockCopy(buffer, count - retained, buffer, 0, retained);
             }
-            return (raw, script);
+            return new(raw, script, observations);
         }
         finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
 
-        void Inspect(string text)
+        void Inspect(string text, long windowByteOffset, string encoding)
         {
             foreach (string needle in needles)
                 if (!raw.Contains(needle) && (domains.Contains(needle)
@@ -63,7 +67,14 @@ internal static class StreamingStringInspection
                         : text.Contains(needle, StringComparison.OrdinalIgnoreCase))) raw.Add(needle);
             string normalized = ScriptSignals.Normalize(text);
             foreach (string needle in ScriptSignals.Tokens)
-                if (!script.Contains(needle) && normalized.Contains(needle, StringComparison.OrdinalIgnoreCase)) script.Add(needle);
+                if (!script.Contains(needle) && normalized.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                {
+                    script.Add(needle);
+                    // One bounded, fixed-vocabulary observation per token. No user text or secrets.
+                    // This is the decoding window start, not an exact token offset after normalization.
+                    observations.Add(new(needle, windowByteOffset, encoding,
+                        !text.Contains(needle, StringComparison.OrdinalIgnoreCase)));
+                }
         }
     }
 

@@ -21,11 +21,16 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         bool shouldBlockDomains = addKnownDomainBlock;
         Finding[] selected = selectedFindings.Take(257).ToArray();
         if (selected.Length > 256) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.01"), sourceText => new InvalidDataException(sourceText));
+        // Old reports keep their original flags. Retired token-only evidence must be
+        // rejected before it can seed related actions or silently disappear from a plan.
+        foreach (Finding finding in selected) RemediationEvidencePolicy.RequireActionableEvidence(finding);
         IEnumerable<Finding> expanded = allFindings is null ? selected : RelatedArtifactRelations.SelectForPlan(selected, allFindings, rules);
 
-        foreach (Finding finding in expanded.Where(item => item.CanRemediate))
+        foreach (Finding finding in expanded)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            RemediationEvidencePolicy.RequireActionableEvidence(finding);
+            if (!finding.CanRemediate) continue;
             // A selected startup link is quarantined by its own scanned bytes. Its payload is a separate action/identity.
             if (finding.RelatedFilePath is { } related && !(finding.RuleId == "PERSISTENCE-STARTUP-LINK" &&
                 finding.SuggestedActions.Count == 1 && finding.SuggestedActions[0] == SuggestedActionKind.QuarantineFile))

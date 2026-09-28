@@ -6,6 +6,7 @@ using System.Xml.Linq;
 using Microsoft.Win32;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
@@ -247,22 +248,31 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
         foreach (string name in key.GetValueNames().Where(name => name.Length == 1).Take(26))
         {
             string value = key.GetValue(name)?.ToString() ?? "";
-            IReadOnlyList<MessageText> signals = ScriptSignals.AnalyzeMessages(value);
-            if (signals.Count == 0) continue;
-            report.Findings.Add(new Finding
-            {
-                RuleId = "HISTORY-CLICKFIX",
-                Category = FindingCategory.Persistence,
-                Severity = FindingSeverity.High,
-                Score = 75,
-                TitleText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectHistory.01"),
-                DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectHistory.02"),
-                Target = "RunMRU/" + name,
-                EvidenceText = MessageText.Join("，", signals),
-                CanRemediate = false,
-                SuggestedActions = [SuggestedActionKind.ReviewOnly]
-            });
+            Finding? finding = CreateHistoryFinding(name, value);
+            if (finding is not null) report.Findings.Add(finding);
         }
+    }
+
+    internal static Finding? CreateHistoryFinding(string name, string value)
+    {
+        IReadOnlyList<MessageText> signals = ScriptSignals.AnalyzeMessages(value);
+        if (signals.Count == 0) return null;
+        return new Finding
+        {
+            RuleId = "HISTORY-CLICKFIX",
+            Category = FindingCategory.Persistence,
+            Severity = FindingSeverity.Medium,
+            Score = 40,
+            ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode,
+            TitleText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectHistory.01"),
+            DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectHistory.02"),
+            Target = "RunMRU/" + name,
+            EvidenceText = MessageText.Join("，", signals),
+            CanRemediate = false,
+            HandlingReason = FindingHandlingReason.InsufficientEvidence,
+            HandlingDetailsText = MessageText.Create(RemediationEvidencePolicy.ReviewOnlyMessageId, "HISTORY-CLICKFIX"),
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+        };
     }
 
     private async Task<string?> HashAsync(string path, ScanReport report, CancellationToken token)

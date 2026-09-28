@@ -25,6 +25,7 @@ public sealed record RelatedArtifactExpansion(IReadOnlyList<Finding> Findings, I
 public sealed partial class RelatedArtifactScanner
 {
     private readonly Dictionary<string, Finding> _proofs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Finding> _observations = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _blockedPaths = new(StringComparer.OrdinalIgnoreCase);
     private Finding[] _previous = [];
     private bool _closureOnly;
@@ -112,7 +113,7 @@ public sealed partial class RelatedArtifactScanner
                 else if (!candidates.Contains(path)) Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.03"));
             }
             // Preserve informational findings; they never become evidence just because the name matches.
-            if (!finding.CanRemediate) report.Findings.Add(finding);
+            if (!RemediationEvidencePolicy.CanRemediate(finding)) report.Findings.Add(finding);
             else if (finding.RuleId == "PERSISTENCE-STARTUP-LINK" && finding.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile))
             {
                 string? expected = finding.TargetSha256 ?? finding.Sha256;
@@ -152,7 +153,7 @@ public sealed partial class RelatedArtifactScanner
             string? path = RelatedArtifactRelations.FilePath(finding);
             string? expected = RelatedArtifactRelations.FileHash(finding);
             if (path is null || !candidates.Contains(path)) continue;
-            if (expected is null && finding.CanRemediate && finding.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile))
+            if (expected is null && RemediationEvidencePolicy.CanRemediate(finding) && finding.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile))
             { _blockedPaths.Add(path); Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.11") + path); }
             else if (expected is not null)
             {
@@ -167,36 +168,21 @@ public sealed partial class RelatedArtifactScanner
         {
             token.ThrowIfCancellationRequested();
             if (_blockedPaths.Contains(path)) continue;
-            Finding[] sources = _previous.Where(f => RelatedArtifactRelations.IsFileEvidence(f) &&
+            Finding[] sources = _previous.Where(f => HasFileIdentity(f) &&
                 RelatedArtifactRelations.SamePath(f.Target, path)).ToArray();
             string? hash = await HashAsync(path, report, token);
             if (hash is null) continue;
             // Conflicting prior actionable snapshots require a fresh user selection, not cherry-picking the latest match.
-            if (sources.Any(f => !string.Equals(RelatedArtifactRelations.FileHash(f), hash, StringComparison.OrdinalIgnoreCase)))
+            if (sources.Where(RelatedArtifactRelations.IsFileEvidence).Any(f =>
+                !string.Equals(RelatedArtifactRelations.FileHash(f), hash, StringComparison.OrdinalIgnoreCase)))
             { _blockedPaths.Add(path); Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.14") + path); continue; }
-            Finding? source = sources.OrderByDescending(f => f.Score).FirstOrDefault();
+            Finding? source = sources.Where(f => string.Equals(RelatedArtifactRelations.FileHash(f), hash, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(IsActionableFileSource).ThenByDescending(f => f.Score).FirstOrDefault();
             if (source is null && !_known.ContainsKey(hash))
             { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.15") + path); continue; }
-            bool known = _known.ContainsKey(hash);
-            Finding proof = new()
-            {
-                RuleId = source?.RuleId ?? "RELATION-KNOWN-HASH",
-                Category = FindingCategory.File,
-                Severity = known ? FindingSeverity.Critical : source!.Severity,
-                Score = known ? 100 : source!.Score,
-                TitleText = source?.TitleText ?? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.16"),
-                DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.17"),
-                Target = path,
-                Sha256 = hash,
-                TargetSha256 = hash,
-                ContentPath = source?.ContentPath,
-                EvidenceText = source?.EvidenceText ?? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.18"),
-                IsKnownMalware = known,
-                CanRemediate = true,
-                SuggestedActions = [SuggestedActionKind.QuarantineFile]
-            };
-            _proofs[path] = proof;
-            report.Findings.Add(proof);
+            Finding? current = RegisterVerifiedFileFinding(path, hash, source);
+            if (current is not null && (RemediationEvidencePolicy.CanRemediate(current) || !report.Findings.Any(f => f.Id == source?.Id)))
+                report.Findings.Add(current);
         }
 
         if (_proofs.Count > 0)
@@ -204,10 +190,10 @@ public sealed partial class RelatedArtifactScanner
             await CollectRunAsync(report, token);
             await CollectTasksAsync(report, token);
             await CollectServicesAsync(report, token);
-            await CollectProcessesAsync(null, report, token);
         }
-        foreach (Finding finding in selected.Where(f => f.CanRemediate && IsRelation(f)))
-            if (!report.Findings.Any(f => f.CanRemediate && (f.Id == finding.Id || SameEntry(f, finding))))
+        if (_proofs.Count > 0 || _observations.Count > 0) await CollectProcessesAsync(null, report, token);
+        foreach (Finding finding in selected.Where(f => RemediationEvidencePolicy.CanRemediate(f) && IsRelation(f)))
+            if (!report.Findings.Any(f => RemediationEvidencePolicy.CanRemediate(f) && (f.Id == finding.Id || SameEntry(f, finding))))
             {
                 if (!await PreserveOrphanEntryAsync(finding, report, token))
                     Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.19") + finding.Target);
@@ -223,6 +209,55 @@ public sealed partial class RelatedArtifactScanner
     }
 
     private bool MatchesProof(string path, string hash) => _proofs.TryGetValue(Path.GetFullPath(path), out Finding? finding) &&
+        string.Equals(RelatedArtifactRelations.FileHash(finding), hash, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTokenCooccurrenceOnly(Finding finding) => RemediationEvidencePolicy.IsReviewOnlyEvidence(finding);
+
+    private static bool IsActionableFileSource(Finding finding) =>
+        RelatedArtifactRelations.IsFileEvidence(finding) && !IsTokenCooccurrenceOnly(finding);
+
+    private static bool HasFileIdentity(Finding finding) =>
+        finding.Category is FindingCategory.File or FindingCategory.Archive or FindingCategory.Steam &&
+        !IsRelation(finding) && Validation.IsHexSha256(RelatedArtifactRelations.FileHash(finding));
+
+    // The caller has rehashed a locked file. Identity alone does not promote a review observation
+    // into an executable proof, including legacy reports that gave token cooccurrence 90 points.
+    internal Finding? RegisterVerifiedFileFinding(string path, string hash, Finding? source)
+    {
+        if (!Validation.IsHexSha256(hash) || source is not null &&
+            (!HasFileIdentity(source) || !RelatedArtifactRelations.SamePath(source.Target, path) ||
+             !string.Equals(RelatedArtifactRelations.FileHash(source), hash, StringComparison.OrdinalIgnoreCase))) return null;
+        bool known = _known.TryGetValue(hash, out HashRule? knownRule);
+        if (source is null && !known) return null;
+        bool actionable = known || source is not null && IsActionableFileSource(source);
+        bool tokenOnly = !known && source is not null && IsTokenCooccurrenceOnly(source);
+        Finding current = new()
+        {
+            // A fresh exact-hash match is independent evidence, not a revival of a retired
+            // token-only rule or its historical reason code.
+            RuleId = known ? (string.IsNullOrEmpty(knownRule!.Id) ? "RELATION-KNOWN-HASH" : knownRule.Id) : source!.RuleId,
+            Category = FindingCategory.File,
+            Severity = known ? FindingSeverity.Critical : tokenOnly ? FindingSeverity.Medium : source!.Severity,
+            Score = known ? 100 : tokenOnly ? Math.Min(source!.Score, 45) : source!.Score,
+            TitleText = known ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.16") : source!.TitleText,
+            DescriptionText = actionable ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.17") : source!.DescriptionText,
+            ReasonCode = known ? null : tokenOnly ? "ScriptTokenCooccurrenceOnly" : source?.ReasonCode,
+            Target = path,
+            Sha256 = hash,
+            TargetSha256 = hash,
+            ContentPath = known ? path : source?.ContentPath,
+            EvidenceText = known ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.18") : source!.EvidenceText,
+            IsKnownMalware = known,
+            CanRemediate = actionable,
+            SuggestedActions = actionable ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
+        };
+        string fullPath = Path.GetFullPath(path);
+        if (actionable) { _proofs[fullPath] = current; _observations.Remove(fullPath); }
+        else { _observations[fullPath] = current; _proofs.Remove(fullPath); }
+        return current;
+    }
+
+    private bool MatchesObservation(string path, string hash) => _observations.TryGetValue(Path.GetFullPath(path), out Finding? finding) &&
         string.Equals(RelatedArtifactRelations.FileHash(finding), hash, StringComparison.OrdinalIgnoreCase);
     private int ProofScore(string path, string hash) => _known.ContainsKey(hash) ? 100 : _proofs.GetValueOrDefault(Path.GetFullPath(path))?.Score ?? 0;
     private bool CanCloseEntry(string path, string hash, string command, bool allowPatcher) => _known.ContainsKey(hash) ||
@@ -261,7 +296,8 @@ public sealed partial class RelatedArtifactScanner
             if (changed) { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.AddCurrent.01") + finding.Target); return; }
         }
         report.Findings.Add(finding);
-        if (!finding.CanRemediate) Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.AddCurrent.02") + finding.Target);
+        if (!RemediationEvidencePolicy.CanRemediate(finding) && finding.ReasonCode != "RelatedFileObservationOnly")
+            Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.AddCurrent.02") + finding.Target);
     }
 
     private async Task<bool> PreserveOrphanEntryAsync(Finding finding, ScanReport report, CancellationToken token)
@@ -306,7 +342,7 @@ public sealed partial class RelatedArtifactScanner
 
     internal Finding? PreserveAllowlistedSnapshot(Finding previous, Finding fresh)
     {
-        if (!previous.CanRemediate || previous.RelatedFilePath is not null || !SameEntry(previous, fresh)) return null;
+        if (!RemediationEvidencePolicy.CanRemediate(previous) || previous.RelatedFilePath is not null || !SameEntry(previous, fresh)) return null;
         bool task = IsTask(previous);
         bool allowed = task
             ? Validation.IsHexSha256(previous.Sha256) && string.Equals(previous.Sha256, fresh.Sha256, StringComparison.OrdinalIgnoreCase) &&
@@ -370,34 +406,16 @@ public sealed partial class RelatedArtifactScanner
                         token.ThrowIfCancellationRequested();
                         if (++modules > 16384) { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.03")); return; }
                         string path = module.FileName;
-                        if (RelatedArtifactReader.IsProtected(path) || _closureOnly && !_proofs.ContainsKey(Path.GetFullPath(path))) continue;
+                        if (RelatedArtifactReader.IsProtected(path) || _closureOnly &&
+                            !_proofs.ContainsKey(Path.GetFullPath(path)) && !_observations.ContainsKey(Path.GetFullPath(path))) continue;
                         string? hash = await HashAsync(path, report, token);
-                        if (hash is null || !(_known.ContainsKey(hash) || MatchesProof(path, hash))) continue;
+                        if (hash is null || !(_known.ContainsKey(hash) || MatchesProof(path, hash) || MatchesObservation(path, hash))) continue;
                         relevant = true;
                         string? hostHash = RelatedArtifactRelations.SamePath(host, path) ? hash : await HashAsync(host, report, token);
                         if (hostHash is null || process.HasExited || process.StartTime.ToUniversalTime() != start.UtcDateTime ||
                             !RelatedArtifactRelations.SamePath(process.MainModule?.FileName ?? "", host)) continue;
-                        bool direct = RelatedArtifactRelations.SamePath(host, path), known = _known.ContainsKey(hash);
-                        bool allowed = known || direct && _proofs.TryGetValue(Path.GetFullPath(path), out Finding? proof) && RelatedArtifactRelations.SupportsHeuristicEntry(proof);
-                        AddCurrent(new Finding
-                        {
-                            RuleId = direct ? "PROCESS-RELATED-IMAGE" : "PROCESS-LOADED-MALWARE",
-                            Category = FindingCategory.Process,
-                            Severity = known ? FindingSeverity.Critical : FindingSeverity.High,
-                            Score = ProofScore(path, hash),
-                            TitleText = direct ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.04") : MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.05"),
-                            DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.06"),
-                            Target = host,
-                            Sha256 = hostHash,
-                            ProcessId = process.Id,
-                            ProcessStartedAtUtc = start,
-                            RelatedFilePath = path,
-                            RelatedFileSha256 = hash,
-                            IsKnownMalware = known,
-                            CanRemediate = allowed,
-                            EvidenceText = MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.07", (process.Id), (host), (path)),
-                            SuggestedActions = allowed ? [direct ? SuggestedActionKind.StopProcess : SuggestedActionKind.StopHostProcess] : [SuggestedActionKind.ReviewOnly]
-                        }, report);
+                        Finding? related = CreateProcessAssociation(host, hostHash, path, hash, process.Id, start);
+                        if (related is not null) AddCurrent(related, report);
                     }
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException or UnauthorizedAccessException or NotSupportedException)
@@ -409,6 +427,41 @@ public sealed partial class RelatedArtifactScanner
             foreach (Process process in processes) process.Dispose();
             if (inaccessible > 0) Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.08", (inaccessible)));
         }
+    }
+
+    internal Finding? CreateProcessAssociation(string host, string hostHash, string path, string hash,
+        int processId, DateTimeOffset startedAtUtc)
+    {
+        bool known = _known.ContainsKey(hash);
+        if (!Validation.IsHexSha256(hostHash) || !Validation.IsHexSha256(hash) ||
+            !(known || MatchesProof(path, hash) || MatchesObservation(path, hash))) return null;
+        bool direct = RelatedArtifactRelations.SamePath(host, path);
+        if (direct && !hostHash.Equals(hash, StringComparison.OrdinalIgnoreCase)) return null;
+        bool strong = known || _proofs.TryGetValue(Path.GetFullPath(path), out Finding? proof) &&
+            RelatedArtifactRelations.SupportsHeuristicEntry(proof);
+        bool allowed = known || direct && strong;
+        return new Finding
+        {
+            RuleId = known ? (direct ? "PROCESS-RELATED-IMAGE" : "PROCESS-LOADED-MALWARE") :
+                strong ? (direct ? "PROCESS-RELATED-IMAGE" : "PROCESS-LOADED-COMPONENT") : "PROCESS-RELATED-OBSERVATION",
+            Category = FindingCategory.Process,
+            Severity = known ? FindingSeverity.Critical : strong ? FindingSeverity.High : FindingSeverity.Information,
+            Score = strong ? ProofScore(path, hash) : 0,
+            TitleText = direct ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.04") : MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.05"),
+            DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.06"),
+            ReasonCode = strong ? null : "RelatedFileObservationOnly",
+            Target = host,
+            Sha256 = hostHash,
+            ProcessId = processId,
+            ProcessStartedAtUtc = startedAtUtc,
+            RelatedFilePath = path,
+            RelatedFileSha256 = hash,
+            IsKnownMalware = known,
+            CanRemediate = allowed,
+            AssociationEvidenceTier = strong ? null : RelatedEvidenceTier.Observation,
+            EvidenceText = MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.07", processId, host, path),
+            SuggestedActions = allowed ? [direct ? SuggestedActionKind.StopProcess : SuggestedActionKind.StopHostProcess] : [SuggestedActionKind.ReviewOnly]
+        };
     }
 
     private static void Note(ScanReport report, MessageText note)

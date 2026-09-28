@@ -4,6 +4,8 @@
 
 SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，当前发布包为 2026-09-28 发布的 [v0.3.0-preview.2 自签名预发布版](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2)。已补齐 VPet 精确规则、有界家族解码、组件关系、Steam HTML/JS/CSS 检查、ZIP 中文名称绑定及中英文显示。
 
+本轮源码正在准备规则修正 3：通用字符串共现仅供复核，收紧由此派生的进程关联及旧报告处置资格，兼容 `.node` 原生模块，并把仅路径重合改为低风险观察。精确恶意哈希和专用强规则保持有效。修正原理与旧报告使用方式见 [中文说明](docs/FALSE-POSITIVE-CORRECTION-0.3.0.md) / [English](docs/FALSE-POSITIVE-CORRECTION-0.3.0.en.md)；下述修订 2 的证据不代替本轮新构建验收。
+
 安装修订 2 修复合法 Windows 短路径导致的 `Code=UnsafePath; Path=; Mode=Preflight`，并补齐两份已验真旧图标的精确迁移。七个程序二进制与 preview.1 完全一致；**2,358 项完整回归**保留为同二进制基线，本修订未重复运行。新运行的安装维护 **56 项**、状态迁移 **43 项**均零失败、零跳过，并完成 Windows 10／11 的短路径升级、普通路径重装、531 个载荷文件核验、普通用户扫描／导出／取消及重启后复核。完整身份、证据分层和保留范围见 [0.3.0 发布状态与验收索引](docs/RELEASE-0.3.0.md)。
 
 本包已在 GitHub 公开发布为 **Pre-release**，使用 `CN=fenglinbei` 自签名证书，没有公共受信任证书链或时间戳，Windows 仍可能提示发布者不受信任。具体身份以包内 `VERSION.txt`、`SIGNING.txt` 及发行页的 `PUBLICATION-IDENTITY.json`、`RELEASE-METADATA.json` 为准。项目尚未完成外部安全审计；跨物理显示器测试暂停，旧版有条件迁移提示保留未目视检查的已接受缺口。早期感染恢复验收仍绑定原候选，不冒充本修订完整复测。

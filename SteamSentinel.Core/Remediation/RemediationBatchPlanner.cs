@@ -19,8 +19,10 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         bool blockDomains, Func<IReadOnlyList<string>, CancellationToken, Task<ScanReport>>? inspectCandidates = null,
         IProgress<ScanProgress>? progress = null, CancellationToken token = default)
     {
-        Finding[] selected = selection.Where(f => f.CanRemediate).Take(MaximumSelectedFindings + 1).ToArray();
-        if (selected.Length > MaximumSelectedFindings) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.01"), sourceText => new InvalidDataException(sourceText));
+        Finding[] requested = selection.Take(MaximumSelectedFindings + 1).ToArray();
+        if (requested.Length > MaximumSelectedFindings) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.01"), sourceText => new InvalidDataException(sourceText));
+        // Keep explicitly requested retired findings in the preview and account for their refusal.
+        Finding[] selected = requested.Where(f => f.CanRemediate || RemediationEvidencePolicy.IsReviewOnlyEvidence(f)).ToArray();
         RemediationBatchSession session = new()
         {
             SelectedFindingCount = selected.Length,
@@ -44,7 +46,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                     if (session.PreparationNotes.Count < 4096)
                         session.PreparationNotes.Add(new(finding.Target, reason, detail));
         }
-        List<Finding[]> batches = PackSelection(selected, notes, session.PreparationNotes);
+        foreach (Finding finding in selected.Where(RemediationEvidencePolicy.IsReviewOnlyEvidence))
+            Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
+        List<Finding[]> batches = PackSelection(selected.Where(RemediationEvidencePolicy.CanRemediate).ToArray(), notes, session.PreparationNotes);
         for (int index = 0; index < batches.Count; index++)
         {
             token.ThrowIfCancellationRequested();
@@ -74,7 +78,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         List<List<RemediationAction>> actionGroups = [];
         bool needDomains = blockDomains;
         RemediationPlanBuilder planBuilder = new(rules);
-        foreach (Finding[] group in DependencyGroups(verified.Where(f => f.CanRemediate).ToArray()))
+        foreach (Finding finding in verified.Where(RemediationEvidencePolicy.IsReviewOnlyEvidence))
+            Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
+        foreach (Finding[] group in DependencyGroups(verified.Where(RemediationEvidencePolicy.CanRemediate).ToArray()))
         {
             token.ThrowIfCancellationRequested();
             try
@@ -84,6 +90,8 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                 List<RemediationAction> actions = plan.Actions.Where(a => a.Type != RemediationActionType.BlockKnownDomains).ToList();
                 if (actions.Count > 0) actionGroups.Add(actions);
             }
+            catch (RemediationEvidenceException ex)
+            { Record(group, [MessageExceptions.Describe(ex)], ReasonCodes.ActionsNotIncluded); }
             catch (FileRemediationScopeException ex)
             { Record(group, [MessageExceptions.Describe(ex)], ReasonCodes.ActionsNotIncluded); }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception)
@@ -108,7 +116,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         if (notes.Distinct().Skip(4096).Any()) session.AddNote(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.09"));
         HashSet<string> goalKeys = session.Targets.Select(t => t.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         HashSet<string> plannedKeys = session.Plans.SelectMany(p => p.Actions).Select(ActionKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in verified.Where(f => f.CanRemediate).GroupBy(GoalKey, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in verified.Where(RemediationEvidencePolicy.CanRemediate).GroupBy(GoalKey, StringComparer.OrdinalIgnoreCase))
             if (goalKeys.Add(group.Key) && group.SelectMany(RequiredActionKeys).Any(plannedKeys.Contains))
                 session.Targets.Add(new()
                 {

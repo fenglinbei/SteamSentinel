@@ -24,6 +24,14 @@ public partial class MainWindow
             return;
         }
         if (!await EnsureRemediationAvailableAsync()) return;
+        FindingItemViewModel? retiredSelection = Findings.FirstOrDefault(item => item.IsSelected &&
+            RemediationEvidencePolicy.IsReviewOnlyEvidence(item.Finding));
+        if (retiredSelection is not null)
+        {
+            MessageBox.Show(this, RemediationEvidencePolicy.ReviewOnlyMessage(retiredSelection.Finding).Display,
+                "SteamSentinel", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         Finding[] selected = Findings.Where(i => i.IsSelected && i.CanSelect).Select(i => i.Finding).ToArray();
         if (selected.Length == 0) { MessageBox.Show(this, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.03"), "SteamSentinel"); return; }
         if (selected.Any(f => f.Category == FindingCategory.Steam) && IsSteamRunning())

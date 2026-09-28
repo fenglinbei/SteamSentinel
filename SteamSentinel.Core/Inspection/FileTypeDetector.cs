@@ -191,7 +191,7 @@ public static class FileTypeDetector
         if (string.IsNullOrEmpty(extension)) return false;
         return type switch
         {
-            DetectedFileType.PortableExecutable => extension is not (".exe" or ".dll" or ".scr" or ".com" or ".cpl" or ".sys" or ".pyd" or ".safe_disabled"),
+            DetectedFileType.PortableExecutable => extension is not (".exe" or ".dll" or ".scr" or ".com" or ".cpl" or ".sys" or ".pyd" or ".node" or ".safe_disabled"),
             DetectedFileType.CompoundDocument => extension is not (".msi" or ".msp" or ".doc" or ".xls" or ".ppt" or ".msg"),
             DetectedFileType.Zip => extension is not (".zip" or ".zipx" or ".jar" or ".docx" or ".docm" or ".dotx" or ".dotm" or
                 ".xlsx" or ".xlsm" or ".xltx" or ".xltm" or ".pptx" or ".pptm" or ".potx" or ".potm" or ".ppsx" or ".ppsm" or

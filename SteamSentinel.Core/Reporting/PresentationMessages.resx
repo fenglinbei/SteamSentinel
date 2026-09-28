@@ -5916,7 +5916,7 @@ Component error output: </value>
     <value>Installer member expansion failed: </value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStructuredAsync.02" xml:space="preserve">
-    <value>Installer custom actions contain suspicious content or declared associations</value>
+    <value>Installer static declarations require review</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStructuredAsync.03" xml:space="preserve">
     <value>The installer structure was inspected without running it</value>
@@ -5931,7 +5931,7 @@ Component error output: </value>
     <value>Property/file associations are static declarations. Missing certificate or PAC entries in these tables do not exclude changes made when the program runs.</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.01" xml:space="preserve">
-    <value>A Steam plugin deployment or credential collection chain was detected</value>
+    <value>Script-related strings require review</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.02" xml:space="preserve">
     <value>Content location: {0}</value>
@@ -6552,7 +6552,7 @@ Component error output: </value>
     <value>The shortcut exceeds the size limit</value>
   </data>
   <data name="Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.13" xml:space="preserve">
-    <value>The shortcut contains a suspicious execution chain</value>
+    <value>Shortcut contains script tokens that need review</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanAsync.01" xml:space="preserve">
     <value>System scan</value>
@@ -6609,7 +6609,7 @@ Component error output: </value>
     <value>A confirmed malicious dropped file is still present</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanKnownPathsAsync.02" xml:space="preserve">
-    <value>A known dropped-file path requires hash verification</value>
+    <value>Path matches a known incident; review its content</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanKnownPathsAsync.03" xml:space="preserve">
     <value>Both the path and an exact malicious hash match.</value>
@@ -6762,16 +6762,16 @@ Component error output: </value>
     <value>Empty file</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.01" xml:space="preserve">
-    <value>A download-and-execute chain appears together with a Steam plugin or family payload</value>
+    <value>Download, execution and Steam-related tokens co-occur</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.02" xml:space="preserve">
-    <value>Steam plugin deployment also attempts to modify security exclusions</value>
+    <value>Steam-related and security-exclusion tokens co-occur</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.03" xml:space="preserve">
-    <value>A CAPTCHA prompt appears together with download-and-execute commands</value>
+    <value>Verification, download and execution tokens co-occur</value>
   </data>
   <data name="Backend.Core.ScriptSignals.Analyze.04" xml:space="preserve">
-    <value>Steam login interception, an authentication-data outgoing queue, and a third-party receiving endpoint appear together</value>
+    <value>Login, queue and receiving-endpoint tokens co-occur</value>
   </data>
   <data name="Backend.Core.ScriptSignals.RedactSecrets.01" xml:space="preserve">
     <value>[Content hidden]</value>
@@ -8553,10 +8553,10 @@ Component error output: </value>
     <value>The service relation was not fully read: </value>
   </data>
   <data name="Backend.Core.RelatedArtifactScanner.CollectHistory.01" xml:space="preserve">
-    <value>Run history contains a suspicious verification execution chain</value>
+    <value>Run history contains script tokens that need review</value>
   </data>
   <data name="Backend.Core.RelatedArtifactScanner.CollectHistory.02" xml:space="preserve">
-    <value>History does not establish that a process is still running. Other launch methods may leave no such record.</value>
+    <value>These strings do not prove download or execution behavior. History also does not establish that a process is still running; other launch methods may leave no such record.</value>
   </data>
   <data name="Backend.Core.RelatedArtifactScanner.HashAsync.01" xml:space="preserve">
     <value>This verification batch reached 4 GiB or 2048 files; unverified: </value>
@@ -11632,5 +11632,20 @@ Component error output: </value>
   <data name="Remediation.FileScopeNotApproved" xml:space="preserve">
     <value>The file is outside the current automatic quarantine scope, so its action group was not included in this plan: {0}. Review the file and its provenance manually. The administrator process will recheck the allowed scope before any action.</value>
     <comment>Preparation-only scope refusal; does not expand Broker authorization or change the stable reason code.</comment>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Description" xml:space="preserve">
+    <value>Only string co-occurrence was observed. This does not establish an execution chain or malicious behavior and cannot authorize remediation. </value>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Window" xml:space="preserve">
+    <value>Token {0}; decoding window starts at byte {1}; encoding {2}; {3}. This is not an exact token offset or execution evidence.</value>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Normalized" xml:space="preserve">
+    <value>matched after bounded normalization</value>
+  </data>
+  <data name="Scan.ScriptTokenCooccurrence.Literal" xml:space="preserve">
+    <value>literal match</value>
+  </data>
+  <data name="Remediation.ScriptTokenEvidenceReviewOnly" xml:space="preserve">
+    <value>These tokens or static declarations do not authorize remediation (rule: {0}). Rescan and review the evidence; the original report remains unchanged.</value>
   </data>
 </root>
