@@ -41,13 +41,13 @@ internal static partial class Program
                 // Keep off-screen evidence deterministic even when hardware composition
                 // is unavailable (for example an inactive desktop or graphics session).
                 RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
-                app = new();
-                app.InitializeComponent();
-                app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                app = UiFixtureApplication.Create();
                 TestV0117Layout(output);
                 TestScanSettingsUi(output);
                 TestV030UiPresentation(output);
                 TestV030LanguageControls(output);
+                Check("UI 夹具没有安排或加载真实产品窗口", app.StartupUri is null &&
+                    app.Windows.OfType<MainWindow>().All(window => !window.IsLoaded));
             }
             catch (Exception ex) { error = ex; }
             finally { app?.Shutdown(); }
@@ -278,6 +278,7 @@ internal static partial class Program
         TestTrustProxyUi(output);
         TestPhase2RelatedUi(output);
         TestPhase3CaseUi(output);
+        TestV030RemediationAvailabilityUi(output);
         TestV020ContainerUi(output);
         TestV0119PasswordUi(output);
     }

@@ -45,6 +45,7 @@ public static class ReasonCodes
     public const string PlanExpired = "remediation.plan_expired";
     public const string BatchIncomplete = "remediation.batch_incomplete";
     public const string ExecutionInterrupted = "remediation.execution_interrupted";
+    public const string ExecutionOutcomeUnknown = "remediation.outcome_unknown";
 
     public static string ForFailureType(string? type) => type switch
     {

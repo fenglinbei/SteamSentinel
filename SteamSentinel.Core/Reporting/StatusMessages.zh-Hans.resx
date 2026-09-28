@@ -207,4 +207,7 @@
   <data name="coverage.resource_limit" xml:space="preserve">
     <value>达到核验安全上限，未完成的目标未纳入方案。</value>
   </data>
+  <data name="remediation.outcome_unknown" xml:space="preserve">
+    <value>本次处理已结束，但结果尚不能确认。请重新扫描以检查当前状态；原记录已保留。</value>
+  </data>
 </root>

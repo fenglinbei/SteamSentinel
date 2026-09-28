@@ -2,13 +2,15 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，已于 2026-09-28 公开发布为 [v0.3.0-preview.3 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.3)，规则版本为 `2026.09.28.1`。下载以发行页实际可见的完整附件为准。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，本轮为 [v0.3.0-preview.4 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.4)，规则版本为 `2026.09.28.1`。
 
-规则修正 3 将通用字符串共现保留为中风险、仅供复核，不再据此隔离文件或终止宿主；同步收紧 MSI、快捷方式、运行历史及弱文件关联，兼容 `.node` 原生模块，并把仅历史路径重合改为低风险观察。精确恶意哈希、专用强规则、VPet 家族和独立配置证据继续按各自规则处理。旧报告和病例不重写，新计划会拒绝退役弱规则；请升级后重新扫描原范围。详见 [中文说明](docs/FALSE-POSITIVE-CORRECTION-0.3.0.md) / [English](docs/FALSE-POSITIVE-CORRECTION-0.3.0.en.md)。
+处置修订 4 修复“全选后仍无法预览处置”：启动时自动核验旧操作；确认已结束后恢复新方案入口，保留旧未知结果。按钮不可用时直接说明原因，并提供“检查并继续／重新扫描／查看记录”。关闭旧程序、安装完整新包，再重新扫描原目录即可；无需删除病例或手工改配置，旧计划不会重放。详见[处置恢复说明](docs/REMEDIATION-RECOVERY-0.3.0.md)。
 
-产品及安装器已从干净源码提交 `67e507b744a88e072707ae3c6d2ebdf34f3e7429` 完整重编译。新原生完整自测 **2,469 项**、同提交 Windows CI **2,469 项**、安装维护 **56 项**、状态迁移 **43 项**分别通过，均零失败、零跳过；这些独立运行不相加。最终签名 Core 的旧 JSON 资格回放确认三份报告的三项退役弱规则全部不可处置，独立配置项仍保留资格，原证据包未改写。Windows 10／11、静态语料与重启验收：**两机各通过 164 项误报专项，完成升级、同版重装、535 项载荷核验、中英文启动探针、原三项扫描／导出与独立双语取消补验，以及一次重启复核；三份原始 ZIP 静态扫描保留 15 条预期强规则，覆盖为 Complete／Partial／Complete**。完整身份、已完成范围及保留项见 [0.3.0 发布状态与验收索引](docs/RELEASE-0.3.0.md)。
+修复基线完整自测 **2,615 项**、安装维护 **56 项**、状态迁移 **43 项**均通过；本轮发行从干净提交重新完整构建，精确身份与实际计数以发行附件为准。中英文布局、89 项恢复专项和真实历史记录只读验证均已完成。Windows 10/11 安装 GUI、真实感染恢复及物理跨屏未在本修订重跑，历史结果保留原身份。见[发布状态与验收索引](docs/RELEASE-0.3.0.md)。
 
-本包使用 `CN=fenglinbei` 自签名证书，没有公共受信任证书链或时间戳，Windows 仍可能提示发布者不受信任。具体身份以包内 `VERSION.txt`、`SIGNING.txt` 及发行附件 `PUBLICATION-IDENTITY.json`、`RELEASE-METADATA.json` 为准。项目尚未完成外部安全审计；跨物理显示器测试暂停，旧版有条件迁移提示保留未目视检查的已接受缺口。preview.2 的 **2,358 项**旧二进制基线、安装短路径修复以及更早的感染恢复验收保留各自历史身份，不计为本轮重测。
+规则修正 3 继续保留：通用词语共现只供复核，不授予隔离或终止宿主资格；`.node` 原生模块兼容、历史路径低风险观察及精确强证据按各自规则处理。旧报告保留原文，新计划拒绝退役弱规则。见[误报修正说明](docs/FALSE-POSITIVE-CORRECTION-0.3.0.md)。
+
+本包使用 `CN=fenglinbei` 自签名证书，没有公共受信任证书链或时间戳，Windows 仍可能提示发布者不受信任。身份以 `VERSION.txt`、`SIGNING.txt`、发行附件 `PUBLICATION-IDENTITY.json` 和 `RELEASE-METADATA.json` 为准。项目尚未完成外部安全审计；暂停项及已接受覆盖缺口见发布索引。
 
 **当前暂停系统 AMSI 增强入口及实际调用**；缺少该增强项不会单独使基础扫描显示“扫描不完整”。历史报告保持原样，真正的读取、密码、格式或缺卷等检查缺口仍会显示。无需为基础扫描安装 Norton。
 

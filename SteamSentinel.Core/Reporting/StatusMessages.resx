@@ -207,4 +207,7 @@
   <data name="coverage.resource_limit" xml:space="preserve">
     <value>A verification safety limit was reached; incomplete targets were not included in the plan.</value>
   </data>
+  <data name="remediation.outcome_unknown" xml:space="preserve">
+    <value>This operation has ended, but its outcome could not be confirmed. Scan again to check the current state; the original record is retained.</value>
+  </data>
 </root>

@@ -30,16 +30,13 @@ public partial class MainWindow
         if (RemediateButton is null || SelectAllButton is null || Findings is null) return;
         FindingHandlingCounts counts = FindingHandlingPresentation.Count(Findings.Select(item => item.Finding));
         bool available = counts.Actionable > 0;
-        string unavailable = _busy ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.01")
-            : _recoveryRequired || _caseRecoveryUnavailable || _remediationClient.HasUnresolvedExecution ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.02")
-            : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.03")
-            : !available ? counts.AttentionCount > 0
-                ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.04")
-                : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.05")
-            : !_installationSecurity.IsProtected ? _installationSecurity.MessageText.Display + DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.06")
-            : string.Empty;
-        RemediateButton.IsEnabled = unavailable.Length == 0;
-        RemediateButton.ToolTip = unavailable.Length > 0 ? unavailable : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.07");
+        RemediationAvailability availability = GetRemediationAvailability(counts);
+        RemediateButton.IsEnabled = availability.CanRemediate;
+        RemediateButton.ToolTip = availability.State == RemediationAvailabilityState.InstallationUnavailable
+            ? _installationSecurity.MessageText.Display + DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.06")
+            : availability.CanRemediate ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.07")
+            : RemediationAvailabilityText(availability.State);
+        UpdateRemediationAvailabilityPresentation(availability);
         SelectAllButton.IsEnabled = !_busy && !_reportNeedsRefresh && available;
         SelectAllButton.ToolTip = !available ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.08") + (counts.AttentionCount > 0 ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.09") : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.10"))
             : _busy ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.11")

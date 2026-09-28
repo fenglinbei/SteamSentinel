@@ -49,6 +49,9 @@ public static class RemediationCasePresentation
             .Any(r => r.Disposition == RemediationRunDisposition.ExecutionUnknown || r.Actions.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown));
         text.AppendLine(DisplayText.Get("RemediationCase.Render.04") + Label(uncertain ? CaseReverificationState.ExecutionUncertain : record.Episodes.LastOrDefault()?.State ?? CaseReverificationState.NotChecked));
         text.AppendLine(DisplayText.Get("RemediationCase.Render.05") + record.PendingPlanIds.Count);
+        if (record.PendingPlanIds.Count == 0 && record.ExecutionResults.Concat(record.BatchSession?.Results ?? [])
+            .Any(r => r.Disposition == RemediationRunDisposition.ExecutionUnknown))
+            text.AppendLine(DisplayText.Get("Ui.RemediationAvailability.EndedUnknown"));
         text.AppendLine(DisplayText.Get("Case.WriterUnconfirmed"));
         text.AppendLine(DisplayText.Get("RemediationCase.Render.06"));
         if (record.BaselineSession is { } baseline)

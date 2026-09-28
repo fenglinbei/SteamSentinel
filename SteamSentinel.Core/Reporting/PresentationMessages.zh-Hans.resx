@@ -3316,10 +3316,6 @@ DER SHA-256：{3}
     <value>管理员处置可用</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
-  <data name="Ui.xaml.RefreshInstallation_Click.01" xml:space="preserve">
-    <value>已读取迟到的管理员结果，请导出记录并重新扫描后再处置。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
   <data name="Ui.xaml.RefreshInstallation_Click.02" xml:space="preserve">
     <value>尚无确定的管理员结果，仍禁止新的处置，可导出当前记录。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
@@ -3623,7 +3619,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
   </data>
   <data name="Ui.TrustProxy.UpdateRemediationEligibility.02" xml:space="preserve">
-    <value>上次操作的结果尚未确认，暂不能再次处置。</value>
+    <value>尚未确认上次处理是否结束。检查后才能开始新的处理。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
   </data>
   <data name="Ui.TrustProxy.UpdateRemediationEligibility.03" xml:space="preserve">
@@ -3631,7 +3627,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
   </data>
   <data name="Ui.TrustProxy.UpdateRemediationEligibility.04" xml:space="preserve">
-    <value>当前没有可处理项。仍有待确认、暂不支持或条件未满足的项目，请查看处理状态与原因。</value>
+    <value>当前没有可处理项，请查看每项的处理状态与原因。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
   </data>
   <data name="Ui.TrustProxy.UpdateRemediationEligibility.05" xml:space="preserve">
@@ -11647,5 +11643,41 @@ DER SHA-256：{3}
   </data>
   <data name="Remediation.ScriptTokenEvidenceReviewOnly" xml:space="preserve">
     <value>这些词语或静态声明不足以授权处置（规则：{0}）。请重新扫描并人工复核；原报告保留不变。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.RestartRequired" xml:space="preserve">
+    <value>程序遇到了问题，请重新打开后再处理。现有记录仍可查看。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.RecoveryUnavailable" xml:space="preserve">
+    <value>暂时无法检查上次处理的状态，请重试后再继续处理。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.ScanRequired" xml:space="preserve">
+    <value>请先扫描，再选择需要处理的问题。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.InstallationUnavailable" xml:space="preserve">
+    <value>安装状态尚未通过检查，暂不能处理。请先检查安装。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.EndedUnknown" xml:space="preserve">
+    <value>上次处理已结束，但结果尚不能确认。旧记录已保留，可继续扫描和处理本次发现的问题。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.EndedUnknownRescanRequired" xml:space="preserve">
+    <value>上次处理已结束但结果未知，旧记录已保留。重新扫描后可继续处理。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.EndedUnknownNoActionableFindings" xml:space="preserve">
+    <value>上次处理已结束但结果未知，旧记录已保留。当前没有可处理项。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.Ready" xml:space="preserve">
+    <value>选择需要处理的问题，再核对处理预览。</value>
+  </data>
+  <data name="Ui.RemediationAvailability.CheckRecovery" xml:space="preserve">
+    <value>检查并继续</value>
+  </data>
+  <data name="Ui.RemediationAvailability.Rescan" xml:space="preserve">
+    <value>重新扫描</value>
+  </data>
+  <data name="Ui.RemediationAvailability.CheckInstallation" xml:space="preserve">
+    <value>检查安装</value>
+  </data>
+  <data name="Ui.RemediationAvailability.ViewRecords" xml:space="preserve">
+    <value>查看记录</value>
   </data>
 </root>

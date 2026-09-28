@@ -15,6 +15,23 @@ public partial class MainWindow
     private RemediationCaseRecord? _persistedCase;
     private RemediationCaseRecord? _loadedCase;
     private bool _caseRecoveryUnavailable;
+    private bool _hasEndedUnknownExecution;
+    private DateTimeOffset? _lastRemediationCompletedAtUtc;
+
+    private void ObserveFinishedRemediation(RemediationRunResult result)
+    {
+        if (!Dispatcher.CheckAccess()) { Dispatcher.Invoke(() => ObserveFinishedRemediation(result)); return; }
+        if (result.CompletedAtUtc is { } completed && (_lastRemediationCompletedAtUtc is null || completed > _lastRemediationCompletedAtUtc))
+            _lastRemediationCompletedAtUtc = completed;
+        if (result.Disposition == RemediationRunDisposition.ExecutionUnknown) _hasEndedUnknownExecution = true;
+        InvalidateStaleRemediationReport(_lastReport);
+    }
+
+    private void InvalidateStaleRemediationReport(ScanReport? report)
+    {
+        if (report is not null && _lastRemediationCompletedAtUtc is { } completed && report.StartedAtUtc <= completed)
+            _reportNeedsRefresh = true;
+    }
 
     private sealed record CaseListItem(RemediationCaseSummary Summary)
     {
@@ -39,7 +56,11 @@ public partial class MainWindow
                     throw new InvalidDataException(DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.01"));
                 RemediationCaseRecord? record = await _caseStore.LoadAsync(summary.CaseId);
                 if (record is null) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.02"));
-                foreach (RemediationPlan plan in CasePlans(record).Where(p => record.PendingPlanIds.Contains(p.PlanId)))
+                // User-owned history is never proof that an execution ended. Reopen its
+                // protected channel on every startup, including previously recovered unknowns.
+                foreach (RemediationPlan plan in CasePlans(record).Where(p => record.PendingPlanIds.Contains(p.PlanId) ||
+                    record.ExecutionResults.Concat(record.BatchSession?.Results ?? []).Any(r =>
+                        r.PlanId == p.PlanId && r.Disposition == RemediationRunDisposition.ExecutionUnknown)))
                     _remediationClient.RestoreUnresolvedPlan(plan);
             }
         }
@@ -47,6 +68,25 @@ public partial class MainWindow
         if (_remediationClient.HasUnresolvedExecution)
             CaseDetailsText.Text = DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.04");
         CaseRecheckButton.IsEnabled = !_busy && items.Length > 0;
+    }
+
+    private async Task RefreshRemediationRecoveryAsync()
+    {
+        try
+        {
+            await RefreshCaseRecordsAsync(restorePending: true);
+            while (await _remediationClient.TryRecoverResultAsync() is { } recovered)
+                await RecordRecoveredResultAsync(recovered);
+            await RefreshCaseRecordsAsync();
+            if (CaseListComboBox.SelectedItem is CaseListItem selected && await _caseStore.LoadAsync(selected.Summary.CaseId) is { } record)
+                DisplayCaseRecord(record);
+            _caseRecoveryUnavailable = false;
+        }
+        catch
+        {
+            _caseRecoveryUnavailable = true;
+            throw;
+        }
     }
 
     private async Task BeginPersistentCaseAsync(RemediationBatchSession batch, ScanReport original)
@@ -87,16 +127,28 @@ public partial class MainWindow
                 if (!record.PendingPlanIds.Contains(pending.PlanId)) record.PendingPlanIds.Add(pending.PlanId);
                 await _caseStore.SaveAsync(record, token).ConfigureAwait(false);
             }).ConfigureAwait(false);
-            record.ExecutionResults.RemoveAll(r => r.PlanId == result.PlanId);
-            record.ExecutionResults.Add(result);
-            record.PendingPlanIds.Remove(plan.PlanId);
-            await _caseStore.SaveAsync(record).ConfigureAwait(false);
+            await _remediationClient.PersistResultAsync(result, async () =>
+            {
+                record.ExecutionResults.RemoveAll(r => r.PlanId == result.PlanId);
+                record.ExecutionResults.Add(result);
+                record.PendingPlanIds.Remove(plan.PlanId);
+                try { await _caseStore.SaveAsync(record).ConfigureAwait(false); }
+                catch
+                {
+                    if (!record.PendingPlanIds.Contains(plan.PlanId)) record.PendingPlanIds.Add(plan.PlanId);
+                    throw;
+                }
+            }).ConfigureAwait(false);
+            ObserveFinishedRemediation(result);
             return result;
         }
         catch
         {
-            if (!_remediationClient.IsUnresolved(plan.PlanId)) record.PendingPlanIds.Remove(plan.PlanId);
-            await _caseStore.SaveAsync(record).ConfigureAwait(false);
+            if (!_remediationClient.IsUnresolved(plan.PlanId))
+            {
+                record.PendingPlanIds.Remove(plan.PlanId);
+                await _caseStore.SaveAsync(record).ConfigureAwait(false);
+            }
             throw;
         }
     }
@@ -114,7 +166,7 @@ public partial class MainWindow
         {
             token.ThrowIfCancellationRequested();
             RemediationRunResult? result;
-            try { result = await ProtectedRemediationResultReader.TryReadAsync(plan, token); }
+            try { result = await ProtectedRemediationResultReader.TryReadFinishedAsync(plan, token); }
             catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
             {
                 if (record.Notes.Count < 2048) record.AddNote((MessageText.Create("Ui.Cases.RecoverCaseResultsAsync.01") + plan.PlanId + "：" + MessageExceptions.Describe(ex)).Limit(2048));
@@ -134,34 +186,52 @@ public partial class MainWindow
             if (record.PendingPlanIds.Count == 0 && batch.ExecutionStarted) batch.ExecutionFinished = true;
             RemediationBatchPlanner.RefreshOutcomes(batch);
         }
+        // This save must precede acknowledgement by the client. Historical unknown
+        // outcomes remain unknown; only the execution-in-progress gate is released.
+        await _caseStore.SaveAsync(record, token);
         while (await _remediationClient.TryRecoverResultAsync() is { } recovered)
             await RecordRecoveredResultAsync(recovered);
     }
 
     private async Task RecordRecoveredResultAsync(RemediationRunResult recovered)
     {
-        IReadOnlyList<RemediationCaseSummary> summaries = await _caseStore.ListAsync();
-        long recoveryBytes = 0;
-        foreach (RemediationCaseSummary summary in summaries)
+        RemediationCaseRecord? display = null;
+        await _remediationClient.PersistResultAsync(recovered, async () =>
         {
-            recoveryBytes = checked(recoveryBytes + new FileInfo(Path.Combine(_caseStore.RootDirectory, summary.CaseId.ToString("N"), "case.json")).Length);
-            if (recoveryBytes > 128L * 1024 * 1024) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RecordRecoveredResultAsync.01"));
-            RemediationCaseRecord? record = _persistedCase?.CaseId == summary.CaseId ? _persistedCase :
-                _loadedCase?.CaseId == summary.CaseId ? _loadedCase : await _caseStore.LoadAsync(summary.CaseId);
-            if (record is null) continue;
-            RemediationPlan? matching = CasePlans(record).SingleOrDefault(p => p.PlanId == recovered.PlanId);
-            if (matching is null) continue;
-            ProtectedRemediationResultReader.Validate(matching, recovered);
-            record.ExecutionResults.RemoveAll(r => r.PlanId == recovered.PlanId); record.ExecutionResults.Add(recovered);
-            record.PendingPlanIds.Remove(recovered.PlanId);
-            if (record.BatchSession is { } batch)
+            IReadOnlyList<RemediationCaseSummary> summaries = await _caseStore.ListAsync();
+            long recoveryBytes = 0;
+            foreach (RemediationCaseSummary summary in summaries)
             {
-                batch.Results.RemoveAll(r => r.PlanId == recovered.PlanId); batch.Results.Add(recovered);
-                if (record.PendingPlanIds.Count == 0 && batch.ExecutionStarted) batch.ExecutionFinished = true;
-                RemediationBatchPlanner.RefreshOutcomes(batch);
+                recoveryBytes = checked(recoveryBytes + new FileInfo(Path.Combine(_caseStore.RootDirectory, summary.CaseId.ToString("N"), "case.json")).Length);
+                if (recoveryBytes > 128L * 1024 * 1024) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RecordRecoveredResultAsync.01"));
+                // Always load durable history; cached revisions can lag another window.
+                RemediationCaseRecord? record = await _caseStore.LoadAsync(summary.CaseId);
+                if (record is null || !CasePlans(record).Any(p => p.PlanId == recovered.PlanId)) continue;
+                bool changed = RemediationCaseRecovery.ApplyFinishedResult(record, recovered);
+                try
+                {
+                    if (changed) await _caseStore.SaveAsync(record);
+                }
+                catch
+                {
+                    _caseRecoveryUnavailable = true;
+                    throw;
+                }
+                if (_persistedCase?.CaseId == record.CaseId)
+                {
+                    _persistedCase = record;
+                    if (_caseBatch?.SessionId == record.BatchSession?.SessionId && record.BatchSession is not null)
+                    {
+                        _caseBatch = record.BatchSession;
+                        UpdateBatchResults();
+                    }
+                }
+                if (_loadedCase?.CaseId == record.CaseId) _loadedCase = record;
+                display = record;
             }
-            await _caseStore.SaveAsync(record);
-        }
+            if (display is null) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.02"));
+        });
+        ObserveFinishedRemediation(recovered);
     }
 
     internal void DisplayCaseRecord(RemediationCaseRecord record)
@@ -176,7 +246,7 @@ public partial class MainWindow
         SetBusy(true);
         try
         {
-            await RefreshCaseRecordsAsync(restorePending: true);
+            await RefreshRemediationRecoveryAsync();
             if (CaseListComboBox.SelectedItem is CaseListItem selected && await _caseStore.LoadAsync(selected.Summary.CaseId) is { } record)
             {
                 _loadedCase = record;

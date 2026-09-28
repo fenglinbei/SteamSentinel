@@ -139,7 +139,7 @@
                             <TextBlock x:Name="ProgressStageText" DockPanel.Dock="Left" MaxWidth="200" Margin="0,0,10,0" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.033}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                             <TextBlock x:Name="ProgressItemText" Foreground="#667085" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                         </DockPanel>
-                        <ProgressBar x:Name="ScanProgressBar" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,4,0,0" Height="3" IsIndeterminate="False" />
+                        <ProgressBar x:Name="ScanProgressBar" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,1,0,0" Height="3" IsIndeterminate="False" />
                         <TextBlock x:Name="FindingCountText" Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.034}" />
                         <TextBlock x:Name="FindingHandlingSummaryText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#475467"
                                    Text="{ui:Text Ui.Xaml.MainWindow.035}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
@@ -312,6 +312,28 @@
                     </Expander>
 
                     <DockPanel x:Name="SelectionActionsBar" Grid.Row="4" Margin="0,8,0,0" LastChildFill="True">
+                    <Border x:Name="RemediationAvailabilityPanel" DockPanel.Dock="Bottom" Margin="0,4,0,0" Padding="8,5" Background="#EFF6FF" BorderBrush="#B2CCFF" BorderThickness="1" CornerRadius="4">
+                        <Border.Style><Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedIndex, ElementName=ResultTabs}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True"/>
+                                        <Condition Binding="{Binding Visibility, ElementName=ActivityPanel}" Value="Visible"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style></Border.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="RemediationAvailabilityTextBlock" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#1849A9"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <Button x:Name="RemediationAvailabilityActionButton" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
+                                    Click="RemediationAvailabilityAction_Click" Visibility="Collapsed" />
+                        </Grid>
+                    </Border>
                         <Button x:Name="RemediateButton" DockPanel.Dock="Right" VerticalAlignment="Top" Margin="8,0,0,0"
                                 IsEnabled="False" Content="{ui:Text Ui.Xaml.MainWindow.092}" Click="Remediate_Click" ToolTipService.ShowOnDisabled="True">
                             <Button.Style><Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">

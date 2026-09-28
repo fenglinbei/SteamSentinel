@@ -154,8 +154,7 @@ internal static partial class Program
             try
             {
                 CultureInfo oldCulture = CultureInfo.CurrentCulture, oldUi = CultureInfo.CurrentUICulture;
-                app = new(); app.InitializeDisplayLanguage(arguments, settingsPath, CultureInfo.GetCultureInfo(windowsCulture));
-                app.InitializeComponent(); app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                app = UiFixtureApplication.Create(); app.InitializeDisplayLanguage(arguments, settingsPath, CultureInfo.GetCultureInfo(windowsCulture));
                 MainWindow window = new();
                 Task<string> background;
                 using (ExecutionContext.SuppressFlow()) background = Task.Run(() => DisplayText.Culture.Name);

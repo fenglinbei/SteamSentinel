@@ -192,8 +192,7 @@ internal static partial class Program
         {
             try
             {
-                SteamSentinel.App.App app = new(); app.InitializeComponent();
-                app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
+                SteamSentinel.App.App app = UiFixtureApplication.Create();
                 ArchivePasswordRequest request = new("ui", "inert.zip", new string('A', 64), "ZIP", 1, null, "inert",
                     ArchivePasswordReuseScope.Session, ArchivePasswordPromptKind.CachedPasswordFailed);
                 PasswordDialog dialog = new(request);
@@ -206,6 +205,8 @@ internal static partial class Program
                 TestV0117Layout();
                 TestV030UiPresentation(null);
                 TestV030LanguageControls(null);
+                Check("UI 夹具没有安排或加载真实产品窗口", app.StartupUri is null &&
+                    app.Windows.OfType<MainWindow>().All(window => !window.IsLoaded));
                 app.Shutdown();
             }
             catch (Exception ex) { failure = ex; }

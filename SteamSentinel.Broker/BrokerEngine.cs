@@ -42,12 +42,21 @@ internal sealed partial class BrokerEngine
         _incidentStateSecurity = incidentStateSecurity ?? throw new ArgumentNullException(nameof(incidentStateSecurity));
     }
 
-    public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default)
+    public Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default) =>
+        BrokerExecutionBoundary.RunAsync(plan, () => ValidateBeforeExecution(plan),
+            () => ExecuteValidatedAsync(plan, cancellationToken));
+
+    internal void ValidateBeforeExecution(RemediationPlan plan)
     {
+        // This entire phase must remain read-only. No incident directory, backup or action may be created here.
         ValidatePlan(plan);
         _requestedBySid = plan.RequestedBySid;
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         ValidateConfigurationPlan(plan);
+    }
+
+    private async Task<RemediationRunResult> ExecuteValidatedAsync(RemediationPlan plan, CancellationToken cancellationToken)
+    {
         _result = new RemediationRunResult { PlanId = plan.PlanId, PlanIdentitySha256 = RemediationPlanIdentity.Fingerprint(plan) };
         _contentProofs.Clear();
         _verification = new(new WindowsRemediationStateProbe(async (script, token) =>

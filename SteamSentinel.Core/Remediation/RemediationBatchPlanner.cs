@@ -293,7 +293,11 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         foreach (RemediationTargetOutcome target in session.Targets.Where(t => t.ActionIds.Count > 0))
         {
             var executed = target.ActionIds.Where(results.ContainsKey).Select(id => results[id]).ToArray();
-            if (executed.Any(a => !a.Success))
+            bool unknown = session.Results.Any(r => r.Disposition == RemediationRunDisposition.ExecutionUnknown &&
+                session.Plans.Any(p => p.PlanId == r.PlanId && p.Actions.Any(a => target.ActionIds.Contains(a.ActionId))));
+            if (unknown || executed.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown))
+                target.SetState(RemediationTargetState.ReviewRequired, ReasonCodes.ExecutionOutcomeUnknown);
+            else if (executed.Any(a => !a.Success))
                 target.SetState(RemediationTargetState.Failed, ReasonCodes.ActionFailed, MessageText.Join("\n", executed.Where(a => !a.Success).Select(a => a.MessageText)));
             else if (target.MissingActions.Count > 0)
                 target.SetState(RemediationTargetState.PartiallyIncluded, ReasonCodes.ActionsNotIncluded, target.ReasonDetailsText);

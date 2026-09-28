@@ -64,6 +64,7 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        _caseRecoveryUnavailable = true;
         try
         {
             await RefreshInstallationSecurityAsync();
@@ -80,7 +81,7 @@ public partial class MainWindow : Window
                     ? DisplayText.Get("Ui.xaml.MainWindow_Loaded.04")
                     : DisplayText.Get("Ui.xaml.MainWindow_Loaded.05");
             await RefreshQuarantineItemsAsync();
-            try { await RefreshCaseRecordsAsync(restorePending: true); }
+            try { await RefreshRemediationRecoveryAsync(); }
             catch (Exception ex) { _caseRecoveryUnavailable = true; CaseDetailsText.Text = DisplayText.Get("Ui.xaml.MainWindow_Loaded.06") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex); }
         }
         catch (Exception ex)
@@ -401,6 +402,7 @@ public partial class MainWindow : Window
 
     private void PopulateFindings(ScanReport report)
     {
+        InvalidateStaleRemediationReport(report);
         Findings.Clear();
         foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage)) Findings.Add(new FindingItemViewModel(finding));
         FindingCountText.Text = DisplayText.Format("Ui.xaml.PopulateFindings.01", (Findings.Count));
@@ -839,6 +841,7 @@ public partial class MainWindow : Window
         DeleteIncidentButton.IsEnabled = false;
         HeaderStatusText.Text = DisplayText.Get("Ui.xaml.EnterRecoveryMode.01");
         FooterText.Text = DisplayText.Get("Ui.xaml.EnterRecoveryMode.02");
+        UpdateRemediationEligibility();
     }
 
     private void ApplyInstallationSecurityStatus()
@@ -866,6 +869,7 @@ public partial class MainWindow : Window
 
     private async Task RefreshInstallationSecurityAsync()
     {
+        bool wasBusy = _busy;
         SetBusy(true);
         try
         {
@@ -873,30 +877,22 @@ public partial class MainWindow : Window
             _elevationContext = ElevationContext.Read();
             ApplyInstallationSecurityStatus();
         }
-        finally { SetBusy(false); }
+        finally { SetBusy(wasBusy); }
     }
 
     private async void RefreshInstallation_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
+        SetBusy(true);
         try
         {
-            RemediationRunResult? recovered = await _remediationClient.TryRecoverResultAsync();
-            if (recovered is not null)
-            {
-                _caseResult = recovered;
-                await RecordRecoveredResultAsync(recovered);
-                if (_caseBatch is not null && !_caseBatch.Results.Any(item => item.PlanId == recovered.PlanId))
-                    _caseBatch.Results.Add(recovered);
-                _reportNeedsRefresh = true;
-                UpdateBatchResults();
-                FooterText.Text = DisplayText.Get("Ui.xaml.RefreshInstallation_Click.01");
-            }
-            else if (_remediationClient.HasUnresolvedExecution)
+            await RefreshRemediationRecoveryAsync();
+            if (_remediationClient.HasUnresolvedExecution)
                 FooterText.Text = DisplayText.Get("Ui.xaml.RefreshInstallation_Click.02");
             await RefreshInstallationSecurityAsync();
         }
         catch (Exception ex) { AppErrorLog.Write("RecoverBrokerResult", ex); FooterText.Text = SteamSentinel.Core.Reporting.MessageExceptions.Display(ex); }
+        finally { SetBusy(false); }
     }
 
     private async void Elevate_Click(object sender, RoutedEventArgs e)

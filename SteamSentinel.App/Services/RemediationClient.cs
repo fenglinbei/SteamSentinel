@@ -11,6 +11,13 @@ internal sealed class RemediationClient
 {
     internal const int MaximumWaitSeconds = 300;
     private readonly Dictionary<Guid, RemediationPlan> _unresolvedPlans = [];
+    private readonly Func<RemediationPlan, CancellationToken, Task<RemediationRunResult?>> _readFinished;
+
+    internal RemediationClient() : this(ProtectedRemediationResultReader.TryReadFinishedAsync) { }
+
+    // Test readers return inert receipts only; production always reads the protected, closed channel.
+    internal RemediationClient(Func<RemediationPlan, CancellationToken, Task<RemediationRunResult?>> readFinished)
+        => _readFinished = readFinished;
     internal bool HasUnresolvedExecution => _unresolvedPlans.Count > 0;
     internal bool IsUnresolved(Guid id) => _unresolvedPlans.ContainsKey(id);
     internal void RestoreUnresolvedPlan(RemediationPlan plan)
@@ -21,18 +28,34 @@ internal sealed class RemediationClient
 
     internal async Task<RemediationRunResult?> TryRecoverResultAsync()
     {
-        foreach ((Guid id, RemediationPlan plan) in _unresolvedPlans.ToArray())
+        foreach (RemediationPlan plan in _unresolvedPlans.Values.ToArray())
         {
             RemediationRunResult? result;
-            try { result = await ProtectedRemediationResultReader.TryReadAsync(plan).ConfigureAwait(false); }
+            try
+            {
+                result = await _readFinished(plan, CancellationToken.None).ConfigureAwait(false);
+                if (result is not null) ProtectedRemediationResultReader.ValidateFinished(plan, result);
+            }
             catch (IOException) { continue; }
+            catch (InvalidDataException) { continue; }
             catch (Win32Exception) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
             if (result is null) continue;
-            _unresolvedPlans.Remove(id);
-            try { File.Delete(Path.Combine(AppPaths.PlansRoot, $"plan-{id:N}.json")); } catch (IOException) { }
+            // Reading a finished receipt does not unlock anything until its history is durable.
             return result;
         }
         return null;
+    }
+
+    internal async Task PersistResultAsync(RemediationRunResult result, Func<Task> persist)
+    {
+        if (!_unresolvedPlans.TryGetValue(result.PlanId, out RemediationPlan? plan))
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.10"), sourceText => new InvalidDataException(sourceText));
+        ProtectedRemediationResultReader.ValidateFinished(plan, result);
+        await persist().ConfigureAwait(false);
+        _unresolvedPlans.Remove(result.PlanId);
+        try { File.Delete(Path.Combine(AppPaths.PlansRoot, $"plan-{result.PlanId:N}.json")); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default,
@@ -106,10 +129,10 @@ internal sealed class RemediationClient
         if (brokerExitCode is not (0 or 1 or 3))
             throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.08", (brokerExitCode)), sourceText => new InvalidOperationException(sourceText));
         if (!File.Exists(resultPath)) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.09"), sourceText => new InvalidOperationException(sourceText));
-        RemediationRunResult result = await ProtectedRemediationResultReader.TryReadAsync(plan, cancellationToken)
+        RemediationRunResult result = await _readFinished(plan, cancellationToken)
             ?? throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.10"), sourceText => new InvalidDataException(sourceText));
-        _unresolvedPlans.Remove(plan.PlanId);
-        try { File.Delete(planPath); } catch (IOException) { }
+        ProtectedRemediationResultReader.ValidateFinished(plan, result);
+        // ExecuteRecordedPlanAsync persists the receipt before releasing the pending gate.
         return result;
     }
 

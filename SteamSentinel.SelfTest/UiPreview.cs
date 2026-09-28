@@ -23,8 +23,7 @@ internal static class UiPreview
             try
             {
                 Directory.CreateDirectory(output);
-                SteamSentinel.App.App app = new();
-                app.InitializeComponent();
+                SteamSentinel.App.App app = UiFixtureApplication.Create();
                 ArchivePasswordRequest request = new("preview", "C:\\示例内容\\外层加密包.rar!/" +
                     string.Concat(Enumerable.Repeat("较长的成员目录/", 16)) + "内部加密包.zip",
                     new string('A', 64), "ZIP 压缩包", 2, null, "已尝试本次暂存且适用的密码，仍未解开这一层。内层可能使用不同密码，也不能排除内容损坏或格式兼容问题。",
