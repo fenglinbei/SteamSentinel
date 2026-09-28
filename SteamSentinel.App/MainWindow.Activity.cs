@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
@@ -25,28 +26,28 @@ public partial class MainWindow
         _activityPhase = phase;
         ActivityTitleText.Text = phase switch
         {
-            ActivityPhase.Scanning => "正在扫描",
-            ActivityPhase.Preparing => "正在生成处置方案",
-            ActivityPhase.Confirmation => "请核对处置方案",
-            ActivityPhase.Applying => "正在处置并验证",
-            ActivityPhase.FollowUp => "正在复查系统与 Steam",
-            ActivityPhase.ContentFollowUp => "正在复查原扫描范围",
-            ActivityPhase.Exporting => "正在导出记录",
-            ActivityPhase.Inspecting => "正在读取关联信息",
-            ActivityPhase.Cancelling => "正在取消，请稍候",
-            _ => "正在检查，请稍候"
+            ActivityPhase.Scanning => DisplayText.Get("Ui.Activity.ShowActivity.Scanning.01"),
+            ActivityPhase.Preparing => DisplayText.Get("Ui.Activity.ShowActivity.Preparing.01"),
+            ActivityPhase.Confirmation => DisplayText.Get("Ui.Activity.ShowActivity.Confirmation.01"),
+            ActivityPhase.Applying => DisplayText.Get("Ui.Activity.ShowActivity.Applying.01"),
+            ActivityPhase.FollowUp => DisplayText.Get("Ui.Activity.ShowActivity.FollowUp.01"),
+            ActivityPhase.ContentFollowUp => DisplayText.Get("Ui.Activity.ShowActivity.ContentFollowUp.01"),
+            ActivityPhase.Exporting => DisplayText.Get("Ui.Activity.ShowActivity.Exporting.01"),
+            ActivityPhase.Inspecting => DisplayText.Get("Ui.Activity.ShowActivity.Inspecting.01"),
+            ActivityPhase.Cancelling => DisplayText.Get("Ui.Activity.ShowActivity.Cancelling.01"),
+            _ => DisplayText.Get("Ui.Activity.ShowActivity.01")
         };
         _activityHint = hint ?? phase switch
         {
-            ActivityPhase.Preparing => "核对文件、启动入口和关联进程，尚未修改文件，可取消。",
-            ActivityPhase.Confirmation => "等待你在预览窗口确认，尚未开始处置。",
-            ActivityPhase.Applying => "如出现 Windows 授权请确认，正在等待管理员组件完成操作与验证，请勿关闭窗口或重启。",
-            ActivityPhase.FollowUp => "重新读取系统与 Steam 状态，不会再次隔离文件，最长等待约 2 分钟。",
-            ActivityPhase.ContentFollowUp => "沿用原扫描范围和设置，只读检查，最长等待约 2 分钟，可取消，未完成部分可稍后手动复扫。加密内容可能需要重新输入密码。",
-            ActivityPhase.Scanning => "范围或压缩内容较大时可能需要更久，可取消，已用时间不是剩余时间。",
-            ActivityPhase.Exporting => "正在保存记录，完成后会显示保存位置。",
-            ActivityPhase.Cancelling => "等待当前读取结束并释放临时文件，不会开始新的处置。",
-            _ => "正在读取信息，请稍候，已用时间不是剩余时间。"
+            ActivityPhase.Preparing => DisplayText.Get("Ui.Activity.ShowActivity.Preparing.02"),
+            ActivityPhase.Confirmation => DisplayText.Get("Ui.Activity.ShowActivity.Confirmation.02"),
+            ActivityPhase.Applying => DisplayText.Get("Ui.Activity.ShowActivity.Applying.02"),
+            ActivityPhase.FollowUp => DisplayText.Get("Ui.Activity.ShowActivity.FollowUp.02"),
+            ActivityPhase.ContentFollowUp => DisplayText.Get("Ui.Activity.ShowActivity.ContentFollowUp.02"),
+            ActivityPhase.Scanning => DisplayText.Get("Ui.Activity.ShowActivity.Scanning.02"),
+            ActivityPhase.Exporting => DisplayText.Get("Ui.Activity.ShowActivity.Exporting.02"),
+            ActivityPhase.Cancelling => DisplayText.Get("Ui.Activity.ShowActivity.Cancelling.02"),
+            _ => DisplayText.Get("Ui.Activity.ShowActivity.02")
         };
         ActivityDetailText.Text = _activityHint;
         ActivityPanel.Visibility = Visibility.Visible;
@@ -71,9 +72,9 @@ public partial class MainWindow
     private void RefreshActivityElapsed()
     {
         TimeSpan elapsed = _activityClock.Elapsed;
-        ActivityElapsedText.Text = "本阶段已用 " + (elapsed.TotalHours >= 1 ? elapsed.ToString(@"h\:mm\:ss") : elapsed.ToString(@"mm\:ss"));
+        ActivityElapsedText.Text = DisplayText.Get("Ui.Activity.RefreshActivityElapsed.01") + (elapsed.TotalHours >= 1 ? elapsed.ToString(@"h\:mm\:ss") : elapsed.ToString(@"mm\:ss"));
         if (elapsed.TotalSeconds >= 20 && _activityPhase != ActivityPhase.Confirmation)
-            ActivityDetailText.Text = _activityHint + "\n本阶段仍未返回结果，动画仅表示界面正在等待，不代表后台一定在持续推进。";
+            ActivityDetailText.Text = _activityHint + DisplayText.Get("Ui.Activity.RefreshActivityElapsed.02");
     }
 
     private void HideActivity()
@@ -92,7 +93,7 @@ public partial class MainWindow
         error =>
         {
             AppErrorLog.Write("ProgressDisplay", error);
-            ActivityDetailText.Text = "进度显示遇到问题，操作仍在等待结果，完成前请勿重启。错误已尝试保存在本地日志中。";
+            ActivityDetailText.Text = DisplayText.Get("Ui.Activity.CreateUiProgress.01");
         });
 
     // The same production follow-up path is exercised under a real WPF dispatcher in tests.
@@ -104,8 +105,8 @@ public partial class MainWindow
         ShowActivity(ActivityPhase.FollowUp);
         using DispatcherProgress<ScanProgress> progress = CreateUiProgress(p =>
         {
-            ProgressStageText.Text = "处置后复查 · " + p.Stage;
-            ProgressItemText.Text = p.CurrentItem;
+            ProgressStageText.Text = DisplayText.Get("Ui.Activity.RunPostRemediationCheckAsync.01") + p.DisplayStage;
+            ProgressItemText.Text = p.DisplayCurrentItem;
         });
         ScanOptions options = new()
         {
@@ -130,12 +131,12 @@ public partial class MainWindow
         if (MustWaitBeforeClosing || _scanCancellation is null)
         {
             MessageBox.Show(this, MustWaitBeforeClosing
-                ? "处置或复查尚未结束，直接关闭会丢失界面中的后续记录。请等待本次返回结果后再关闭，不要重启电脑。"
-                : "当前操作尚未结束，请等待完成后再关闭窗口。", "操作仍在进行", MessageBoxButton.OK, MessageBoxImage.Information);
+                ? DisplayText.Get("Ui.Activity.MainWindow_Closing.01")
+                : DisplayText.Get("Ui.Activity.MainWindow_Closing.02"), DisplayText.Get("Ui.Activity.MainWindow_Closing.03"), MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        if (MessageBox.Show(this, "取消当前只读检查，并在取消完成后关闭窗口？已执行的处置不会因此回滚。",
-            "取消后关闭", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        if (MessageBox.Show(this, DisplayText.Get("Ui.Activity.MainWindow_Closing.04"),
+            DisplayText.Get("Ui.Activity.MainWindow_Closing.05"), MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
         {
             _closeWhenIdle = true;
             _scanCancellation.Cancel();

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
@@ -42,7 +43,7 @@ internal sealed partial class BrokerEngine
     {
         if (!IsDedicatedConfiguration(action.Type) || action.ActionId == Guid.Empty ||
             string.IsNullOrWhiteSpace(action.ConfigurationEvidenceRuleId) || action.ConfigurationEvidenceRuleId.Length > 128)
-            throw new InvalidDataException("专用配置动作类型、ID 或证据规则无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ValidateConfigurationAction.01"), sourceText => new InvalidDataException(sourceText));
         string sid;
         string expectedTarget;
         if (action.Type == RemediationActionType.RemoveBoundCertificate && action.BoundCertificate is { } certificate && action.BoundProxy is null)
@@ -57,10 +58,10 @@ internal sealed partial class BrokerEngine
             sid = proxy.TargetUserSid;
             expectedTarget = BoundConfigurationTargetNames.Proxy(proxy);
         }
-        else throw new InvalidDataException("专用配置动作必须有且仅有对应类型的完整目标。");
+        else throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ValidateConfigurationAction.02"), sourceText => new InvalidDataException(sourceText));
         RequireConfigurationSid(sid);
         if (!string.Equals(action.Target, expectedTarget, StringComparison.Ordinal))
-            throw new InvalidDataException("确认目标与配置的物理来源、用户或 DER 身份不一致。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ValidateConfigurationAction.03"), sourceText => new InvalidDataException(sourceText));
         _ = _configurationCatalog.Authorize(action);
     }
 
@@ -68,7 +69,7 @@ internal sealed partial class BrokerEngine
     {
         RemediationAction[] configurations = plan.Actions.Where(a => IsDedicatedConfiguration(a.Type)).ToArray();
         if (configurations.Length > 16 || configurations.Select(a => a.Target).Distinct(StringComparer.Ordinal).Count() != configurations.Length)
-            throw new InvalidDataException("每批配置动作不得超过 16 项，也不能重复或冲突地修改同一配置身份。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ValidateConfigurationPlan.01"), sourceText => new InvalidDataException(sourceText));
         RequireConfigurationSid(plan.RequestedBySid);
         var dependencies = RemediationDependencies.Build(plan.Actions);
         foreach (RemediationAction action in configurations)
@@ -79,15 +80,15 @@ internal sealed partial class BrokerEngine
                 prerequisite.Type == RemediationActionType.QuarantineFile &&
                 string.Equals(prerequisite.ExpectedSha256, writer, StringComparison.OrdinalIgnoreCase) &&
                 dependencies[action.ActionId].Contains(prerequisite.ActionId)))
-                throw new UnauthorizedAccessException("已确认写入组件的配置处置必须包含该组件 SHA-256 绑定的文件隔离前置，不能只删除依赖或只修复配置。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ValidateConfigurationPlan.02"), sourceText => new UnauthorizedAccessException(sourceText));
         }
     }
 
-    private async Task<Dictionary<Guid, string>> PrepareConfigurationBackupsAsync(RemediationPlan plan, CancellationToken token)
+    private async Task<Dictionary<Guid, MessageText>> PrepareConfigurationBackupsAsync(RemediationPlan plan, CancellationToken token)
     {
         ValidateConfigurationPlan(plan);
         _preparedConfigurationActions.Clear();
-        Dictionary<Guid, string> failures = [];
+        Dictionary<Guid, MessageText> failures = [];
         foreach (RemediationAction action in plan.Actions.Where(a => IsDedicatedConfiguration(a.Type)))
         {
             try
@@ -96,7 +97,7 @@ internal sealed partial class BrokerEngine
                 ValidateConfigurationAction(action);
                 if (_manifest.PlanId != plan.PlanId || _manifest.RequestedBySid != plan.RequestedBySid ||
                     _manifest.Records.Any(r => r.ActionId == action.ActionId))
-                    throw new InvalidDataException("配置预备不能复用已存在动作或其他计划的事件。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.PrepareConfigurationBackupsAsync.01"), sourceText => new InvalidDataException(sourceText));
                 BoundConfigurationBackupDocument document = new()
                 {
                     PlanId = plan.PlanId,
@@ -134,20 +135,20 @@ internal sealed partial class BrokerEngine
             }
             catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
             {
-                failures[action.ActionId] = RemediationVerification.Limit("完整配置备份未准备完成；未开始该关联链的系统变更。" + ex.Message, 1700);
+                failures[action.ActionId] = RemediationVerification.Limit(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.PrepareConfigurationBackupsAsync.02") + MessageExceptions.Describe(ex), 1700);
             }
         }
         return failures;
     }
 
-    private async Task<string> ExecuteConfigurationActionAsync(RemediationAction action, CancellationToken token)
+    private async Task<MessageText> ExecuteConfigurationActionAsync(RemediationAction action, CancellationToken token)
     {
         ValidateConfigurationAction(action);
         if (!_preparedConfigurationActions.Contains(action.ActionId))
-            throw new InvalidOperationException("此配置动作没有已持久化的完整预备备份，拒绝执行。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ExecuteConfigurationActionAsync.01"), sourceText => new InvalidOperationException(sourceText));
         QuarantineRecord record = _manifest.Records.Single(r => r.ActionId == action.ActionId);
         if (record.ConfigurationMutationAttempted || record.MutationConfirmed || record.RolledBack)
-            throw new InvalidOperationException("配置动作已经尝试执行，禁止重放原计划。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ExecuteConfigurationActionAsync.02"), sourceText => new InvalidOperationException(sourceText));
         BoundConfigurationBackupDocument document = await ReadConfigurationBackupAsync(record, _incidentRoot, _manifest, token).ConfigureAwait(false);
         RequireSameConfigurationAction(action, ConfigurationActionFrom(document));
         token.ThrowIfCancellationRequested();
@@ -163,8 +164,8 @@ internal sealed partial class BrokerEngine
                 new BoundProxyRepair(_configurationProxySettings, _configurationCurrentSid).Apply(action.BoundProxy!, document.Proxy!);
             record.MutationConfirmed = true;
             return document.Certificate is not null
-                ? "精确物理证书上下文已删除并复读确认不存在；完整公开备份保留，不代表所有 Windows 信任来源均已清除。"
-                : "当前用户 LAN 精确字段变更及通知已完成并复读匹配；未验证应用既有会话或实际网络路径。";
+                ? MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ExecuteConfigurationActionAsync.03")
+                : MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ExecuteConfigurationActionAsync.04");
         }
         catch (Exception ex) { operationFailure = ex; throw; }
         finally
@@ -172,8 +173,8 @@ internal sealed partial class BrokerEngine
             try { await PersistConfigurationVersionAsync(record, document, _incidentRoot, _manifest, _manifestPath, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception journalFailure)
             {
-                throw new ConfigurationExecutionUncertainException("系统可能已发生配置变更，且结果日志未完整提交；保留各版备份并人工核对。",
-                operationFailure is null ? journalFailure : new AggregateException(operationFailure, journalFailure));
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ExecuteConfigurationActionAsync.05"), sourceText => new ConfigurationExecutionUncertainException(sourceText,
+                operationFailure is null ? journalFailure : new AggregateException(operationFailure, journalFailure)));
             }
         }
     }
@@ -184,7 +185,7 @@ internal sealed partial class BrokerEngine
         RequireConfigurationSid(manifest.RequestedBySid);
         if (manifest.IncidentId == Guid.Empty || manifest.PlanId == Guid.Empty ||
             !PathsEquivalent(manifestPath, Path.Combine(GetIncidentRoot(manifest.IncidentId), "manifest.json")))
-            throw new InvalidDataException("配置回滚上下文没有受信原事件路径。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.SetConfigurationRollbackContext.01"), sourceText => new InvalidDataException(sourceText));
         _configurationRollbackManifest = manifest;
         _configurationRollbackManifestPath = manifestPath;
     }
@@ -221,8 +222,8 @@ internal sealed partial class BrokerEngine
             try { await PersistConfigurationVersionAsync(record, document, incidentRoot, manifest, manifestPath, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception journalFailure)
             {
-                throw new ConfigurationExecutionUncertainException("配置回滚或通知可能已部分执行，日志未完整提交；保留所有版本并核对当前状态。",
-                operationFailure is null ? journalFailure : new AggregateException(operationFailure, journalFailure));
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.RestoreConfigurationAsync.01"), sourceText => new ConfigurationExecutionUncertainException(sourceText,
+                operationFailure is null ? journalFailure : new AggregateException(operationFailure, journalFailure)));
             }
         }
     }
@@ -231,7 +232,7 @@ internal sealed partial class BrokerEngine
     {
         if (_configurationRollbackManifest is not { } manifest || _configurationRollbackManifestPath is not { } path ||
             !manifest.Records.Any(r => ReferenceEquals(r, record)) || !PathsEquivalent(incidentRoot, GetIncidentRoot(manifest.IncidentId)))
-            throw new UnauthorizedAccessException("配置回滚记录并非本次受保护可信清单中的原记录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.RequireConfigurationRollbackContext.01"), sourceText => new UnauthorizedAccessException(sourceText));
         return (manifest, path);
     }
 
@@ -244,7 +245,7 @@ internal sealed partial class BrokerEngine
             record.MutationConfirmed && !record.ConfigurationMutationAttempted ||
             !PathsEquivalent(incidentRoot, GetIncidentRoot(manifest.IncidentId)) ||
             !PathsEquivalent(record.ConfigurationBackupPath, ConfigurationBackupPath(incidentRoot, record.ActionId, record.ConfigurationBackupSha256!)))
-            throw new InvalidDataException("配置备份类型、状态、动作身份或固定版本路径无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ReadConfigurationBackupAsync.01"), sourceText => new InvalidDataException(sourceText));
         RequireConfigurationSid(manifest.RequestedBySid);
         BoundConfigurationBackupDocument document = await _configurationPayloads.ReadVersionAsync(incidentRoot,
             record.ConfigurationBackupPath, record.ConfigurationBackupSha256!, token).ConfigureAwait(false);
@@ -253,7 +254,7 @@ internal sealed partial class BrokerEngine
             document.OriginalTarget != record.OriginalTarget || document.ConfigurationEvidenceRuleId != record.ConfigurationEvidenceRuleId ||
             document.RelatedFilePath != record.RelatedFilePath || document.RelatedFileSha256 != record.RelatedFileSha256 ||
             document.RestoreCompleted && !document.RestoreAttempted)
-            throw new UnauthorizedAccessException("配置备份与受信事件、请求用户、动作或原目标不一致。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ReadConfigurationBackupAsync.02"), sourceText => new UnauthorizedAccessException(sourceText));
         RemediationAction restoredAction = ConfigurationActionFrom(document);
         ValidateConfigurationAction(restoredAction);
         return document;
@@ -277,9 +278,9 @@ internal sealed partial class BrokerEngine
                 ChangedFields = [.. proxyBackup.ChangedFields]
             };
         }
-        else throw new InvalidDataException("备份必须包含唯一且对应动作类型的完整公开证书或代理状态。");
+        else throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ConfigurationActionFrom.01"), sourceText => new InvalidDataException(sourceText));
         if ((certificate?.TargetUserSid ?? proxy!.TargetUserSid) != document.TargetUserSid)
-            throw new UnauthorizedAccessException("配置备份中的类型化目标属于另一用户。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ConfigurationActionFrom.02"), sourceText => new UnauthorizedAccessException(sourceText));
         return new()
         {
             ActionId = document.ActionId,
@@ -301,7 +302,7 @@ internal sealed partial class BrokerEngine
         if (requested.ActionId != restored.ActionId || requested.Type != restored.Type || requested.Target != restored.Target ||
             requested.ConfigurationEvidenceRuleId != restored.ConfigurationEvidenceRuleId || requested.RelatedFilePath != restored.RelatedFilePath ||
             requested.RelatedFileSha256 != restored.RelatedFileSha256 || TargetState(requested) != TargetState(restored))
-            throw new InvalidDataException("预备后配置动作或精确属性快照已变化，禁止使用另一份目标执行。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.RequireSameConfigurationAction.01"), sourceText => new InvalidDataException(sourceText));
     }
 
     private async Task PersistConfigurationVersionAsync(QuarantineRecord record, BoundConfigurationBackupDocument document, string incidentRoot,
@@ -325,7 +326,7 @@ internal sealed partial class BrokerEngine
     {
         byte[] content = JsonSerializer.SerializeToUtf8Bytes(document, JsonFile.Options);
         if (content.Length is <= 0 or > MaximumConfigurationBackupBytes)
-            throw new InvalidDataException("完整配置备份超过 768 KiB 上限，拒绝准备或更新。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.SerializeConfigurationBackup.01"), sourceText => new InvalidDataException(sourceText));
         return content;
     }
 
@@ -336,7 +337,7 @@ internal sealed partial class BrokerEngine
     {
         if (string.IsNullOrEmpty(sid) || sid.Length > 184 || new SecurityIdentifier(sid).Value != sid ||
             _configurationCurrentSid() != sid || !string.IsNullOrEmpty(_requestedBySid) && _requestedBySid != sid)
-            throw new UnauthorizedAccessException("配置目标或事件 SID 与当前有效用户及管理员请求者不一致。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.RequireConfigurationSid.01"), sourceText => new UnauthorizedAccessException(sourceText));
     }
 
     private static string ReadConfigurationCurrentSid()
@@ -377,7 +378,7 @@ internal sealed class ProtectedConfigurationPayloadStorage : IBoundConfiguration
     public async Task WriteVersionAsync(string incidentRoot, string path, byte[] content, CancellationToken token)
     {
         if (content.Length is <= 0 or > BrokerEngine.MaximumConfigurationBackupBytes)
-            throw new InvalidDataException("配置备份大小异常。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.WriteVersionAsync.01"), sourceText => new InvalidDataException(sourceText));
         MachineStateSecurity.EnsureProtectedPath(AppPaths.QuarantineRoot);
         MachineStateSecurity.EnsureProtectedPath(incidentRoot);
         string directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
@@ -409,7 +410,7 @@ internal sealed class ProtectedConfigurationPayloadStorage : IBoundConfiguration
         await using SecureFileLease lease = SecureFileLease.Open(path);
         if (lease.Length is <= 0 or > BrokerEngine.MaximumConfigurationBackupBytes ||
             !(await lease.ComputeSha256Async(token).ConfigureAwait(false)).Equals(sha256, StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("配置备份大小异常或独占读取的 SHA-256 与受信清单不一致。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundConfigurationActions.ReadVersionAsync.01"), sourceText => new UnauthorizedAccessException(sourceText));
         BoundConfigurationBackupDocument document = await lease.ReadJsonAsync<BoundConfigurationBackupDocument>(token).ConfigureAwait(false);
         MachineStateSecurity.EnsureProtectedPath(path);
         return document;

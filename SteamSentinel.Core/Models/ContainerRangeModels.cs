@@ -7,7 +7,7 @@ public enum ContainerRangeStatus
 }
 
 /// <summary>All offsets refer to the supplied seekable stream, never a guessed original-file offset.</summary>
-public sealed class ContainerRange
+public sealed partial class ContainerRange
 {
     public long Offset { get; init; }
     public long Length { get; init; }
@@ -18,7 +18,7 @@ public sealed class ContainerRange
     public string Detail { get; init; } = string.Empty;
 }
 
-public sealed class ContainerRangeInspection
+public sealed partial class ContainerRangeInspection
 {
     public long FileLength { get; init; }
     public ContainerRangeType ContainerType { get; set; }
@@ -32,14 +32,14 @@ public sealed class ContainerRangeInspection
     public string Detail { get; set; } = string.Empty;
 }
 
-public sealed class ContainerRangeCheck
+public sealed partial class ContainerRangeCheck
 {
     public long Offset { get; init; }
     public ContainerRangeStatus Status { get; init; }
     public string Detail { get; init; } = string.Empty;
 }
 
-public sealed class ContainerRangeRarInspection
+public sealed partial class ContainerRangeRarInspection
 {
     public int Version { get; set; }
     public long Offset { get; init; }
@@ -68,7 +68,7 @@ public sealed class ContainerRangeRarInspection
 }
 
 /// <summary>Static archive-comment text only; never an instruction to start a command.</summary>
-public sealed class ContainerRangeSfxDirective
+public sealed partial class ContainerRangeSfxDirective
 {
     public string Name { get; init; } = string.Empty;
     public string Value { get; init; } = string.Empty;

@@ -46,8 +46,8 @@ internal static partial class Program
         Check("聚合展示准确累计次数，补查整个根而非有限示例", group.Count == occurrences && group.Entries.Count == 1 &&
             group.Details.Contains("示例不是完整清单") && MainWindow.CoverageTargets(group).SequenceEqual([directory]));
         Check("聚合缺口不升级威胁严重度或风险数", aggregate.RiskFindingCount == 0 && aggregate.HighestSeverity == FindingSeverity.Information);
-        CoverageEntry safetyStop = CoveragePresentation.Describe("CONTENT-SCAN-FAILED", directory, "ScanResourceLimitException");
-        CoverageEntry allocationFailure = CoveragePresentation.Describe("CONTENT-SCAN-FAILED", directory, "OutOfMemoryException");
+        CoverageEntry safetyStop = CoveragePresentation.Describe("CONTENT-SCAN-FAILED", directory, "arbitrary resource-limit detail", ReasonCodes.ResourceLimit);
+        CoverageEntry allocationFailure = CoveragePresentation.Describe("CONTENT-SCAN-FAILED", directory, "arbitrary allocation detail", ReasonCodes.AllocationFailed);
         Check("安全上限与真实内存分配失败分开展示", safetyStop.Kind != allocationFailure.Kind &&
             safetyStop.NextStep.Contains("不等于系统内存不足") && allocationFailure.Kind.Contains("内存分配失败") &&
             !safetyStop.CanFullScan && !allocationFailure.CanFullScan);

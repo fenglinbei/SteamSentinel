@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -31,10 +32,10 @@ public partial class PasswordDialog : Window
     public ArchivePasswordRequest Request { get; }
     public string PromptTitle => Request.PromptKind switch
     {
-        ArchivePasswordPromptKind.CachedPasswordFailed => "本次暂存的密码未能解开这一层",
-        ArchivePasswordPromptKind.EnteredPasswordFailed => "刚输入的密码未能解开这一层",
-        ArchivePasswordPromptKind.RepeatedPassword => "这个密码已经尝试过",
-        _ => "这一层内容需要密码"
+        ArchivePasswordPromptKind.CachedPasswordFailed => DisplayText.Get("Ui.PasswordDialog.xaml.PromptTitle.CachedPasswordFailed.01"),
+        ArchivePasswordPromptKind.EnteredPasswordFailed => DisplayText.Get("Ui.PasswordDialog.xaml.PromptTitle.EnteredPasswordFailed.01"),
+        ArchivePasswordPromptKind.RepeatedPassword => DisplayText.Get("Ui.PasswordDialog.xaml.PromptTitle.RepeatedPassword.01"),
+        _ => DisplayText.Get("Ui.PasswordDialog.xaml.PromptTitle.01")
     };
     public string? EnteredPassword { get; private set; }
     public IReadOnlyList<string>? EnteredPasswords { get; private set; }
@@ -56,7 +57,7 @@ public partial class PasswordDialog : Window
             if (PasswordInput.Password.Length > 0 && !TryAddCandidatePassword(PasswordInput.Password)) return false;
             if (_candidatePasswords.Count == 0)
             {
-                ShowValidation("请至少加入一个候选密码，或选择跳过。");
+                ShowValidation(DisplayText.Get("Ui.PasswordDialog.xaml.TryAcceptPassword.01"));
                 return false;
             }
             EnteredPassword = null;
@@ -68,7 +69,7 @@ public partial class PasswordDialog : Window
             string password = PasswordInput.Password;
             if (password.Length is < 1 or > MaximumPasswordLength)
             {
-                ShowValidation("请输入 1–1024 字符的密码，或选择跳过；密码中的空格会保留。");
+                ShowValidation(DisplayText.Get("Ui.PasswordDialog.xaml.TryAcceptPassword.02"));
                 return false;
             }
             EnteredPassword = ArchivePasswordInput.ValidateAndGetPasswords(new ArchivePasswordResponse(
@@ -90,8 +91,8 @@ public partial class PasswordDialog : Window
     private void SkipAllEncrypted_Click(object sender, RoutedEventArgs e)
     {
         if (MessageBox.Show(this,
-            "仅对本次扫描生效：仍先尝试已提交且适用的密码，未解开的加密压缩包不再询问，并标记为未检查。扫描结束后可重试。\n\n本窗口尚未提交的密码不会使用。继续吗？",
-            "跳过所有未能解密的加密压缩包", MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK) return;
+            DisplayText.Get("Ui.PasswordDialog.xaml.SkipAllEncrypted_Click.01"),
+            DisplayText.Get("Ui.PasswordDialog.xaml.SkipAllEncrypted_Click.02"), MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK) return;
         PrepareSkip(allEncrypted: true);
         DialogResult = false;
     }
@@ -109,19 +110,19 @@ public partial class PasswordDialog : Window
     {
         if (password is null || password.Length is < 1 or > MaximumPasswordLength)
         {
-            ShowValidation("每个候选密码需为 1–1024 字符，空格会保留；不会按逗号拆分。");
+            ShowValidation(DisplayText.Get("Ui.PasswordDialog.xaml.TryAddCandidatePassword.01"));
             return false;
         }
         int duplicateIndex = _candidatePasswords.FindIndex(item => string.Equals(item, password, StringComparison.Ordinal));
         if (duplicateIndex >= 0)
         {
             PasswordCandidatesList.SelectedIndex = duplicateIndex;
-            ShowValidation("该密码已在候选列表中，未重复加入。", isError: false);
+            ShowValidation(DisplayText.Get("Ui.PasswordDialog.xaml.TryAddCandidatePassword.02"), isError: false);
             return true;
         }
         if (_candidatePasswords.Count >= MaximumCandidatePasswords)
         {
-            ShowValidation("最多可提供 16 个候选密码，请先移除不需要的候选。");
+            ShowValidation(DisplayText.Get("Ui.PasswordDialog.xaml.TryAddCandidatePassword.03"));
             return false;
         }
         _candidatePasswords.Add(password);
@@ -154,8 +155,8 @@ public partial class PasswordDialog : Window
             PasswordInput.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
             PasswordVisibleInput.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             PasswordVisibilitySlash.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            PasswordVisibilityButton.ToolTip = visible ? "隐藏当前输入的密码" : "显示当前输入的密码";
-            System.Windows.Automation.AutomationProperties.SetName(PasswordVisibilityButton, visible ? "隐藏密码" : "显示密码");
+            PasswordVisibilityButton.ToolTip = visible ? DisplayText.Get("Ui.PasswordDialog.xaml.SetPasswordVisible.01") : DisplayText.Get("Ui.PasswordDialog.xaml.SetPasswordVisible.02");
+            System.Windows.Automation.AutomationProperties.SetName(PasswordVisibilityButton, visible ? DisplayText.Get("Ui.PasswordDialog.xaml.SetPasswordVisible.03") : DisplayText.Get("Ui.PasswordDialog.xaml.SetPasswordVisible.04"));
         }
         finally { _synchronizingPasswordInputs = false; }
         if (focusInput) FocusCurrentPasswordInput();
@@ -187,7 +188,7 @@ public partial class PasswordDialog : Window
         if (pasted is not { Length: > MaximumPasswordLength }) return;
         // Reject the paste as a whole. Never silently accept a truncated password.
         e.CancelCommand();
-        ShowValidation("粘贴未完成：单个密码不能超过 1024 字符，请核对后重新输入。");
+        ShowValidation(DisplayText.Get("Ui.PasswordDialog.xaml.PasswordInput_Pasting.01"));
     }
 
     private void PasswordInput_PasswordChanged(object sender, RoutedEventArgs e)
@@ -222,7 +223,7 @@ public partial class PasswordDialog : Window
         // so replacing a selected password remains possible without guessing selection.
         using var password = PasswordInput.SecurePassword;
         if (password.Length > MaximumPasswordLength)
-            ShowValidation("密码超过 1024 字符，不能提交；请修改密码，内容不会被自动截断。");
+            ShowValidation(DisplayText.Get("Ui.PasswordDialog.xaml.ValidateCurrentPasswordLength.01"));
         else PasswordValidationText.Visibility = Visibility.Collapsed;
     }
 
@@ -232,8 +233,8 @@ public partial class PasswordDialog : Window
         bool multiple = PasswordMultipleCheckBox.IsChecked == true;
         AddPasswordButton.Visibility = multiple ? Visibility.Visible : Visibility.Collapsed;
         PasswordCandidatesPanel.Visibility = multiple ? Visibility.Visible : Visibility.Collapsed;
-        PasswordScopeTitleText.Text = multiple ? "候选密码的尝试范围（按加入顺序）" : "成功解密后的密码复用范围";
-        ContinuePasswordButton.Content = multiple ? "按顺序尝试" : "使用密码继续";
+        PasswordScopeTitleText.Text = multiple ? DisplayText.Get("Ui.PasswordDialog.xaml.PasswordMode_Changed.01") : DisplayText.Get("Ui.PasswordDialog.xaml.PasswordMode_Changed.02");
+        ContinuePasswordButton.Content = multiple ? DisplayText.Get("Ui.PasswordDialog.xaml.PasswordMode_Changed.03") : DisplayText.Get("Ui.PasswordDialog.xaml.PasswordMode_Changed.04");
         PasswordValidationText.Visibility = Visibility.Collapsed;
     }
 
@@ -264,7 +265,7 @@ public partial class PasswordDialog : Window
         for (int index = 0; index < _candidatePasswords.Count; index++)
             PasswordCandidatesList.Items.Add($"{index + 1}. ••••••••");
         // Keep secrets out of text bindings, item models, tooltips and accessibility labels.
-        PasswordCandidateStatusText.Text = $"{_candidatePasswords.Count} / {MaximumCandidatePasswords} 个候选";
+        PasswordCandidateStatusText.Text = DisplayText.Format("Ui.PasswordDialog.xaml.UpdateCandidateList.01", (_candidatePasswords.Count), (MaximumCandidatePasswords));
         ClearPasswordsButton.IsEnabled = _candidatePasswords.Count > 0;
         RemovePasswordButton.IsEnabled = false;
     }

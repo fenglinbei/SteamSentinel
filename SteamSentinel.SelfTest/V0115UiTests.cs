@@ -169,7 +169,7 @@ internal static partial class Program
             {
                 Plans = [new() { Actions = [new() { Type = RemediationActionType.QuarantineFile, Target = @"C:\inert\a.zip" }] },
                     new() { Actions = [new() { Type = RemediationActionType.QuarantineFile, Target = @"C:\inert\b.zip" }] }],
-                Targets = [new() { Target = @"C:\inert\changed.zip", MissingActions = ["inert"], Reason = "身份变化，未纳入" }]
+                Targets = [new() { Target = @"C:\inert\changed.zip", State = RemediationTargetState.NotIncluded, MissingActions = ["inert"], ReasonDetails = "身份变化，未纳入" }]
             };
             SteamSentinel.App.Dialogs.RemediationPreviewWindow batchDialog = new(batchPreviewData);
             Check("0.1.16 批次预览列出所有批次且默认展示未纳入项", batchDialog.Actions.Select(a => a.Batch).SequenceEqual([1, 2]) &&

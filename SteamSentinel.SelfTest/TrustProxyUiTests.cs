@@ -36,31 +36,32 @@ internal static partial class Program
                 DataGrid grid = (DataGrid)window.FindName("FindingsGrid");
                 DataGridRow? row = grid.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;
                 Check($"诊断UI {viewport} 信息级PAC仍明确尚未处理且资格可见",
-                    title.Text.Contains("尚未处理", StringComparison.Ordinal) && !title.Text.Contains("未发现", StringComparison.Ordinal) &&
-                    counts.Text.Contains("待确认 1 项", StringComparison.Ordinal) && layout.IsFullyVisible(counts) &&
+                    title.Text.Contains(UiExpected("尚未处理", "remain unresolved"), StringComparison.Ordinal) && !title.Text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal) &&
+                    counts.Text.Contains(UiExpected("待确认 1 项", "Review needed 1"), StringComparison.Ordinal) && layout.IsFullyVisible(counts) &&
                     counts.ToolTip?.ToString() == counts.Text && row is not null && layout.IsFullyVisible(row));
                 Check($"诊断UI {viewport} 零可处理项禁用全选和处理并说明真实原因",
                     !remediate.IsEnabled && !selectAll.IsEnabled &&
-                    remediate.ToolTip?.ToString()?.Contains("没有可处理项", StringComparison.Ordinal) == true &&
-                    selectAll.ToolTip?.ToString()?.Contains("没有可选择处理", StringComparison.Ordinal) == true &&
-                    !remediate.ToolTip!.ToString()!.Contains("管理员处置可用", StringComparison.Ordinal) &&
+                    remediate.ToolTip?.ToString()?.Contains(UiExpected("没有可处理项", "No items are currently actionable"), StringComparison.Ordinal) == true &&
+                    selectAll.ToolTip?.ToString()?.Contains(UiExpected("没有可选择处理", "No items are currently eligible"), StringComparison.Ordinal) == true &&
+                    !remediate.ToolTip!.ToString()!.Contains(UiExpected("管理员处置可用", "Administrator remediation available"), StringComparison.Ordinal) &&
                     ToolTipService.GetShowOnDisabled(remediate) && ToolTipService.GetShowOnDisabled(selectAll));
                 Check($"诊断UI {viewport} PAC提供只读诊断而不提供文件占用操作",
-                    TrustProxyUiButton(window, "ReviewFindingButton") is { IsEnabled: true, Content: "检查代理与证书" } &&
+                    TrustProxyUiButton(window, "ReviewFindingButton") is { IsEnabled: true } reviewButton &&
+                    Equals(reviewButton.Content, UiExpected("检查代理与证书", "Check proxy & certificates")) &&
                     TrustProxyUiButton(window, "OccupancyButton").Visibility == Visibility.Collapsed &&
-                    TrustProxyUiText(window, "DetailDescriptionText").Text.Contains("尚不能确认", StringComparison.Ordinal));
+                    TrustProxyUiText(window, "DetailDescriptionText").Text.Contains(UiExpected("尚不能确认", "unconfirmed"), StringComparison.Ordinal));
                 Check($"诊断UI {viewport} 新状态列不挤出表格且原因不只存在于悬浮提示",
                     grid.Columns.Count == 7 && layout.HasReadableColumns(grid) && row is not null &&
                     grid.Columns[6].GetCellContent(row) is { } cell &&
-                    UiLayoutHarness.Descendants<TextBlock>(cell).Any(text => text.Text == "需进一步确认" && layout.IsFullyVisible(text)) &&
-                    UiLayoutHarness.Descendants<TextBlock>(cell).Any(text => text.Text.Contains("配置线索", StringComparison.Ordinal) && layout.IsFullyVisible(text)));
+                    UiLayoutHarness.Descendants<TextBlock>(cell).Any(text => text.Text == UiExpected("需进一步确认", "Further review needed") && layout.IsFullyVisible(text)) &&
+                    UiLayoutHarness.Descendants<TextBlock>(cell).Any(text => text.Text.Contains(UiExpected("配置线索", "Configuration indicators"), StringComparison.Ordinal) && layout.IsFullyVisible(text)));
                 if (output is not null) layout.Save("trust-proxy-pending-" + viewport, output);
 
                 ScanReport completePac = TrustProxyUiReport(TrustProxyUiFinding("complete-pac"));
                 completePac.Coverage = ScanCoverage.Complete;
                 SetTrustProxyUiReport(window, completePac);
                 Check($"诊断UI {viewport} 完整读取PAC也不概括为无需处理",
-                    TrustProxyUiText(window, "HeaderStatusText").Text.Contains("尚未处理", StringComparison.Ordinal));
+                    TrustProxyUiText(window, "HeaderStatusText").Text.Contains(UiExpected("尚未处理", "remain unresolved"), StringComparison.Ordinal));
 
                 ScanReport ordinary = TrustProxyUiReport(new Finding
                 {
@@ -73,9 +74,9 @@ internal static partial class Program
                 });
                 SetTrustProxyUiReport(window, ordinary);
                 Check($"诊断UI {viewport} 真实普通信息规则不会被算作未能处理",
-                    TrustProxyUiText(window, "HeaderStatusText").Text == "已完成部分检查，未发现需处理的风险" &&
-                    window.Findings.Single().HandlingLabel == "信息提示" &&
-                    counts.Text.Contains("待确认 0 项", StringComparison.Ordinal) && counts.Text.Contains("普通说明 1 项", StringComparison.Ordinal));
+                    TrustProxyUiText(window, "HeaderStatusText").Text == UiExpected("已完成部分检查，未发现需处理的风险", "Checks incomplete; no actionable risk found") &&
+                    window.Findings.Single().HandlingLabel == UiExpected("信息提示", "Information") &&
+                    counts.Text.Contains(UiExpected("待确认 0 项", "Review needed 0"), StringComparison.Ordinal) && counts.Text.Contains(UiExpected("普通说明 1 项", "Informational 1"), StringComparison.Ordinal));
 
                 Finding file = new()
                 {
@@ -112,11 +113,11 @@ internal static partial class Program
                 Check($"诊断UI {viewport} 混合发现只选择有资格目标且单独计数其他状态",
                     remediate.IsEnabled && selectAll.IsEnabled && window.Findings.Count(item => item.IsSelected) == 1 &&
                     window.Findings.Single(item => item.IsSelected).Finding.Id == file.Id &&
-                    counts.Text.Contains("可处理 1 项", StringComparison.Ordinal) && counts.Text.Contains("暂不支持 1 项", StringComparison.Ordinal) &&
-                    counts.Text.Contains("条件未满足 1 项", StringComparison.Ordinal) && counts.Text.Contains("普通说明 1 项", StringComparison.Ordinal));
+                    counts.Text.Contains(UiExpected("可处理 1 项", "Eligible 1"), StringComparison.Ordinal) && counts.Text.Contains(UiExpected("暂不支持 1 项", "Unsupported 1"), StringComparison.Ordinal) &&
+                    counts.Text.Contains(UiExpected("条件未满足 1 项", "Prerequisites unmet 1"), StringComparison.Ordinal) && counts.Text.Contains(UiExpected("普通说明 1 项", "Informational 1"), StringComparison.Ordinal));
                 Check($"诊断UI {viewport} 资格原因不会被称为执行失败或待重启",
                     window.Findings.Where(item => !item.CanSelect).All(item =>
-                        !item.HandlingLabel.Contains("失败", StringComparison.Ordinal) && !item.HandlingLabel.Contains("重启", StringComparison.Ordinal)));
+                        !item.HandlingLabel.Contains(UiExpected("失败", "failed"), StringComparison.Ordinal) && !item.HandlingLabel.Contains(UiExpected("重启", "restart"), StringComparison.Ordinal)));
                 if (output is not null) layout.Save("trust-proxy-mixed-" + viewport, output);
 
                 ScanReport basis = TrustProxyUiReport(file, TrustProxyUiFinding("old-pac"));
@@ -136,7 +137,7 @@ internal static partial class Program
                     ReferenceEquals(merged.TrustProxyDiagnostics, second.TrustProxyDiagnostics) &&
                     basis.Findings.Count == 2 && basis.Findings.Any(f => f.Id == "old-pac") && basis.TrustProxyDiagnostics is null &&
                     merged.ScopeNotes.Contains("原扫描范围：保留的无害测试说明") &&
-                    merged.ScopeNotes.Count(note => note.StartsWith("证书与代理诊断：", StringComparison.Ordinal)) == 2 &&
+                    merged.ScopeNotes.Count == 3 && merged.ScopeNotes.Contains(TrustProxyUiDiagnosticReport("second", incomplete: false).ScopeNotes.Single()) &&
                     merged.ScopeNotes.Any(note => note.Contains(basis.ScanId.ToString("N"), StringComparison.Ordinal)) &&
                     merged.ScopeNotes.All(note => !note.Contains("无害测试 first", StringComparison.Ordinal)));
                 Check($"诊断UI {viewport} 旧诊断缺口不累计且新诊断不能充当完整复扫凭据",
@@ -153,7 +154,7 @@ internal static partial class Program
                     diagnosticButton.IsEnabled && !remediate.IsEnabled && !TrustProxyUiButton(window, "ElevateButton").IsEnabled &&
                     layout.IsFullyVisible(diagnosticButton) && layout.IsFullyVisible(TrustProxyUiButton(window, "ExportButton")));
                 Check($"诊断UI {viewport} 采集范围边界不会把可选未检查算成本地采集失败",
-                    diagnosticStatus.Text.Contains("本地采集已完成", StringComparison.Ordinal) &&
+                    diagnosticStatus.Text.Contains(UiExpected("本地采集已完成", "Local collection complete"), StringComparison.Ordinal) &&
                     MainWindow.IncompleteDiagnosticChecks(second.TrustProxyDiagnostics!) == 0 &&
                     diagnosticText.Text.Contains("不访问网络", StringComparison.Ordinal));
                 Check($"诊断UI {viewport} 证书与代理来源可读可复制且仅正文纵向滚动",
@@ -208,8 +209,8 @@ internal static partial class Program
             Check("诊断UI 取消记录为采集未完成并保留已有非诊断发现",
                 cancelled.TrustProxyDiagnostics!.Checks.Any(check => check.Status == DiagnosticReadStatus.Cancelled) &&
                 cancelled.Coverage == ScanCoverage.Partial && cancelled.Findings.Any(f => f.Id == "kept-ordinary") &&
-                TrustProxyUiText(window, "HeaderStatusText").Text == "代理与证书检查未完成" &&
-                TrustProxyUiText(window, "TrustProxyStatusText").Text.Contains("未完成", StringComparison.Ordinal) &&
+                TrustProxyUiText(window, "HeaderStatusText").Text == UiExpected("代理与证书检查未完成", "Proxy and certificate checks incomplete") &&
+                TrustProxyUiText(window, "TrustProxyStatusText").Text.Contains(UiExpected("未完成", "incomplete"), StringComparison.Ordinal) &&
                 !TrustProxyUiButton(window, "CancelScanButton").IsEnabled && TrustProxyUiButton(window, "TrustProxyScanButton").IsEnabled);
         }
         finally { CloseSummaryFixture(window); }

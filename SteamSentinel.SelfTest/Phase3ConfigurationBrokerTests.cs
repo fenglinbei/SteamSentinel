@@ -58,7 +58,7 @@ internal static partial class Program
 
         action = CertificateAction();
         fixture = CreateConfigurationBrokerFixture(action, original);
-        Dictionary<Guid, string> prepared = await InvokeConfiguration<Task<Dictionary<Guid, string>>>(fixture.Engine,
+        Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText> prepared = await InvokeConfiguration<Task<Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText>>>(fixture.Engine,
             "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
         QuarantineRecord record = fixture.Manifest.Records.Single();
         string preparedPath = record.ConfigurationBackupPath!;
@@ -67,11 +67,11 @@ internal static partial class Program
             !record.ConfigurationMutationAttempted && !record.MutationConfirmed);
         fixture.Certificates.BeforeDelete = _ => Check("配置Broker 删除前attempt已在清单持久化",
             fixture.Persisted.Last().Records.Single().ConfigurationMutationAttempted && fixture.Payloads.Content.ContainsKey(preparedPath));
-        await InvokeConfiguration<Task<string>>(fixture.Engine, "ExecuteConfigurationActionAsync", action, CancellationToken.None);
+        await InvokeConfiguration<Task<SteamSentinel.Core.Reporting.MessageText>>(fixture.Engine, "ExecuteConfigurationActionAsync", action, CancellationToken.None);
         Check("配置Broker 精确证书删除成功后才确认mutation", record.MutationConfirmed && fixture.Certificates.DeleteMutations == 1 &&
             fixture.Certificates.Entries.Count == 0 && fixture.Persisted.Last().Records.Single().MutationConfirmed);
         Check("配置Broker 禁止同一配置动作重放", await RejectsConfigurationAsync(async () =>
-            await InvokeConfiguration<Task<string>>(fixture.Engine, "ExecuteConfigurationActionAsync", action, CancellationToken.None)) && fixture.Certificates.DeleteMutations == 1);
+            await InvokeConfiguration<Task<SteamSentinel.Core.Reporting.MessageText>>(fixture.Engine, "ExecuteConfigurationActionAsync", action, CancellationToken.None)) && fixture.Certificates.DeleteMutations == 1);
         InvokeConfiguration<object?>(fixture.Engine, "SetConfigurationRollbackContext", fixture.Manifest, fixture.ManifestPath);
         InvokeConfiguration<object?>(fixture.Engine, "ValidateConfigurationRecord", record, fixture.IncidentRoot);
         await InvokeConfiguration<Task>(fixture.Engine, "RestoreConfigurationAsync", record, fixture.IncidentRoot, CancellationToken.None);
@@ -81,7 +81,7 @@ internal static partial class Program
             fixture.Payloads.Content.ContainsKey(preparedPath) && record.ConfigurationBackupPath != preparedPath && !record.RolledBack);
 
         fixture = CreateConfigurationBrokerFixture(CertificateAction(), original);
-        await InvokeConfiguration<Task<Dictionary<Guid, string>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
+        await InvokeConfiguration<Task<Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
         record = fixture.Manifest.Records.Single();
         InvokeConfiguration<object?>(fixture.Engine, "SetConfigurationRollbackContext", fixture.Manifest, fixture.ManifestPath);
         await InvokeConfiguration<Task>(fixture.Engine, "RestoreConfigurationAsync", record, fixture.IncidentRoot, CancellationToken.None);
@@ -99,16 +99,16 @@ internal static partial class Program
 
         fixture = CreateConfigurationBrokerFixture(CertificateAction(), original);
         fixture.FailPersist = true;
-        prepared = await InvokeConfiguration<Task<Dictionary<Guid, string>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
+        prepared = await InvokeConfiguration<Task<Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
         Check("配置Broker 备份提交失败返回动作失败且无系统变更", prepared.ContainsKey(fixture.Plan.Actions.Single().ActionId) &&
             fixture.Certificates.DeleteCalls == 0 && fixture.Proxy.Writes == 0 && await RejectsConfigurationAsync(async () =>
-                await InvokeConfiguration<Task<string>>(fixture.Engine, "ExecuteConfigurationActionAsync", fixture.Plan.Actions.Single(), CancellationToken.None)));
+                await InvokeConfiguration<Task<SteamSentinel.Core.Reporting.MessageText>>(fixture.Engine, "ExecuteConfigurationActionAsync", fixture.Plan.Actions.Single(), CancellationToken.None)));
 
         fixture = CreateConfigurationBrokerFixture(CertificateAction(), original);
-        await InvokeConfiguration<Task<Dictionary<Guid, string>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
+        await InvokeConfiguration<Task<Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
         fixture.FailPersist = true;
         Check("配置Broker 临写attempt日志提交失败禁止进入删除原语", await RejectsConfigurationAsync(async () =>
-            await InvokeConfiguration<Task<string>>(fixture.Engine, "ExecuteConfigurationActionAsync", fixture.Plan.Actions.Single(), CancellationToken.None)) &&
+            await InvokeConfiguration<Task<SteamSentinel.Core.Reporting.MessageText>>(fixture.Engine, "ExecuteConfigurationActionAsync", fixture.Plan.Actions.Single(), CancellationToken.None)) &&
             fixture.Certificates.DeleteCalls == 0 && !fixture.Persisted.Last().Records.Single().ConfigurationMutationAttempted);
 
         BoundProxyTarget proxyTarget = ConfigurationFixtureProxyTarget();
@@ -120,12 +120,12 @@ internal static partial class Program
             ConfigurationEvidenceRuleId = "INERT-CONFIG-PROXY"
         };
         fixture = CreateConfigurationBrokerFixture(proxyAction, original);
-        await InvokeConfiguration<Task<Dictionary<Guid, string>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
+        await InvokeConfiguration<Task<Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
         record = fixture.Manifest.Records.Single();
         preparedPath = record.ConfigurationBackupPath!;
         fixture.Proxy.FailNotify = true;
         Check("配置Broker 代理通知失败仍返回失败", await RejectsConfigurationAsync(async () =>
-            await InvokeConfiguration<Task<string>>(fixture.Engine, "ExecuteConfigurationActionAsync", proxyAction, CancellationToken.None)));
+            await InvokeConfiguration<Task<SteamSentinel.Core.Reporting.MessageText>>(fixture.Engine, "ExecuteConfigurationActionAsync", proxyAction, CancellationToken.None)));
         BoundConfigurationBackupDocument partiallyApplied = fixture.Payloads.ReadCurrent(record);
         Check("配置Broker finally保留实际Applied代理状态且不冒充全成功", fixture.Proxy.Writes == 1 &&
             partiallyApplied.Proxy is
@@ -143,8 +143,8 @@ internal static partial class Program
             fixture.Persisted.Last().Records.Single().ConfigurationBackupSha256 == record.ConfigurationBackupSha256);
 
         fixture = CreateConfigurationBrokerFixture(proxyAction, original);
-        await InvokeConfiguration<Task<Dictionary<Guid, string>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
-        await InvokeConfiguration<Task<string>>(fixture.Engine, "ExecuteConfigurationActionAsync", proxyAction, CancellationToken.None);
+        await InvokeConfiguration<Task<Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
+        await InvokeConfiguration<Task<SteamSentinel.Core.Reporting.MessageText>>(fixture.Engine, "ExecuteConfigurationActionAsync", proxyAction, CancellationToken.None);
         record = fixture.Manifest.Records.Single();
         fixture.Proxy.Current = new()
         {
@@ -162,12 +162,12 @@ internal static partial class Program
                 JsonSerializer.Deserialize<QuarantineRecord>(JsonSerializer.Serialize(record, JsonFile.Options), JsonFile.Options)!, fixture.IncidentRoot)));
 
         fixture = CreateConfigurationBrokerFixture(proxyAction, original);
-        await InvokeConfiguration<Task<Dictionary<Guid, string>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
+        await InvokeConfiguration<Task<Dictionary<Guid, SteamSentinel.Core.Reporting.MessageText>>>(fixture.Engine, "PrepareConfigurationBackupsAsync", fixture.Plan, CancellationToken.None);
         record = fixture.Manifest.Records.Single();
         string previousPath = record.ConfigurationBackupPath!, previousHash = record.ConfigurationBackupSha256!;
         fixture.Proxy.AfterWrite = () => fixture.FailPersist = true;
         bool uncertainJournal = false;
-        try { await InvokeConfiguration<Task<string>>(fixture.Engine, "ExecuteConfigurationActionAsync", proxyAction, CancellationToken.None); }
+        try { await InvokeConfiguration<Task<SteamSentinel.Core.Reporting.MessageText>>(fixture.Engine, "ExecuteConfigurationActionAsync", proxyAction, CancellationToken.None); }
         catch (ConfigurationExecutionUncertainException) { uncertainJournal = true; }
         Check("配置Broker 写入后提交失败报告执行未知并保留旧可信完整字节", uncertainJournal &&
             fixture.Proxy.Writes == 1 && record.ConfigurationBackupPath != previousPath && fixture.Payloads.Content.ContainsKey(previousPath) &&

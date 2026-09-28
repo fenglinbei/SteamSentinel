@@ -33,8 +33,8 @@ internal static partial class Program
         using StreamReader planReader = new(zip.GetEntry("plan.json")!.Open());
         using JsonDocument doc = JsonDocument.Parse(await planReader.ReadToEndAsync());
         Check("导出计划保留真实计划 ID", doc.RootElement.GetProperty("PlanId").GetGuid() == plan.PlanId);
-        WorkerFailureException resource = new(WorkerStage.Scanning, 1, "ScanResourceLimitException: 文件数达到上限");
-        WorkerFailureException oom = new(WorkerStage.Scanning, 1, "OutOfMemoryException");
+        WorkerFailureException resource = new(WorkerStage.Scanning, 1, "arbitrary budget detail", reasonCode: ReasonCodes.ResourceLimit);
+        WorkerFailureException oom = new(WorkerStage.Scanning, 1, "arbitrary allocation detail", reasonCode: ReasonCodes.AllocationFailed);
         Check("安全上限和真正内存分配失败使用不同提示", resource.Message.Contains("不等于系统内存不足") && oom.Message.Contains("内存分配失败"));
     }
 }

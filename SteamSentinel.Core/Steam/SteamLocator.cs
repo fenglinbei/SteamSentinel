@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -14,16 +17,28 @@ public sealed class SteamLayout
     public List<ContentRoot> ContentRoots { get; } = [];
     public List<InstalledGame> Games { get; } = [];
     public List<string> DiscoveryNotes { get; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<int, DisplayMessage>? DiscoveryNoteMessages { get => SteamSentinel.Core.Models.DisplayMessageMap.Bound(DiscoveryNotes, field); set => field = value; }
+    [JsonIgnore] public IEnumerable<MessageText> DiscoveryTexts => DisplayMessageMap.Read(DiscoveryNotes, DiscoveryNoteMessages);
+    public void AddDiscoveryNote(MessageText text) => DiscoveryNoteMessages = DisplayMessageMap.Add(DiscoveryNotes, DiscoveryNoteMessages, text);
 }
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record WallpaperProject(string Directory, string WorkshopId, string? Title, string? Type, string? EntryFile, string? PreviewFile, string? ParseError)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? ParseErrorMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, ParseError); init => field = value; }
 
-public sealed record WallpaperProject(
-    string Directory,
-    string WorkshopId,
-    string? Title,
-    string? Type,
-    string? EntryFile,
-    string? PreviewFile,
-    string? ParseError);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText ParseErrorText
+    {
+        get => new(ParseError ?? string.Empty, ParseErrorMessage);
+        init
+        {
+            ParseError = value.OriginalText;
+            ParseErrorMessage = value.Message;
+        }
+    }
+
+}
 
 public static partial class SteamLocator
 {
@@ -68,7 +83,7 @@ public static partial class SteamLocator
             try
             {
                 if (!ContentDiscovery.IsLocalSafePath(vdf) || new FileInfo(vdf).Length > 2 * 1024 * 1024)
-                { layout.DiscoveryNotes.Add("Steam 库清单过大或路径不安全，未完整发现库。"); continue; }
+                { layout.AddDiscoveryNote(MessageText.Create("Backend.Core.SteamLocator.Discover.01")); continue; }
                 string text = File.ReadAllText(vdf);
                 foreach (Match match in LibraryPathRegex().Matches(text))
                 {
@@ -96,13 +111,13 @@ public static partial class SteamLocator
         string projectJson = Path.Combine(directory, "project.json");
         if (!File.Exists(projectJson))
         {
-            return new WallpaperProject(directory, id, null, null, null, null, "缺少 project.json");
+            return new WallpaperProject(directory, id, null, null, null, null, null) { ParseErrorText = MessageText.Create("Backend.Core.SteamLocator.ReadWallpaperProject.01") };
         }
 
         try
         {
             if (!ContentDiscovery.IsLocalSafePath(projectJson) || new FileInfo(projectJson).Length > 1024 * 1024)
-                throw new IOException("项目清单过大或路径不安全。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamLocator.ReadWallpaperProject.02"), sourceText => new IOException(sourceText));
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(projectJson));
             JsonElement root = document.RootElement;
             return new WallpaperProject(
@@ -116,7 +131,7 @@ public static partial class SteamLocator
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            return new WallpaperProject(directory, id, null, null, null, null, ex.Message);
+            return new WallpaperProject(directory, id, null, null, null, null, null) { ParseErrorText = MessageExceptions.Describe(ex) };
         }
     }
 

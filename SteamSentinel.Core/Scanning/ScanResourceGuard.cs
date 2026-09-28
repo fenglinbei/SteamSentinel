@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using SteamSentinel.Core.Models;
 
@@ -12,8 +13,10 @@ public sealed class ScanResourceGuard(bool checkProcessMemory = false)
     private int _findings, _notes, _sources, _roots, _summaries;
     private long _characters;
     private long _lastMemoryCheck;
+    private readonly MemoryReclaimPolicy _reclaim = new();
     private ScanReport? _report;
     private readonly List<CoverageAggregate> _aggregates = [];
+    private readonly List<CoverageNotice> _notices = [];
 
     public void Check(ScanReport report)
     {
@@ -23,14 +26,19 @@ public sealed class ScanResourceGuard(bool checkProcessMemory = false)
             _findings = _notes = _sources = _roots = _summaries = 0;
             _characters = 0;
             _aggregates.Clear();
+            _notices.Clear();
         }
         int records = report.ContentScanSettings?.MaximumReportRecords ?? MaximumRecords;
-        if (report.Findings.Count > records || report.CoverageNotes.Count > records ||
-            report.ContentSources.Count > records || report.RootSummaries.Count > records ||
+        long requiredRecords = new[] { report.Findings.Count, report.CoverageNotes.Count, report.CoverageNotices.Count,
+            report.ContentSources.Count, report.RootSummaries.Count }.Max();
+        if (requiredRecords > records && !ScanResourceSession.Allow("MaximumReportRecords", requiredRecords, records, known: false) ||
             report.CoverageAggregates.Count > CoverageAggregate.MaximumGroups)
-            throw new ScanResourceLimitException("检查结果达到本轮记录上限，已保留此前结果。请缩小目录范围，分批检查剩余内容。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanResourceGuard.Check.01"), sourceText => new ScanResourceLimitException(sourceText));
         foreach (Finding f in report.Findings.Skip(_findings))
+        {
             Count(f.Target, f.ContentPath, f.Title, f.Description, f.Evidence);
+            _characters += f.ValidateDisplayMessages();
+        }
         foreach (string s in report.CoverageNotes.Skip(_notes)) Count(s);
         foreach (string s in report.ContentSources.Skip(_sources)) Count(s);
         foreach (string s in report.Roots.Skip(_roots)) Count(s);
@@ -42,26 +50,41 @@ public sealed class ScanResourceGuard(bool checkProcessMemory = false)
             if (value.Count <= 0 || value.Examples.Count > CoverageAggregate.MaximumExamples ||
                 value.Root.Length > CoverageAggregate.MaximumRootCharacters ||
                 value.Examples.Any(p => p.Length > CoverageAggregate.MaximumExampleCharacters))
-                throw new ScanResourceLimitException("覆盖分组超过安全范围，已保留此前结果。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanResourceGuard.Check.02"), sourceText => new ScanResourceLimitException(sourceText));
             if (i < _aggregates.Count) _characters -= _aggregates[i].TextCharacters;
             Count(value.RuleId, value.Root);
             foreach (string example in value.Examples) Count(example);
             if (i < _aggregates.Count) _aggregates[i] = value;
             else _aggregates.Add(value);
         }
+        for (int i = 0; i < report.CoverageNotices.Count; i++)
+        {
+            CoverageNotice value = report.CoverageNotices[i];
+            if (i < _notices.Count && ReferenceEquals(value, _notices[i])) continue;
+            value.Validate();
+            if (i < _notices.Count) _characters -= _notices[i].TextCharacters;
+            _characters += value.TextCharacters;
+            if (i < _notices.Count) _notices[i] = value; else _notices.Add(value);
+        }
         _findings = report.Findings.Count; _notes = report.CoverageNotes.Count;
         _sources = report.ContentSources.Count; _roots = report.Roots.Count; _summaries = report.RootSummaries.Count;
-        if (_characters > (report.ContentScanSettings?.MaximumReportTextCharacters ?? MaximumTextCharacters))
-            throw new ScanResourceLimitException("检查结果的文本量达到本轮上限，已保留此前结果。请分批检查剩余目录。");
+        long text = checked(_characters + report.ValidateTextMessages());
+        long textLimit = report.ContentScanSettings?.MaximumReportTextCharacters ?? MaximumTextCharacters;
+        if (text > textLimit && !ScanResourceSession.Allow("MaximumReportTextCharacters", text, textLimit, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanResourceGuard.Check.03"), sourceText => new ScanResourceLimitException(sourceText));
         if (!checkProcessMemory || Environment.TickCount64 - _lastMemoryCheck < 500) return;
         _lastMemoryCheck = Environment.TickCount64;
         using Process process = Process.GetCurrentProcess();
         long memoryLimit = report.ContentScanSettings?.MaximumWorkerMemoryBytes ?? 1024L * 1024 * 1024;
         if (process.PrivateMemorySize64 < memoryLimit / 8 * 5) return;
-        GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-        process.Refresh();
-        if (process.PrivateMemorySize64 >= memoryLimit / 4 * 3)
-            throw new ScanResourceLimitException("扫描组件接近内存安全上限，已停止本轮内容检查并保留此前结果。请分批扫描，未完成的文件仍需检查。");
+        if (_reclaim.ShouldCollect(process.PrivateMemorySize64, memoryLimit, Environment.TickCount64))
+        {
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: true, compacting: false);
+            process.Refresh();
+        }
+        if (process.PrivateMemorySize64 >= memoryLimit / 4 * 3 &&
+            !ScanResourceSession.Allow("MaximumWorkerMemoryBytes", checked(process.PrivateMemorySize64 / 3 * 4 + 64L * 1024 * 1024), process.PrivateMemorySize64, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanResourceGuard.Check.04"), sourceText => new ScanResourceLimitException(sourceText));
     }
 
     private void Count(params string?[] values)
@@ -69,7 +92,7 @@ public sealed class ScanResourceGuard(bool checkProcessMemory = false)
         foreach (string? value in values)
         {
             if (value?.Length > MaximumFieldCharacters)
-                throw new ScanResourceLimitException("单条结果文本过长，已停止本轮内容检查，请单独检查该文件。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanResourceGuard.Count.01"), sourceText => new ScanResourceLimitException(sourceText));
             _characters += value?.Length ?? 0;
         }
     }

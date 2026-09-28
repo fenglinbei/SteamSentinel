@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.SelfTest;
@@ -99,6 +100,19 @@ internal static partial class Program
         Check("第三批病例新boot后只读目标通过但整案及写入者保持未知", passedEpisode.State == CaseReverificationState.SelectedTargetsVerified &&
             !passedEpisode.IsWholeMachineClear && !passedEpisode.WriterIdentified && !passed.IsWholeMachineClear && !passed.WriterIdentified && !passed.MayReplaySavedPlans);
         Check("第三批病例独立episode不覆盖Broker即时两轮结果", passed.Episodes.Count == 1 && immediateBefore == JsonSerializer.Serialize(passed.ExecutionResults, JsonFile.Options));
+        string bilingualCase = JsonSerializer.Serialize(passed, JsonFile.Options);
+        using (DisplayText.UseCulture(DisplayText.English))
+        {
+            Check("后台消息 病例复验摘要及检查理由为英文", passedEpisode.SummaryMessage is not null &&
+                !passedEpisode.SummaryText.Display.Any(c => c is >= '\u4e00' and <= '\u9fff') &&
+                passedEpisode.Checks.All(c => c.NameMessage is not null && c.DetailMessage is not null &&
+                    !c.DetailText.Display.Any(ch => ch is >= '\u4e00' and <= '\u9fff')));
+            Check("后台消息 病例显示不改变原文JSON及会话判定", bilingualCase == JsonSerializer.Serialize(passed, JsonFile.Options) &&
+                passedEpisode.State == CaseReverificationState.SelectedTargetsVerified);
+        }
+        RemediationCaseRecord badMessages = JsonSerializer.Deserialize<RemediationCaseRecord>(bilingualCase, JsonFile.Options)!;
+        badMessages.Episodes[0].SummaryMessage = new("bad id", []);
+        Check("后台消息 病例保存边界拒绝无效消息描述", V020Throws<InvalidDataException>(() => RemediationCaseStore.ValidateRecord(badMessages, sid)));
         await new RemediationCaseReverification(ClearProbe(), new Phase3CaseSessions(newBoot), clock).RecheckAsync(passed);
         Check("第三批病例重复只读复验新增episode而不续期旧计划", passed.Episodes.Count == 2 && passed.Episodes[0].EpisodeId != passed.Episodes[1].EpisodeId &&
             passed.Plans[0].ExpiresAtUtc == epoch.AddMinutes(15));

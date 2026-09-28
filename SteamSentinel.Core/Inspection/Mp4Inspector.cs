@@ -1,15 +1,31 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers.Binary;
 using System.Text;
 
 namespace SteamSentinel.Core.Inspection;
 
-public sealed record Mp4InspectionResult(
-    bool IsStructurallyValid,
-    long LastValidOffset,
-    long FileLength,
-    long TrailingBytes,
-    string? EmbeddedType,
-    string Detail);
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record Mp4InspectionResult(bool IsStructurallyValid, long LastValidOffset, long FileLength, long TrailingBytes, string? EmbeddedType, string Detail)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public Mp4InspectionResult(bool IsStructurallyValid, long LastValidOffset, long FileLength, long TrailingBytes, string? EmbeddedType, SteamSentinel.Core.Reporting.MessageText Detail) : this(IsStructurallyValid, LastValidOffset, FileLength, TrailingBytes, EmbeddedType, Detail.OriginalText)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
 
 public static class Mp4Inspector
 {
@@ -31,7 +47,7 @@ public static class Mp4Inspector
     {
         if (!stream.CanSeek)
         {
-            throw new ArgumentException("MP4 检查需要可定位流。", nameof(stream));
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.Mp4Inspector.InspectAsync.01"), sourceText => new ArgumentException(sourceText, nameof(stream)));
         }
 
         long length = stream.Length;
@@ -87,9 +103,9 @@ public static class Mp4Inspector
             ? await DetectOverlayAsync(stream, lastValid, cancellationToken)
             : null;
         bool valid = sawFtyp && lastValid > 0 && trailing == 0;
-        string detail = trailing == 0
-            ? $"MP4 顶层结构完整，共检查 {boxes} 个 box。"
-            : $"最后一个合法 MP4 box 在偏移 {lastValid} 结束，后方还有 {trailing} 字节。";
+        MessageText detail = trailing == 0
+            ? MessageText.Create("Backend.Core.Mp4Inspector.InspectAsync.02", (boxes))
+            : MessageText.Create("Backend.Core.Mp4Inspector.InspectAsync.03", (lastValid), (trailing));
 
         return new Mp4InspectionResult(valid, lastValid, length, trailing, embedded, detail);
     }

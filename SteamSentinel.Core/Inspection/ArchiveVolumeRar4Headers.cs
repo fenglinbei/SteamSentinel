@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -22,13 +23,13 @@ internal static class Rar4EncryptedHeaderReader
     {
         RarIntegrityReflection.EnsureVersion();
         token.ThrowIfCancellationRequested();
-        string password = options.Password ?? throw new SharpCompress.Common.CryptographicException("RAR4 加密头需要密码。");
+        string password = options.Password ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.01"), sourceText => new SharpCompress.Common.CryptographicException(sourceText));
         if (password.Length > 256)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR4 密码长度超出格式适配预算。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.02"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, sourceText));
         if (!source.CanRead || !source.CanSeek)
-            throw RarIntegrityReflection.Invalid("RAR4 加密头要求受控可定位源流。");
+            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.03"));
         if (source.Position < 0 || source.Position > source.Length - 24)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "RAR4 加密头的 salt 或首个 AES 分组被截断。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.04"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, sourceText));
 
         byte[] salt = new byte[8], first = new byte[16];
         byte[]? key = null, iv = null, plaintext = null, remainder = null;
@@ -46,12 +47,12 @@ internal static class Rar4EncryptedHeaderReader
                 decryptor.TransformBlock(first, 0, first.Length, initial, 0);
                 int headerLength = BinaryPrimitives.ReadUInt16LittleEndian(initial.AsSpan(5, 2));
                 if (headerLength < 7)
-                    throw RarIntegrityReflection.Invalid("RAR4 加密头长度无效，密码不匹配或数据已损坏。");
+                    throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.05"));
                 int aligned = checked((headerLength + 15) & ~15);
                 if (aligned > limits.MaximumMetadataBytes)
-                    throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR4 加密头超出元数据预算。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.06"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, sourceText));
                 if (aligned - 16 > source.Length - source.Position)
-                    throw RarIntegrityReflection.Invalid("RAR4 加密头范围无效，密码不匹配或密文被截断。");
+                    throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.07"));
                 plaintext = new byte[aligned]; initial.CopyTo(plaintext, 0);
                 if (aligned > 16)
                 {
@@ -61,11 +62,11 @@ internal static class Rar4EncryptedHeaderReader
                 token.ThrowIfCancellationRequested();
                 ushort expected = BinaryPrimitives.ReadUInt16LittleEndian(plaintext);
                 if ((ushort)ArchiveIntegrity.Crc32(plaintext.AsSpan(2, headerLength - 2)) != expected)
-                    throw RarIntegrityReflection.Invalid("RAR4 加密头 CRC 不匹配，密码不匹配或数据已损坏。");
+                    throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.08"));
                 // SharpCompress's RAR4 parser stores HEAD_SIZE in a signed Int16.
                 // Reject that decoder boundary only after the original header CRC passes.
                 if (headerLength > short.MaxValue)
-                    throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR4 头长度超出锁定元数据解析器支持范围。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.09"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, sourceText));
                 long dataStart = source.Position;
                 IRarHeader header = ParseOriginalHeader(plaintext, headerLength, options);
                 long packed = header.HeaderType switch
@@ -73,17 +74,17 @@ internal static class Rar4EncryptedHeaderReader
                     HeaderType.File or HeaderType.NewSub => RarIntegrityReflection.Property<long>(header, "CompressedSize"),
                     HeaderType.Protect => RarIntegrityReflection.Property<uint>(header, "DataSize"),
                     HeaderType.EndArchive => 0,
-                    _ => throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR4 加密头类型不受支持。")
+                    _ => throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.10"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, sourceText))
                 };
                 if (packed < 0 || dataStart > source.Length - packed)
-                    throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "RAR4 已验证头声明的数据区超出受控卷范围。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.11"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, sourceText));
                 source.Position = checked(dataStart + packed);
                 return new(header, dataStart);
             }
             finally { CryptographicOperations.ZeroMemory(initial); }
         }
         catch (EndOfStreamException ex)
-        { throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "RAR4 加密头密文被截断。", ex); }
+        { throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ReadNext.12"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, sourceText, ex)); }
         finally
         {
             CryptographicOperations.ZeroMemory(salt); CryptographicOperations.ZeroMemory(first);
@@ -109,7 +110,7 @@ internal static class Rar4EncryptedHeaderReader
         try
         {
             object header = parseBase.Invoke(null, [reader, false, options.ArchiveEncoding])
-                ?? throw RarIntegrityReflection.Invalid("RAR4 原始头无法解析。");
+                ?? throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ParseOriginalHeader.01"));
             byte code = RarIntegrityReflection.Property<byte>(header, "HeaderCode");
             (string TypeName, HeaderType Kind, bool File) shape = code switch
             {
@@ -117,7 +118,7 @@ internal static class Rar4EncryptedHeaderReader
                 0x7a => ("FileHeader", HeaderType.NewSub, true),
                 0x7b => ("EndArchiveHeader", HeaderType.EndArchive, false),
                 0x78 => ("ProtectHeader", HeaderType.Protect, false),
-                _ => throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR4 加密头包含未支持的记录类型。")
+                _ => throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ParseOriginalHeader.02"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, sourceText))
             };
             Type childType = Required("SharpCompress.Common.Rar.Headers." + shape.TypeName);
             Type[] signature = shape.File ? [baseType, crcType, typeof(HeaderType)] : [baseType, crcType];
@@ -126,13 +127,13 @@ internal static class Rar4EncryptedHeaderReader
             if (create.ReturnType != childType) throw Unsupported();
             object?[] arguments = shape.File ? [header, reader, shape.Kind] : [header, reader];
             if (create.Invoke(null, arguments) is not IRarHeader parsed || parsed.HeaderType != shape.Kind || buffer.Position != length)
-                throw RarIntegrityReflection.Invalid("RAR4 原始头字段或范围不一致。");
+                throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ParseOriginalHeader.03"));
             return parsed;
         }
         catch (TargetInvocationException ex)
-        { throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, "RAR4 已校验头的字段无法解析。", ex.InnerException ?? ex); }
+        { throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.ParseOriginalHeader.04"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, sourceText, ex.InnerException ?? ex)); }
     }
 
     private static ArchiveVolumeException Unsupported() => new(ArchiveVolumeStatus.UnsupportedIntegrity,
-        "锁定的 RAR4 元数据解析接口不可用。");
+        MessageText.Create("Backend.Core.ArchiveVolumeRar4Headers.Unsupported.01"));
 }

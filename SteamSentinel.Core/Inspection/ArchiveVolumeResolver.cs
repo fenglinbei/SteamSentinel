@@ -1,3 +1,5 @@
+using SteamSentinel.Core.Reporting;
+using SteamSentinel.Core.Scanning;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -26,13 +28,17 @@ public static partial class ArchiveVolumeResolver
         string logical = Normalize(selected.DisplayName);
         string directory = DirectoryOf(logical);
         Name? selectedName = Parse(Leaf(logical));
-        if (selectedName is null) return Result(ArchiveVolumeStatus.NotArchive, "不是已知分卷命名。");
+        if (selectedName is null) return Result(ArchiveVolumeStatus.NotArchive, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.01"));
         List<(ArchiveVolumeCandidate Candidate, Name Name)> matching = [];
         int seen = 0;
         bool found = false;
         foreach (ArchiveVolumeCandidate candidate in candidates)
         {
-            if (++seen > limits.MaximumCandidates) return Result(ArchiveVolumeStatus.LimitExceeded, "同目录候选数达到上限。");
+            if (++seen > limits.MaximumCandidates)
+            {
+                if (!ScanResourceSession.Allow("ContainerLimits.MaximumDirectoryCandidates", seen, seen - 1, known: false)) return Result(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.02"));
+                limits = limits with { MaximumCandidates = ScanResourceSession.Current!.Options.ContainerLimits!.MaximumDirectoryCandidates };
+            }
             ValidateCandidate(candidate);
             string name = Normalize(candidate.DisplayName);
             if (!string.Equals(DirectoryOf(name), directory, StringComparison.OrdinalIgnoreCase)) continue;
@@ -42,35 +48,39 @@ public static partial class ArchiveVolumeResolver
             matching.Add((candidate, parsed));
             found |= string.Equals(Path.GetFullPath(candidate.PhysicalPath), Path.GetFullPath(selected.PhysicalPath), StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(name, logical, StringComparison.OrdinalIgnoreCase) && candidate.Offset == selected.Offset && candidate.Length == selected.Length;
-            if (matching.Count > limits.MaximumVolumes) return Result(ArchiveVolumeStatus.LimitExceeded, "分卷数量达到上限。");
+            if (matching.Count > limits.MaximumVolumes)
+            {
+                if (!ScanResourceSession.Allow("ContainerLimits.MaximumVolumes", matching.Count, matching.Count - 1, known: false)) return Result(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.03"));
+                limits = limits with { MaximumVolumes = ScanResourceSession.Current!.Options.ContainerLimits!.MaximumVolumes };
+            }
         }
-        if (!found) return Result(ArchiveVolumeStatus.Unavailable, "选中卷未包含在明确提供的候选中。");
+        if (!found) return Result(ArchiveVolumeStatus.Unavailable, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.04"));
         ArchiveVolumeLayout layout = selectedName.Layout;
         ArchiveVolumeLayout[] layouts = matching.Select(m => m.Name.Layout).Distinct().ToArray();
         if (layouts.Contains(ArchiveVolumeLayout.NumericSplit) && layouts.Length != 1 ||
             layouts.Contains(ArchiveVolumeLayout.RarNumbered) && layouts.Length != 1)
-            return Result(ArchiveVolumeStatus.MixedVolumes, "同名归档混用了不同分卷方案。");
+            return Result(ArchiveVolumeStatus.MixedVolumes, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.05"));
         if (layouts.Contains(ArchiveVolumeLayout.RarLegacy)) layout = ArchiveVolumeLayout.RarLegacy;
         if (layouts.Contains(ArchiveVolumeLayout.ZipSpanned)) layout = ArchiveVolumeLayout.ZipSpanned;
         List<(ArchiveVolumeCandidate Candidate, int Index)> indexed = matching.Select(m => (m.Candidate,
             m.Name.Layout == ArchiveVolumeLayout.Single && layout == ArchiveVolumeLayout.ZipSpanned ? int.MaxValue : m.Name.Index)).ToList();
         if (indexed.Select(m => m.Index).Distinct().Count() != indexed.Count ||
             indexed.Select(m => Path.GetFullPath(m.Candidate.PhysicalPath)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != indexed.Count)
-            return Result(ArchiveVolumeStatus.DuplicateVolume, "分卷序号或物理文件重复。");
+            return Result(ArchiveVolumeStatus.DuplicateVolume, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.06"));
         indexed.Sort((a, b) => a.Index.CompareTo(b.Index));
         int first = layout is ArchiveVolumeLayout.RarNumbered or ArchiveVolumeLayout.NumericSplit or ArchiveVolumeLayout.ZipSpanned ? 1 : 0;
         int count = indexed.Count;
         if (layout == ArchiveVolumeLayout.ZipSpanned)
         {
-            if (indexed[^1].Index != int.MaxValue) return Result(ArchiveVolumeStatus.MissingVolume, "ZIP 分盘归档缺少最终 .zip 卷。");
+            if (indexed[^1].Index != int.MaxValue) return Result(ArchiveVolumeStatus.MissingVolume, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.07"));
             count--;
         }
         for (int i = 0; i < count; i++)
-            if (indexed[i].Index != first + i) return Result(ArchiveVolumeStatus.MissingVolume, "分卷首卷缺失或编号不连续。");
+            if (indexed[i].Index != first + i) return Result(ArchiveVolumeStatus.MissingVolume, MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.08"));
         return new(ArchiveVolumeStatus.Ready, selectedName.Format, layout, Key(directory, selectedName.Family),
-            indexed.Select(m => m.Candidate), "命名归组完成，尚需验证各卷元数据。", limits);
+            indexed.Select(m => m.Candidate), MessageText.Create("Backend.Core.ArchiveVolumeResolver.Resolve.09"), limits);
 
-        ArchiveVolumePlan Result(ArchiveVolumeStatus status, string detail) => new(status,
+        ArchiveVolumePlan Result(ArchiveVolumeStatus status, MessageText detail) => new(status,
             selectedName?.Format ?? ArchiveVolumeFormat.Zip, selectedName?.Layout ?? ArchiveVolumeLayout.Single,
             selectedName is null ? "" : Key(directory, selectedName.Family), [], detail, limits);
     }
@@ -83,7 +93,7 @@ public static partial class ArchiveVolumeResolver
         if (!Enum.IsDefined(format)) throw new ArgumentOutOfRangeException(nameof(format));
         return new(ArchiveVolumeStatus.Ready, format, ArchiveVolumeLayout.Single,
             Key(DirectoryOf(Normalize(candidate.DisplayName)), Leaf(Normalize(candidate.DisplayName))),
-            [candidate], "单一明确输入，尚需验证归档元数据。", limits);
+            [candidate], MessageText.Create("Backend.Core.ArchiveVolumeResolver.Single.01"), limits);
     }
 
     private static Name? Parse(string leaf)
@@ -123,6 +133,6 @@ public static partial class ArchiveVolumeResolver
             candidate.DisplayName.Length > 65536 || candidate.DisplayName.Any(char.IsControl) ||
             candidate.PhysicalPath.Any(char.IsControl) || Leaf(Normalize(candidate.DisplayName)).Length == 0 ||
             candidate.Offset < 0 || candidate.Length is <= 0)
-            throw new ArgumentException("归档候选路径或逻辑名称无效。", nameof(candidate));
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeResolver.ValidateCandidate.01"), sourceText => new ArgumentException(sourceText, nameof(candidate)));
     }
 }

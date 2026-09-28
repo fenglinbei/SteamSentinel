@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Diagnostics;
 using SteamSentinel.Core.Models;
@@ -14,7 +15,7 @@ internal sealed class RemediationClient
     internal bool IsUnresolved(Guid id) => _unresolvedPlans.ContainsKey(id);
     internal void RestoreUnresolvedPlan(RemediationPlan plan)
     {
-        if (plan.PlanId == Guid.Empty || plan.Actions.Count > 64) throw new InvalidDataException("未决计划记录无效。");
+        if (plan.PlanId == Guid.Empty || plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.RestoreUnresolvedPlan.01"), sourceText => new InvalidDataException(sourceText));
         _unresolvedPlans.TryAdd(plan.PlanId, plan);
     }
 
@@ -37,14 +38,14 @@ internal sealed class RemediationClient
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default,
         Func<RemediationPlan, CancellationToken, Task>? beforeLaunch = null)
     {
-        if (HasUnresolvedExecution) throw new InvalidOperationException("上一次管理员操作尚无确定结果，禁止提交新操作。请重新检查并导出记录。");
+        if (HasUnresolvedExecution) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.01"), sourceText => new InvalidOperationException(sourceText));
         if (!ElevationContext.Read().CanElevateSameUser)
-            throw new UnauthorizedAccessException("当前账户需要先打开管理员窗口并重新扫描，不能把原账户的处置计划交给另一账户执行。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.02"), sourceText => new UnauthorizedAccessException(sourceText));
         InstallationSecurityStatus installation = await Task.Run(() => InstallationSecurity.Evaluate(), cancellationToken);
-        if (!installation.IsProtected) throw new UnauthorizedAccessException(installation.Message);
+        if (!installation.IsProtected) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
 
         string brokerPath = Path.Combine(AppContext.BaseDirectory, "SteamSentinel.Broker.exe");
-        if (!File.Exists(brokerPath)) throw new FileNotFoundException("缺少管理员处置组件。", brokerPath);
+        if (!File.Exists(brokerPath)) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.03"), sourceText => new FileNotFoundException(sourceText, brokerPath));
 
         Directory.CreateDirectory(AppPaths.PlansRoot);
         string planPath = Path.Combine(AppPaths.PlansRoot, $"plan-{plan.PlanId:N}.json");
@@ -62,6 +63,8 @@ internal sealed class RemediationClient
         };
         startInfo.ArgumentList.Add(planPath);
         startInfo.ArgumentList.Add(planSha256);
+        startInfo.ArgumentList.Add("--ui-language");
+        startInfo.ArgumentList.Add(DisplayText.ApplicationCulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en");
 
         int brokerExitCode;
         bool started = false;
@@ -70,7 +73,7 @@ internal sealed class RemediationClient
             if (beforeLaunch is not null) await beforeLaunch(plan, cancellationToken).ConfigureAwait(false);
             _unresolvedPlans.Add(plan.PlanId, plan);
             using Process process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("无法启动管理员处置组件。");
+                ?? throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.04"), sourceText => new InvalidOperationException(sourceText));
             started = true;
             try
             {
@@ -79,14 +82,14 @@ internal sealed class RemediationClient
             }
             catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
             {
-                throw new InvalidOperationException($"管理员操作在等待期限内未返回确定结果，后台可能仍在执行，已暂停新的处置。可导出记录并关闭此窗口；请勿重复操作或重启。结果位置：{resultPath}", ex);
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.05", (resultPath)), sourceText => new InvalidOperationException(sourceText, ex));
             }
             brokerExitCode = process.ExitCode;
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
             _unresolvedPlans.Remove(plan.PlanId);
-            throw new OperationCanceledException("用户取消了 UAC 授权。", ex, cancellationToken);
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.06"), sourceText => new OperationCanceledException(sourceText, ex, cancellationToken));
         }
         catch when (!started)
         {
@@ -99,12 +102,12 @@ internal sealed class RemediationClient
         }
 
         if (brokerExitCode == 10)
-            throw new InvalidOperationException("管理员处置结果通道已被占用或无法安全新建，本次结果不可采信，请导出报告后重新扫描。已执行的动作可能需要人工核对。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.07"), sourceText => new InvalidOperationException(sourceText));
         if (brokerExitCode is not (0 or 1 or 3))
-            throw new InvalidOperationException($"管理员处置组件异常退出：{brokerExitCode}");
-        if (!File.Exists(resultPath)) throw new InvalidOperationException("处置组件没有返回受保护结果文件。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.08", (brokerExitCode)), sourceText => new InvalidOperationException(sourceText));
+        if (!File.Exists(resultPath)) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.09"), sourceText => new InvalidOperationException(sourceText));
         RemediationRunResult result = await ProtectedRemediationResultReader.TryReadAsync(plan, cancellationToken)
-            ?? throw new InvalidDataException("管理员结果尚未完整返回，保持执行状态未知。");
+            ?? throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.10"), sourceText => new InvalidDataException(sourceText));
         _unresolvedPlans.Remove(plan.PlanId);
         try { File.Delete(planPath); } catch (IOException) { }
         return result;

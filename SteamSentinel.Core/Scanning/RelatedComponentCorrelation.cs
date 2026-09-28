@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Utilities;
@@ -10,7 +11,7 @@ public sealed partial class RelatedComponentPipeline
         RelatedComponentLimits limits)
     {
         if (target.TargetUserSid != fresh.TargetUserSid)
-        { Check(target, "关联观察合并", DiagnosticReadStatus.Failed, "目标用户发生变化，拒绝合并该轮观察。"); return; }
+        { Check(target, "related.merge", MessageText.Create("Backend.Core.RelatedComponentCorrelation.MergeDiscovery.01"), DiagnosticReadStatus.Failed, MessageText.Create("Backend.Core.RelatedComponentCorrelation.MergeDiscovery.02")); return; }
         Dictionary<string, string> ids = new(StringComparer.Ordinal);
         bool truncated = false;
         static void Union(List<string> into, IEnumerable<string> values)
@@ -44,10 +45,10 @@ public sealed partial class RelatedComponentPipeline
                     CommandLine = host.CommandLine,
                     WorkingDirectory = host.WorkingDirectory,
                     Status = host.Status,
-                    Detail = host.Detail,
+                    DetailText = host.DetailText,
                     ImageSha256 = host.ImageSha256,
                     SignatureStatus = host.SignatureStatus,
-                    SignatureDetail = host.SignatureDetail
+                    SignatureDetailText = host.SignatureDetailText
                 };
                 target.Hosts.Add(old);
             }
@@ -60,7 +61,7 @@ public sealed partial class RelatedComponentPipeline
             if (old is null)
             {
                 if (target.Candidates.Count >= Math.Min(128, limits.MaximumCandidates)) { truncated = true; continue; }
-                old = new() { Id = candidate.Id, Path = candidate.Path, Reason = candidate.Reason, Status = candidate.Status, Detail = candidate.Detail };
+                old = new() { Id = candidate.Id, Path = candidate.Path, ReasonText = candidate.ReasonText, Status = candidate.Status, DetailText = candidate.DetailText };
                 target.Candidates.Add(old);
             }
             ids[candidate.Id] = old.Id;
@@ -71,12 +72,11 @@ public sealed partial class RelatedComponentPipeline
         {
             string? mapped = check.ObservationId is null ? null : ids.GetValueOrDefault(check.ObservationId);
             if (check.ObservationId is not null && mapped is null) { truncated = true; continue; }
-            DiagnosticCheck? old = target.Checks.FirstOrDefault(c => c.Name == check.Name && c.Status == check.Status &&
-                c.Detail == check.Detail && c.Required == check.Required && c.ObservationId == mapped);
+            DiagnosticCheck? old = target.Checks.FirstOrDefault(c => c.Id == check.Id);
             if (old is null)
             {
                 if (target.Checks.Count >= 2047) { truncated = true; continue; }
-                old = new() { Id = check.Id, Name = check.Name, Status = check.Status, Detail = check.Detail, Required = check.Required, ObservationId = mapped };
+                old = new() { Id = check.Id, CheckCode = check.CheckCode, NameText = check.NameText, Status = check.Status, DetailText = check.DetailText, Required = check.Required, ObservationId = mapped };
                 target.Checks.Add(old);
             }
             ids[check.Id] = old.Id;
@@ -86,12 +86,12 @@ public sealed partial class RelatedComponentPipeline
             if (!ids.TryGetValue(relation.FromId, out string? from) || !ids.TryGetValue(relation.ToId, out string? to))
             { truncated = true; continue; }
             DiagnosticRelation mapped = relation with { FromId = from, ToId = to };
-            if (target.Relations.Contains(mapped)) continue;
+            if (target.Relations.Any(item => item.FromId == mapped.FromId && item.ToId == mapped.ToId && item.Kind == mapped.Kind && item.Evidence == mapped.Evidence)) continue;
             if (target.Relations.Count >= 4096) { truncated = true; continue; }
             target.Relations.Add(mapped);
         }
-        if (truncated) Check(target, "累计关联观察限额", DiagnosticReadStatus.LimitReached,
-            "累计来源、宿主、候选、关系或检查记录达到上限；保留原有记录，其余观察未合并。");
+        if (truncated) Check(target, "related.total_observation_limit", MessageText.Create("Backend.Core.RelatedComponentCorrelation.MergeDiscovery.03"), DiagnosticReadStatus.LimitReached,
+            MessageText.Create("Backend.Core.RelatedComponentCorrelation.MergeDiscovery.04"));
     }
 
     internal static void AssociateEvidence(ScanReport report)
@@ -123,9 +123,9 @@ public sealed partial class RelatedComponentPipeline
             {
                 host.ImageSha256 = finding.TargetSha256 ?? finding.Sha256;
                 host.SignatureStatus = finding.ConfigurationKind ?? "NotChecked";
-                host.SignatureDetail = finding.Description + " " + finding.Evidence;
+                host.SignatureDetailText = finding.DescriptionText + " " + finding.EvidenceText;
                 if (host.SignatureStatus is not ("Valid" or "Unsigned"))
-                    Check(diagnostic, "宿主离线签名", DiagnosticReadStatus.NotChecked, host.SignatureDetail, host.Id);
+                    Check(diagnostic, "related.host_signature", MessageText.Create("Backend.Core.RelatedComponentCorrelation.ApplySignatureResults.01"), DiagnosticReadStatus.NotChecked, host.SignatureDetailText, host.Id);
             }
         content.Findings.RemoveAll(f => f.RuleId == "ASSOCIATION-HOST-SIGNATURE");
     }
@@ -151,23 +151,23 @@ public sealed partial class RelatedComponentPipeline
             {
                 token.ThrowIfCancellationRequested();
                 if (++read > 64 || !IsSafeCandidate(candidate.Path, options))
-                    throw new RelatedBudgetException("此轮关联身份核验超过64个文件，或目标不在可读的精确文件范围内。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentCorrelation.RefreshEvidenceIdentitiesAsync.01"), sourceText => new RelatedBudgetException(sourceText));
                 await using FileStream lease = RelatedArtifactReader.Open(candidate.Path);
                 if (lease.Length > limits.MaximumFileBytes || lease.Length > remaining())
-                    throw new RelatedBudgetException("剩余关联字节预算或单文件限额不足，未把旧内容结果连接到新的路径观察。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentCorrelation.RefreshEvidenceIdentitiesAsync.02"), sourceText => new RelatedBudgetException(sourceText));
                 candidate.Length = lease.Length;
                 candidate.Sha256 = await Hashing.Sha256StreamAsync(lease, token, bytes => consumed(bytes), maximumBytes: lease.Length);
                 RelatedArtifactReader.ValidatePath(lease.SafeFileHandle, System.IO.Path.GetFullPath(candidate.Path));
                 candidate.VerifiedAtUtc = DateTimeOffset.UtcNow;
                 candidate.Status = DiagnosticReadStatus.Complete;
-                candidate.Detail = "关联前已使用拒绝写入和删除的句柄核验当前磁盘文件；加载关系仍是路径快照，不证明进程内存字节相同。";
+                candidate.DetailText = MessageText.Create("Backend.Core.RelatedComponentCorrelation.RefreshEvidenceIdentitiesAsync.03");
                 if (!matching.Any(f => candidate.Sha256.Equals(RelatedArtifactRelations.FileHash(f), StringComparison.OrdinalIgnoreCase)) &&
                     !(previousContentComplete && candidate.Sha256.Equals(previousHash, StringComparison.OrdinalIgnoreCase)))
                 {
                     visited.Remove(candidate.Path);
                     candidate.ContentStatus = DiagnosticReadStatus.NotChecked;
-                    candidate.ContentDetail = "当前文件与旧内容结果哈希不同；旧证据不连接到新来源或宿主，此身份需要重新检查。";
-                    Check(diagnostic, "关联文件身份变化", DiagnosticReadStatus.NotChecked, candidate.ContentDetail, candidate.Id);
+                    candidate.ContentDetailText = MessageText.Create("Backend.Core.RelatedComponentCorrelation.RefreshEvidenceIdentitiesAsync.04");
+                    Check(diagnostic, "related.file_changed", MessageText.Create("Backend.Core.RelatedComponentCorrelation.RefreshEvidenceIdentitiesAsync.05"), DiagnosticReadStatus.NotChecked, candidate.ContentDetailText, candidate.Id);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
@@ -175,8 +175,8 @@ public sealed partial class RelatedComponentPipeline
                 candidate.Status = ex is RelatedBudgetException ? DiagnosticReadStatus.LimitReached :
                     ex is UnauthorizedAccessException || ex is System.ComponentModel.Win32Exception { NativeErrorCode: 5 }
                     ? DiagnosticReadStatus.AccessDenied : DiagnosticReadStatus.Failed;
-                candidate.Detail = "未取得关联所需的当前文件身份：" + ex.Message;
-                Check(diagnostic, "内容与路径观察身份复核", candidate.Status, candidate.Detail, candidate.Id);
+                candidate.DetailText = MessageText.Create("Backend.Core.RelatedComponentCorrelation.RefreshEvidenceIdentitiesAsync.06") + MessageExceptions.Describe(ex);
+                Check(diagnostic, "related.content_identity", MessageText.Create("Backend.Core.RelatedComponentCorrelation.RefreshEvidenceIdentitiesAsync.07"), candidate.Status, candidate.DetailText, candidate.Id);
             }
         }
     }

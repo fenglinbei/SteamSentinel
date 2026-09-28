@@ -79,6 +79,37 @@ internal static partial class Program
             fixturePaths.Add(mode, path);
             return path;
         }
+        string environmentWorking = Path.Combine(AppPaths.WorkerTemporaryRoot, "selftest-environment-" + Guid.NewGuid().ToString("N"));
+        string expectedSystemDrive = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows))!.TrimEnd('\\');
+        string? originalSystemDrive = Environment.GetEnvironmentVariable("SystemDrive");
+        const string parentOnlyKey = "STEAMSENTINEL_SELFTEST_PARENT_ONLY";
+        string? originalParentOnly = Environment.GetEnvironmentVariable(parentOnlyKey);
+        try
+        {
+            Environment.SetEnvironmentVariable("SystemDrive", "caller-supplied-value");
+            Environment.SetEnvironmentVariable(parentOnlyKey, "must-not-reach-worker");
+            using JobObject environmentJob = new();
+            using RestrictedProcess environmentWorker = RestrictedProcess.Start(Fixture("environment"), environmentWorking, environmentJob);
+            using CancellationTokenSource environmentTimeout = new(TimeSpan.FromSeconds(10));
+            string? snapshot = await environmentWorker.StandardOutput.ReadLineAsync(environmentTimeout.Token);
+            environmentWorker.StandardInput.Close();
+            await environmentWorker.WaitForExitAsync(environmentTimeout.Token);
+            using JsonDocument environment = JsonDocument.Parse(snapshot ?? "{}");
+            JsonElement values = environment.RootElement;
+            Check("受限 Worker 从 Windows 目录生成 SystemDrive，拒绝继承调用方改写", values.GetProperty("systemDrive").GetString() == expectedSystemDrive);
+            Check("受限 Worker 不继承白名单以外的调用方变量", values.GetProperty("parentOnly").ValueKind == JsonValueKind.Null);
+            Check("环境兼容修复保留 Low、系统 PATH 和私有临时目录", values.GetProperty("integrity").GetString() == "Low" &&
+                values.GetProperty("path").GetString() == Environment.GetFolderPath(Environment.SpecialFolder.System) &&
+                values.GetProperty("temp").GetString() == environmentWorking && values.GetProperty("tmp").GetString() == environmentWorking);
+            Check("受限环境探针正常退出", environmentWorker.ExitCode == 0);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SystemDrive", originalSystemDrive);
+            Environment.SetEnvironmentVariable(parentOnlyKey, originalParentOnly);
+            if (Directory.Exists(environmentWorking) && !Validation.ContainsReparsePoint(environmentWorking)) Directory.Delete(environmentWorking, true);
+        }
+
         static async Task<bool> FixtureExitedAsync(string path)
         {
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(3));
@@ -180,6 +211,19 @@ internal static partial class Program
 
     private static async Task<int> RunWorkerFixtureAsync(string mode)
     {
+        if (mode == "environment")
+        {
+            await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                systemDrive = Environment.GetEnvironmentVariable("SystemDrive"),
+                parentOnly = Environment.GetEnvironmentVariable("STEAMSENTINEL_SELFTEST_PARENT_ONLY"),
+                path = Environment.GetEnvironmentVariable("PATH"),
+                temp = Environment.GetEnvironmentVariable("TEMP"),
+                tmp = Environment.GetEnvironmentVariable("TMP"),
+                integrity = ProcessIntegrity.GetCurrent().ToString()
+            }));
+            return 0;
+        }
         if (mode == "exit0142") return unchecked((int)0xC0000142);
         if (mode == "exit259") return 259;
         if (mode == "flood") { await Console.Error.WriteAsync(new string('x', 100000)); return unchecked((int)0xC0000142); }

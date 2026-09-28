@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Utilities;
 
@@ -21,18 +22,18 @@ public static class RemediationDependencies
     {
         if (actions.Count > 64 || actions.Any(a => a is null || a.ActionId == Guid.Empty) ||
             actions.Select(a => a.ActionId).Distinct().Count() != actions.Count)
-            throw new InvalidDataException("依赖图动作 ID 无效或超过上限。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.Build.01"), sourceText => new InvalidDataException(sourceText));
         Dictionary<Guid, int> indices = actions.Select((a, i) => (a.ActionId, i)).ToDictionary(x => x.ActionId, x => x.i);
         Dictionary<Guid, HashSet<Guid>> result = actions.ToDictionary(a => a.ActionId, _ => new HashSet<Guid>());
         foreach (RemediationAction action in actions)
         {
             if (action.ChainId == Guid.Empty || action.DependsOnActionIds is null || action.DependsOnActionIds.Count > 63 ||
                 action.DependsOnActionIds.Distinct().Count() != action.DependsOnActionIds.Count)
-                throw new InvalidDataException("处置关联链或前置动作列表无效。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.Build.02"), sourceText => new InvalidDataException(sourceText));
             foreach (Guid dependency in action.DependsOnActionIds)
             {
                 if (dependency == action.ActionId || !indices.ContainsKey(dependency))
-                    throw new InvalidDataException("前置动作不存在或依赖自身。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.Build.03"), sourceText => new InvalidDataException(sourceText));
                 result[action.ActionId].Add(dependency);
             }
         }
@@ -44,11 +45,11 @@ public static class RemediationDependencies
         void Visit(Guid id)
         {
             if (done.Contains(id)) return;
-            if (!active.Add(id)) throw new InvalidDataException("处置依赖图存在循环。");
+            if (!active.Add(id)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.Build.04"), sourceText => new InvalidDataException(sourceText));
             foreach (Guid dependency in result[id])
             {
                 if (requireOrder && indices[dependency] >= indices[id])
-                    throw new InvalidDataException("前置动作必须在依赖它的动作之前执行。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.Build.05"), sourceText => new InvalidDataException(sourceText));
                 Visit(dependency);
             }
             active.Remove(id); done.Add(id);
@@ -119,7 +120,7 @@ public static class RemediationDependencies
         while (pending.Count > 0)
         {
             int next = pending.FindIndex(a => dependencies[a.ActionId].All(emitted.Contains));
-            if (next < 0) throw new InvalidDataException("处置依赖图存在循环。");
+            if (next < 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.AssignAndOrder.01"), sourceText => new InvalidDataException(sourceText));
             RemediationAction action = pending[next]; pending.RemoveAt(next); ordered.Add(action); emitted.Add(action.ActionId);
         }
         actions.Clear(); actions.AddRange(ordered);
@@ -139,15 +140,15 @@ public static class RemediationDependencies
     {
         if (manifest.ActionOrder is null || manifest.ActionOrder.Count > 64 ||
             manifest.ActionOrder.Any(id => id == Guid.Empty) || manifest.ActionOrder.Distinct().Count() != manifest.ActionOrder.Count)
-            throw new InvalidDataException("受信清单的动作顺序无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.RollbackOrder.01"), sourceText => new InvalidDataException(sourceText));
         if (manifest.ActionOrder.Count == 0)
         {
             if (manifest.Records.Any(r => r.Type is RemediationActionType.RemoveBoundCertificate or RemediationActionType.RestoreBoundProxyConfiguration))
-                throw new InvalidDataException("专用配置清单缺少原动作顺序，不能按预备备份的写入顺序回滚。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.RollbackOrder.02"), sourceText => new InvalidDataException(sourceText));
             return manifest.Records.AsEnumerable().Reverse().ToArray();
         }
         Dictionary<Guid, int> order = manifest.ActionOrder.Select((id, index) => (id, index)).ToDictionary(x => x.id, x => x.index);
-        if (manifest.Records.Any(r => !order.ContainsKey(r.ActionId))) throw new InvalidDataException("备份记录不属于原计划动作顺序。");
+        if (manifest.Records.Any(r => !order.ContainsKey(r.ActionId))) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.RollbackOrder.03"), sourceText => new InvalidDataException(sourceText));
         return manifest.Records.OrderByDescending(r => order[r.ActionId]).ToArray();
     }
 }

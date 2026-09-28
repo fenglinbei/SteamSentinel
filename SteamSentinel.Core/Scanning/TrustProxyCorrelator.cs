@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 
 namespace SteamSentinel.Core.Scanning;
@@ -25,11 +26,11 @@ public static class TrustProxyCorrelator
         foreach (CertificateObservation certificate in diagnostic.Certificates)
         {
             if (storeIds.Contains(certificate.StoreObservationId))
-                if (!AddRelation(new(certificate.StoreObservationId, certificate.Id, "StoreContainsCertificate", "从该真实来源只读取得的公开证书。"))) break;
+                if (!AddRelation(new(certificate.StoreObservationId, certificate.Id, "StoreContainsCertificate", MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.01")))) break;
             foreach (string hash in certificate.ChainCertificateSha256.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 foreach (CertificateObservation member in certificatesByHash[hash].Where(c => c.Id != certificate.Id))
-                    if (!AddRelation(new(certificate.Id, member.Id, "OfflineChainCertificateMatch", "离线链中的 DER 哈希与该存储中的证书相同；不代表某网站的实际连接链。"))) break;
+                    if (!AddRelation(new(certificate.Id, member.Id, "OfflineChainCertificateMatch", MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.02")))) break;
                 if (truncated) break;
             }
             if (truncated) break;
@@ -39,21 +40,21 @@ public static class TrustProxyCorrelator
             if (truncated) break;
             CertificateObservation[] occurrences = duplicates.ToArray();
             for (int i = 1; i < occurrences.Length; i++)
-                if (!AddRelation(new(occurrences[0].Id, occurrences[i].Id, "SameCertificateDer", "相同 DER 存在于不同采集记录，真实存储来源分别保留。"))) break;
+                if (!AddRelation(new(occurrences[0].Id, occurrences[i].Id, "SameCertificateDer", MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.03")))) break;
         }
         if (truncated) diagnostic.Checks.Add(new()
         {
-            Name = "诊断关联数量",
+            NameText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.04"),
             Status = DiagnosticReadStatus.LimitReached,
-            Detail = $"关联记录达到 {MaximumRelations} 条上限，已保留所采集的原始观察，关联分析未完成。"
+            DetailText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.05", (MaximumRelations))
         });
 
         foreach (ProxyConfigurationObservation proxy in diagnostic.Proxies)
-            AddCheck(diagnostic, proxy.Id, proxy.Source, proxy.Status, proxy.Detail);
+            AddCheck(diagnostic, proxy.Id, proxy.Source, proxy.Status, proxy.DetailText);
         foreach (CertificateStoreObservation store in diagnostic.CertificateStores)
-            AddCheck(diagnostic, store.Id, $"{store.Scope}/{store.StoreName}", store.Status, store.Detail);
+            AddCheck(diagnostic, store.Id, $"{store.Scope}/{store.StoreName}", store.Status, store.DetailText);
         foreach (CertificateObservation certificate in diagnostic.Certificates.Where(c => c.ChainStatus != DiagnosticReadStatus.Complete))
-            AddCheck(diagnostic, certificate.Id, "证书离线链检查", certificate.ChainStatus, certificate.ChainDetail);
+            AddCheck(diagnostic, certificate.Id, MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.06"), certificate.ChainStatus, certificate.ChainDetailText);
 
         IEnumerable<ProxyConfigurationObservation> configured = diagnostic.Proxies.Where(p =>
             !string.IsNullOrWhiteSpace(p.AutoConfigUrl) || p.ProxyEnabled == true ||
@@ -67,12 +68,15 @@ public static class TrustProxyCorrelator
                 Category = FindingCategory.Network,
                 Severity = FindingSeverity.Information,
                 Score = 5,
-                Title = "检测到代理配置，需进一步确认",
+                TitleText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.07"),
                 Target = group.Key,
-                Description = "代理可能来自合法工具或企业网络。这里只记录配置，尚未确认来源、实际请求路径或是否恶意。",
-                Evidence = string.Join("\n", sources.Select(p => $"{p.Source}；{p.Scope}；{p.Location}；ProxyEnabled={p.ProxyEnabled?.ToString() ?? "未取得"}；ProxyServer={p.ProxyServer ?? "未取得"}；AutoConfigURL={p.AutoConfigUrl ?? "未取得"}")),
+                DescriptionText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.08"),
+                EvidenceLines = sources.Select(p => MessageText.Create("Backend.Core.TrustProxyCorrelator.ProxyEvidence", p.Source, p.Scope, p.Location,
+                    p.ProxyEnabled.HasValue ? (MessageText)p.ProxyEnabled.Value.ToString() : MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.09"),
+                    p.ProxyServer is null ? MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.10") : p.ProxyServerText,
+                    p.AutoConfigUrl is null ? MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.11") : p.AutoConfigUrlText)),
                 HandlingReason = FindingHandlingReason.InsufficientEvidence,
-                HandlingDetails = "发现代理配置，但写入来源和实际连接链尚未确认，暂不能自动处理。本次未修改该配置。",
+                HandlingDetailsText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.12"),
                 CanRemediate = false,
                 IsKnownMalware = false,
                 SuggestedActions = [SuggestedActionKind.ReviewOnly],
@@ -92,13 +96,13 @@ public static class TrustProxyCorrelator
                 Category = FindingCategory.Certificate,
                 Severity = FindingSeverity.Information,
                 Score = 5,
-                Title = "检测到需确认用途的证书名称",
+                TitleText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.13"),
                 Target = certificates[0].Subject,
                 Sha256 = certificates[0].DerSha256,
-                Description = "证书名称包含代理调试工具或 Steam 站点线索，合法调试也可能出现这些名称。名称、自签属性和同机代理不能单独证明恶意或拦截。",
-                Evidence = string.Join("\n", certificates.Select(c => $"证书 {c.Id}；存储 {c.StoreObservationId}；DER SHA-256={c.DerSha256}；Subject={c.Subject}；Issuer={c.Issuer}")),
+                DescriptionText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.14"),
+                EvidenceLines = certificates.Select(c => MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.15", c.Id, c.StoreObservationId, c.DerSha256, c.Subject, c.Issuer)),
                 HandlingReason = FindingHandlingReason.InsufficientEvidence,
-                HandlingDetails = "尚未确认该证书的用途、安装来源或是否用于实际连接，本次未删除或修改证书。",
+                HandlingDetailsText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.16"),
                 CanRemediate = false,
                 IsKnownMalware = false,
                 SuggestedActions = [SuggestedActionKind.ReviewOnly],
@@ -115,12 +119,12 @@ public static class TrustProxyCorrelator
                 RuleId = "TRUST-PROXY-COVERAGE",
                 Category = FindingCategory.Coverage,
                 Severity = FindingSeverity.Information,
-                Title = "证书与代理诊断未完成",
+                TitleText = MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.17"),
                 Target = check.Name,
-                Description = check.Detail,
+                DescriptionText = check.DetailText,
                 Evidence = check.Status.ToString(),
                 HandlingReason = FindingHandlingReason.IncompleteInspection,
-                HandlingDetails = check.Detail,
+                HandlingDetailsText = check.DetailText,
                 SourceKind = SourceKind,
                 DiagnosticObservationIds = [check.ObservationId ?? check.Id]
             });
@@ -130,10 +134,10 @@ public static class TrustProxyCorrelator
     public static bool IsIncomplete(DiagnosticCheck check) => check.Required &&
         check.Status is not (DiagnosticReadStatus.Complete or DiagnosticReadStatus.NotPresent);
 
-    private static void AddCheck(TrustProxyDiagnosticReport diagnostic, string id, string name, DiagnosticReadStatus status, string detail)
+    private static void AddCheck(TrustProxyDiagnosticReport diagnostic, string id, MessageText name, DiagnosticReadStatus status, MessageText detail)
     {
         if (!diagnostic.Checks.Any(c => c.ObservationId == id))
-            diagnostic.Checks.Add(new() { ObservationId = id, Name = name, Status = status, Detail = detail });
+            diagnostic.Checks.Add(new() { ObservationId = id, NameText = name, Status = status, DetailText = detail });
     }
 
     private static string ProxyTarget(ProxyConfigurationObservation proxy) => !string.IsNullOrWhiteSpace(proxy.AutoConfigUrl)

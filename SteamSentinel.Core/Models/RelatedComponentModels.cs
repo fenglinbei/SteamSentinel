@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 namespace SteamSentinel.Core.Models;
 
 /// <summary>Read-only discovery and scan provenance; none of these records authorizes remediation.</summary>
@@ -16,7 +17,7 @@ public sealed class RelatedComponentDiagnosticReport
     public List<RelatedScanRound> Rounds { get; init; } = [];
 }
 
-public sealed class RelatedSourceObservation
+public sealed partial class RelatedSourceObservation
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Kind { get; init; } = string.Empty;
@@ -30,7 +31,7 @@ public sealed class RelatedSourceObservation
     public List<string> ResolvedTargets { get; init; } = [];
 }
 
-public sealed class RelatedHostObservation
+public sealed partial class RelatedHostObservation
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public int ProcessId { get; init; }
@@ -40,13 +41,13 @@ public sealed class RelatedHostObservation
     public string? WorkingDirectory { get; init; }
     public string? ImageSha256 { get; set; }
     public string SignatureStatus { get; set; } = "NotChecked";
-    public string SignatureDetail { get; set; } = "签名未检查；签名状态不能豁免加载组件的内容检查。";
+    public string SignatureDetail { get; set; } = MessageText.Create("Backend.Core.RelatedComponentModels.SignatureDetail.01");
     public DiagnosticReadStatus Status { get; set; }
     public string Detail { get; set; } = string.Empty;
     public List<string> SourceObservationIds { get; init; } = [];
 }
 
-public sealed class RelatedComponentCandidate
+public sealed partial class RelatedComponentCandidate
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Path { get; init; } = string.Empty;
@@ -57,13 +58,13 @@ public sealed class RelatedComponentCandidate
     public long? Length { get; set; }
     public DateTimeOffset? VerifiedAtUtc { get; set; }
     public DiagnosticReadStatus ContentStatus { get; set; } = DiagnosticReadStatus.NotChecked;
-    public string ContentDetail { get; set; } = "尚未由受限扫描组件完成内容检查。";
+    public string ContentDetail { get; set; } = MessageText.Create("Backend.Core.RelatedComponentModels.ContentDetail.01");
     public List<string> SourceObservationIds { get; init; } = [];
     public List<string> HostObservationIds { get; init; } = [];
     public List<string> EvidenceObservationIds { get; init; } = [];
 }
 
-public sealed class RelatedScanRound
+public sealed partial class RelatedScanRound
 {
     public int Number { get; init; }
     public DateTimeOffset StartedAtUtc { get; init; } = DateTimeOffset.UtcNow;

@@ -2,11 +2,19 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine“假红信”诈骗链及相近落地方式。当前源码包含 **0.2.0 容器专项候选实现**，适合群内受控测试；支持范围与仍存限制见 [0.2.0 实现说明](docs/ARCHIVE-IMPLEMENTATION-0.2.0.md)。预览构建可能未签名，具体版本、身份与来源以包内 `VERSION.txt`、`SIGNING.txt` 和外层 `RELEASE-METADATA.json` 为准。公开发布模式要求公开受信任的代码签名证书与 RFC 3161 时间戳，否则构建会中止。项目尚未完成外部安全审计，不应把预览包当成正式公开发行版传播。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。当前源码为 **0.3.0 开发版**，已补齐 VPet 精确规则、有界家族解码、组件关系、Steam HTML/JS/CSS 检查、ZIP 中文名称绑定及中英文显示。
+
+2026-09-26 的源码构建 `0.3.0+local.basic-final2-20260926` 已通过基础完整回归 **2,348 项，0 失败、0 跳过**，并完成本轮中英文 DPI 验收，见[实施规划](docs/PLAN-0.3.0.md)。**当前暂停系统 AMSI 增强入口及实际调用**；未参与的增强项不使基础扫描显示“扫描不完整”。历史报告保持原样，真正的读取、密码、格式或缺卷等检查缺口仍会显示。无需为基础扫描安装 Norton。
+
+已有双语安装候选仍是此前构建，其完整回归 **2,206 项**及安装、升级、卸载验收记录见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)；它没有被当前源码构建替换。新安装包、Windows 10 和跨物理显示器复验尚未完成，也没有新冻结。候选为未签名隔离实验 Preview，尚未公开发布。具体版本、身份与来源以包内 `VERSION.txt`、`SIGNING.txt` 和外层 `RELEASE-METADATA.json` 为准。公开发布模式要求公开受信任的代码签名证书与 RFC 3161 时间戳，否则构建会中止。项目尚未完成外部安全审计，不应把预览包当成正式公开发行版传播。
+
+[English quick start](docs/QUICKSTART.en.md) covers installation, language selection, results, remediation, reports and rollback.
 
 它的定位是：让不想临时安装 360、卡巴斯基等完整安全套件的用户，也能快速对当前电脑做一次 Steam 垂直场景检查和可回滚处置。启发式能力不会因为专业杀毒软件存在而关闭，但启发式发现默认不预选，必须由用户核对精确目标后才能隔离。
 
 ## 主要能力
+
+0.3.0 提供“语言 / Language”页，可选择自动 / 简体中文 / English，保存后下次启动生效。Markdown 报告和记录包可单独选择本次导出语言；同一报告对象的 JSON 不因显示语言变化。后台消息已接通可选的稳定消息 ID 和有界参数，来源原文与旧记录保留。中英文使用方法见 [语言设置与导出](docs/LANGUAGE-SETTINGS-0.3.0.md)；当前 3,473 对资源与双语安装器的实现及验收范围见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)。
 
 当前源码已接入第三批精确证书/代理动作、依赖阻断、持久病例与跨会话复验，见 [第三批交付说明](docs/EXACT-REMEDIATION-PHASE3.md)。真实样本与重启验收尚未完成，精确配置规则目录暂为空，当前不会仅凭 PAC 或证书名称开放自动修复。第二批的有界补查、离线宿主签名、组件关联及 MSI 静态规则见 [第二批交付说明](docs/RELATED-COMPONENTS-PHASE2.md)。
 
@@ -17,14 +25,14 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 已实现本地全 AppID 工坊发现，范围见 [COVERAGE-0.1.14.md](docs/COVERAGE-0.1.14.md)，分批处置、4 GiB 核验额度和原范围复查见 [COVERAGE-0.1.16.md](docs/COVERAGE-0.1.16.md)，0.1.17 的安全与发布工程边界见 [COVERAGE-0.1.17.md](docs/COVERAGE-0.1.17.md)，后续事项见 [ROADMAP.md](docs/ROADMAP.md)。图标来源与重建方式见 [ICONS.md](docs/ICONS.md)。
 
 - 只读检查进程、Run/RunOnce、计划任务、服务、Windows 安全设置、hosts、代理状态及 Steam 客户端完整性风险点。
-- 自动发现全部本地 Steam 库中的数字 AppID 工坊项目，支持指定游戏范围，单独适配 Wallpaper 元数据、鸭科夫 MOD、常见 Mods/BepInEx/plugins 和 Steam 插件目录。非工坊游戏私有 MOD 布局不保证全部自动发现。
+- 自动发现全部本地 Steam 库中的数字 AppID 工坊项目，支持指定游戏范围，单独适配 Wallpaper 元数据、鸭科夫 MOD、VPet 的 `mod`、常见 Mods/BepInEx/plugins 和 Steam 插件目录。VPet 的 `info.lps` 名称和声明编号仅作展示，不能替代实际目录归属。非工坊游戏私有 MOD 布局不保证全部自动发现。
 - 安装包通过 Windows 只读数据库和 CAB 接口分析，LNK 仅读取二进制结构，不启动目标。未支持、损坏、外部分卷与超限内容明确列为未完整扫描。
 - 按已知恶意文件身份关联进程模块、Run/RunOnce、任务和服务。可关闭加载恶意组件的正常游戏宿主，不隔离游戏主程序。间接脚本启动链仍供人工复核，不自动删入口。
 - 针对本机已确认的恶意 steamprocess 插件，可手选移除精确 Defender/ASR 排除项和禁用关联放行规则，均有配置快照与回滚信息，不重置所有安全设置。
 - 快速内容读取预算为 1 GiB，另为小型启动文件保留 128 MiB。完整内容扫描不设默认整轮哈希字节上限，仍有内存、文件数和解压安全限制，不等于无限全盘扫描。优先检查关联落点、插件与 MOD，覆盖记录按目录合并并提供补查方式。下载、桌面、临时目录和运行历史均须用户勾选。
 - 按文件魔数识别真实格式，不依赖扩展名，可识别 PE 改名、MP4 尾随载荷和常见脚本。
 - 对 ZIP、RAR、7z 使用有界分卷与成员完整性适配器，继续检查 MP4 尾随和 PE/RAR SFX 中的归档；tar、gzip、bzip2、xz、zstd 等单流格式可受限展开，但尚无独立完整性验证时明确保留为部分完成。
-- 完整/自定义容器默认单成员 8 GiB、逻辑展开 32 GiB、工作预算 64 GiB、深度 12、临时峰值 16 GiB。读取、解码、原生预留、密码尝试、临时空间和时间分别计账；大文件哈希完成不等于 32 MiB 上限的字符串/AMSI 引擎检查完成。
+- 完整/自定义容器默认单成员 8 GiB、逻辑展开 32 GiB、工作预算 64 GiB、深度 12、临时峰值 16 GiB。读取、解码、原生预留、密码尝试、临时空间和时间分别计账；大文件哈希完成不等于默认 32 MiB 字符串检查额度内的内容检查完成。AMSI 增强当前暂停，不调用，也不产生其覆盖缺口或额度提示。
 - 遇到加密压缩包时由界面询问密码，可选择当前层、当前外层文件及嵌套包、本次扫描全部包三个复用范围。单密码成功解密后复用；也可明确提供最多 16 个有序候选，按所选范围依次尝试，候选不等同于已验证正确。密码不破解、不保存、不写入日志，也不通过命令行传递。用户跳过时明确标记为“扫描不完整”。
 - 密码窗口会沿用本次选择并说明失败原因，相同内容跳过后不反复询问，扫描结束可点击“重试未解密内容”补充密码。重试只扫描相关外层文件，不代替全机复扫。格式或校验失败保留缺口并继续后项；达到整轮资源或时间上限时停止并保留部分结果。
 - 可选择本次跳过所有未能解密的加密包：先试适用密码，仍未解开则不再弹窗并记录未检查；新扫描不继承此选择。见 [密码交互说明](docs/PASSWORD-0.1.19.md)。
@@ -79,7 +87,7 @@ Broker 只接受 `%LOCALAPPDATA%\SteamSentinel\Plans` 下的短时 JSON 计划�
 - 用户计划、报告与 Low Integrity 临时区：`%LOCALAPPDATA%\SteamSentinel`、`%USERPROFILE%\AppData\LocalLow\SteamSentinel`
 - 管理员隔离区：`%PROGRAMDATA%\SteamSentinel\Quarantine`
 - 管理员结果区：`%PROGRAMDATA%\SteamSentinel\Results`
-- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.09.04.2`
+- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.09.20.1`
 
 ## 从源码构建
 
@@ -122,3 +130,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 
 ### 扫描限制设置
 
 新增“较低／低／中／高／极高／自定义”六项选择，中档保留原默认。大小、递归深度、时间、读取量、内存与临时磁盘等预算可由用户调整，快速与完整／自选模式分别保存，手动补查使用当前设置。每项说明过高或过低的影响，详细数值见 [扫描设置说明](docs/SCAN-SETTINGS.md)。
+
+0.3.0 开发版在扫描前评估资源，遇到可调整的限制时可选择“保持限制”“停止扫描”或“提高并继续”。窗口显示建议额度及风险，默认只用于本次扫描；明确勾选后才保存供以后使用。资源不足或无法确认时不能直接批准。扫描性能可选自动、低占用或高性能，在资源允许的普通文本/脚本上使用最多 2、1 或 4 路；复杂容器仍按原有顺序处理。参见 [资源授权与性能实现](docs/ADAPTIVE-SCAN-0.3.0.md)。

@@ -124,9 +124,9 @@ internal static class UiPreview
                 RemediationBatchSession batch = new()
                 {
                     Plans = [previewPlan, new() { Actions = [new() { Type = RemediationActionType.QuarantineFile, Target = @"C:\示例内容\第二份文件.zip", DisplayName = "隔离文件", ConfidenceScore = 95 }] }],
-                    Targets = [new() { Target = previewTarget, Status = "已完成", ActionIds = [previewPlan.Actions[0].ActionId], Reason = "所选动作已执行并完成目标核验，不代表整台电脑安全。" },
-                        new() { Target = @"C:\示例内容\第二份文件.zip", Status = "尚未执行", ActionIds = [Guid.NewGuid()], Reason = "后续批次已暂停，没有执行。" },
-                        new() { Target = @"C:\示例内容\较长目录\本次扫描后已经变化的文件.zip", Status = "未处理", MissingActions = ["inert"], Reason = "文件在扫描后发生变化，未纳入处置，请重新扫描。" }],
+                    Targets = [new() { Target = previewTarget, State = RemediationTargetState.Completed, ReasonCode = ReasonCodes.ActionsVerified, ActionIds = [previewPlan.Actions[0].ActionId], ReasonMessage = StatusMessage.Create(ReasonCodes.ActionsVerified) },
+                        new() { Target = @"C:\示例内容\第二份文件.zip", State = RemediationTargetState.NotExecuted, ReasonCode = ReasonCodes.BatchIncomplete, ActionIds = [Guid.NewGuid()], ReasonMessage = StatusMessage.Create(ReasonCodes.BatchIncomplete) },
+                        new() { Target = @"C:\示例内容\较长目录\本次扫描后已经变化的文件.zip", State = RemediationTargetState.NotIncluded, ReasonCode = ReasonCodes.EvidenceUnavailable, MissingActions = ["inert"], ReasonMessage = StatusMessage.Create(ReasonCodes.EvidenceUnavailable), ReasonDetails = "文件在扫描后发生变化，未纳入处置，请重新扫描。" }],
                     Notes = ["只展示无害界面示例，没有读取或处置这些路径。"]
                 };
                 RemediationPreviewWindow batchPreview = new(batch);

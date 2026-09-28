@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -32,7 +33,7 @@ internal static class SecureDirectoryDeletion
             FileFlagOpenReparsePoint | FileFlagBackupSemantics,
             IntPtr.Zero);
         if (handle.IsInvalid)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), $"无法锁定待删除目录：{requested}");
+            throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Backend.Broker.SecureDirectoryDeletion.DeleteEmpty.01", (requested)));
 
         if (!GetFileInformationByHandleEx(
                 handle,
@@ -40,17 +41,17 @@ internal static class SecureDirectoryDeletion
                 out FileAttributeTagInfo attributes,
                 (uint)Marshal.SizeOf<FileAttributeTagInfo>()))
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取待删除目录属性。");
+            throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Backend.Broker.SecureDirectoryDeletion.DeleteEmpty.02"));
         }
         if ((attributes.FileAttributes & FileAttributeDirectory) == 0 ||
             (attributes.FileAttributes & FileAttributeReparsePoint) != 0)
         {
-            throw new UnauthorizedAccessException("待删除对象不是普通目录或已成为重解析点。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureDirectoryDeletion.DeleteEmpty.03"), sourceText => new UnauthorizedAccessException(sourceText));
         }
 
         string finalPath = GetFinalPath(handle);
         if (!PathsEquivalent(requested, finalPath))
-            throw new UnauthorizedAccessException($"待删除目录最终路径发生变化：请求 {requested}，实际 {finalPath}");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureDirectoryDeletion.DeleteEmpty.04", (requested), (finalPath)), sourceText => new UnauthorizedAccessException(sourceText));
 
         FileDispositionInfo disposition = new() { DeleteFile = true };
         if (!SetFileInformationByHandle(
@@ -59,7 +60,7 @@ internal static class SecureDirectoryDeletion
                 ref disposition,
                 (uint)Marshal.SizeOf<FileDispositionInfo>()))
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), $"无法安全删除空目录：{requested}");
+            throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Backend.Broker.SecureDirectoryDeletion.DeleteEmpty.05", (requested)));
         }
     }
 
@@ -67,8 +68,8 @@ internal static class SecureDirectoryDeletion
     {
         StringBuilder buffer = new(32_768);
         uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, FileNameNormalized | VolumeNameDos);
-        if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法解析目录最终路径。");
-        if (length >= buffer.Capacity) throw new PathTooLongException("目录最终路径过长。");
+        if (length == 0) throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Backend.Broker.SecureDirectoryDeletion.GetFinalPath.01"));
+        if (length >= buffer.Capacity) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureDirectoryDeletion.GetFinalPath.02"), sourceText => new PathTooLongException(sourceText));
         string value = buffer.ToString();
         if (value.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + value[8..];
         return value.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) ? value[4..] : value;

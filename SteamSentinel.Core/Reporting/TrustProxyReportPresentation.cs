@@ -7,68 +7,83 @@ namespace SteamSentinel.Core.Reporting;
 
 public static class TrustProxyReportPresentation
 {
+    public static string Describe(TrustProxyDiagnosticReport diagnostic, System.Globalization.CultureInfo culture)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return Describe(diagnostic);
+    }
+
+    public static string StatusLabel(DiagnosticReadStatus status, System.Globalization.CultureInfo culture)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return StatusLabel(status);
+    }
+
     public static string StatusLabel(DiagnosticReadStatus status) => status switch
     {
-        DiagnosticReadStatus.Complete => "已读取",
-        DiagnosticReadStatus.NotPresent => "未配置／来源不存在",
-        DiagnosticReadStatus.NotChecked => "未检查",
-        DiagnosticReadStatus.AccessDenied => "权限不足",
-        DiagnosticReadStatus.LimitReached => "达到检查上限",
-        DiagnosticReadStatus.Cancelled => "已取消",
-        _ => "读取失败"
+        DiagnosticReadStatus.Complete => DisplayText.Get("TrustProxyReport.StatusLabel.Complete.01"),
+        DiagnosticReadStatus.NotPresent => DisplayText.Get("TrustProxyReport.StatusLabel.NotPresent.01"),
+        DiagnosticReadStatus.NotChecked => DisplayText.Get("TrustProxyReport.StatusLabel.NotChecked.01"),
+        DiagnosticReadStatus.AccessDenied => DisplayText.Get("TrustProxyReport.StatusLabel.AccessDenied.01"),
+        DiagnosticReadStatus.LimitReached => DisplayText.Get("TrustProxyReport.StatusLabel.LimitReached.01"),
+        DiagnosticReadStatus.Cancelled => DisplayText.Get("TrustProxyReport.StatusLabel.Cancelled.01"),
+        DiagnosticReadStatus.Failed => DisplayText.Get("TrustProxyReport.StatusLabel.01"),
+        _ => DisplayText.Get("Common.Unknown")
     };
 
     public static string Describe(TrustProxyDiagnosticReport diagnostic)
     {
         StringBuilder text = new();
-        text.AppendLine("证书与代理诊断（本机只读）");
-        text.AppendLine($"目标用户 SID：{Display(diagnostic.TargetUserSid)}");
-        text.AppendLine($"采集时间：{diagnostic.StartedAtUtc:O} 至 {diagnostic.CompletedAtUtc:O}");
-        text.AppendLine($"代理来源 {diagnostic.Proxies.Count} 个；证书来源 {diagnostic.CertificateStores.Count} 个；公开证书记录 {diagnostic.Certificates.Count} 条；未完成必要检查 {diagnostic.Checks.Count(TrustProxyCorrelator.IsIncomplete)} 项。");
-        text.AppendLine("读取完成只表示取得该范围的证据，不等于配置安全或已清除病毒。本次未修改代理和证书。");
+        text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.01"));
+        text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.02", (Display(diagnostic.TargetUserSid))));
+        text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.03", (diagnostic.StartedAtUtc), (diagnostic.CompletedAtUtc)));
+        text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.04", (diagnostic.Proxies.Count), (diagnostic.CertificateStores.Count), (diagnostic.Certificates.Count), (diagnostic.Checks.Count(TrustProxyCorrelator.IsIncomplete))));
+        text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.05"));
         text.AppendLine();
-        text.AppendLine("代理配置来源");
+        text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.06"));
         foreach (ProxyConfigurationObservation proxy in diagnostic.Proxies)
         {
             text.AppendLine($"[{StatusLabel(proxy.Status)}] {Display(proxy.Source)} · {Display(proxy.Scope)} · ID {proxy.Id}");
-            text.AppendLine($"  位置：{Display(proxy.Location)}；用户 SID：{Display(proxy.UserSid)}");
-            text.AppendLine($"  手动代理：{Boolean(proxy.ProxyEnabled)}；自动检测：{Boolean(proxy.AutoDetect)}");
-            text.AppendLine($"  代理服务器：{Display(proxy.ProxyServer)}；绕过列表：{Display(proxy.ProxyBypass)}");
-            text.AppendLine($"  PAC 地址：{Display(proxy.AutoConfigUrl)}");
+            text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.07", (Display(proxy.Location)), (Display(proxy.UserSid))));
+            text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.08", (Boolean(proxy.ProxyEnabled)), (Boolean(proxy.AutoDetect))));
+            text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.09", (Display(proxy.ProxyServerText.Display)), (Display(proxy.ProxyBypassText.Display))));
+            text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.10", (Display(proxy.AutoConfigUrlText.Display))));
             foreach (DiagnosticConfigurationValue value in proxy.Values)
-                text.AppendLine($"  {Display(value.Name)} ({Display(value.Kind)})：{(value.Present ? Display(value.Value) : value.ReadStatus == DiagnosticReadStatus.NotPresent || value.Kind == "Missing" ? "值不存在" : "未读取／存在性未知")}{(value.Redacted ? " [凭据已隐藏]" : "")}");
-            text.AppendLine("  说明：" + Display(proxy.Detail));
+                text.AppendLine("  " + DisplayText.Format("Common.LabelValue", $"{Display(value.Name)} ({Display(value.Kind)})",
+                    (value.Present ? Display(value.ValueText.Display) : value.ReadStatus == DiagnosticReadStatus.NotPresent || value.Kind == "Missing" ? DisplayText.Get("TrustProxyReport.Describe.11") : DisplayText.Get("TrustProxyReport.Describe.12")) +
+                    (value.Redacted ? DisplayText.Get("TrustProxyReport.Describe.13") : "")));
+            text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.14") + Display(proxy.DetailText.Display));
         }
         text.AppendLine();
-        text.AppendLine("证书真实来源与公开证书");
+        text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.15"));
         foreach (CertificateStoreObservation store in diagnostic.CertificateStores)
         {
-            text.AppendLine($"[{StatusLabel(store.Status)}] {Display(store.Scope)}/{Display(store.StoreName)} · {Display(store.Provider)} · {store.CertificatesRead} 条 · ID {store.Id}");
-            text.AppendLine($"  用户 SID：{Display(store.UserSid)}；{Display(store.Detail)}");
+            text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.16", (StatusLabel(store.Status)), (Display(store.Scope)), (Display(store.StoreName)), (Display(store.Provider)), (store.CertificatesRead), (store.Id)));
+            text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.17", (Display(store.UserSid)), (Display(store.DetailText.Display))));
             foreach (CertificateObservation certificate in diagnostic.Certificates.Where(c => c.StoreObservationId == store.Id))
             {
-                text.AppendLine("  证书 ID：" + certificate.Id);
-                text.AppendLine("    主体：" + Display(certificate.Subject));
-                text.AppendLine("    颁发者：" + Display(certificate.Issuer));
-                text.AppendLine("    DER SHA-256：" + Display(certificate.DerSha256));
-                text.AppendLine("    SHA-1 指纹：" + Display(certificate.Sha1Thumbprint));
-                text.AppendLine($"    有效期：{certificate.NotBeforeUtc:O} 至 {certificate.NotAfterUtc:O}；安装时间：未知");
-                text.AppendLine($"    CA：{Boolean(certificate.IsCertificateAuthority)}；路径长度约束：{(certificate.HasPathLengthConstraint == true ? certificate.PathLengthConstraint?.ToString() ?? "未知" : certificate.HasPathLengthConstraint == false ? "无" : "未取得")}；KeyUsage：{Display(certificate.KeyUsage)}");
-                text.AppendLine($"    EKU：{Display(string.Join(", ", certificate.EnhancedKeyUsages))}；主体与颁发者相同：{certificate.SubjectEqualsIssuer}；自签名密码学校验：{Boolean(certificate.SelfSignatureVerified)}");
-                text.AppendLine($"    离线链检查：{StatusLabel(certificate.ChainStatus)}；标志：{Display(string.Join(", ", certificate.ChainFlags))}");
-                text.AppendLine("    链范围：" + Display(certificate.ChainScope) + "；" + Display(certificate.ChainDetail));
+                text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.18") + certificate.Id);
+                text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.19") + Display(certificate.Subject));
+                text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.20") + Display(certificate.Issuer));
+                text.AppendLine("    " + DisplayText.Format("Common.LabelValue", "DER SHA-256", Display(certificate.DerSha256)));
+                text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.21") + Display(certificate.Sha1Thumbprint));
+                text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.22", (certificate.NotBeforeUtc), (certificate.NotAfterUtc)));
+                text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.23", (Boolean(certificate.IsCertificateAuthority)), ((certificate.HasPathLengthConstraint == true ? certificate.PathLengthConstraint?.ToString() ?? DisplayText.Get("TrustProxyReport.Describe.24") : certificate.HasPathLengthConstraint == false ? DisplayText.Get("TrustProxyReport.Describe.25") : DisplayText.Get("TrustProxyReport.Describe.26"))), (Display(certificate.KeyUsage))));
+                text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.27", (Display(string.Join(", ", certificate.EnhancedKeyUsages))), (certificate.SubjectEqualsIssuer), (Boolean(certificate.SelfSignatureVerified))));
+                text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.28", (StatusLabel(certificate.ChainStatus)), (Display(string.Join(", ", certificate.ChainFlags)))));
+                text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.29") + Display(certificate.ChainScope) + DisplayText.Get("Common.Semicolon") + Display(certificate.ChainDetailText.Display));
             }
         }
         text.AppendLine();
-        text.AppendLine("检查状态与本次范围");
+        text.AppendLine(DisplayText.Get("TrustProxyReport.Describe.30"));
         foreach (DiagnosticCheck check in diagnostic.Checks)
-            text.AppendLine($"[{StatusLabel(check.Status)}] {Display(check.Name)}{(check.Required ? "" : "（本次范围外）")}：{Display(check.Detail)}");
+            text.AppendLine(DisplayText.Format("Common.LabelValue", $"[{StatusLabel(check.Status)}] {Display(check.NameText.Display)}{(check.Required ? "" : DisplayText.Get("TrustProxyReport.Describe.31"))}", Display(check.DetailText.Display)));
         text.AppendLine();
-        text.AppendLine($"已保存 {diagnostic.Relations.Count} 条证书来源或 DER 对应关系，完整 ID 关系及公开 DER 见 JSON。代理与证书同机出现不等于确认拦截或写入关系。");
+        text.AppendLine(DisplayText.Format("TrustProxyReport.Describe.32", (diagnostic.Relations.Count)));
         return text.ToString();
     }
 
-    private static string Boolean(bool? value) => value.HasValue ? value.Value ? "是" : "否" : "未检查／未取得";
-    private static string Display(string? value) => string.IsNullOrEmpty(value) ? "未取得／空值" :
+    private static string Boolean(bool? value) => value.HasValue ? value.Value ? DisplayText.Get("TrustProxyReport.Boolean.01") : DisplayText.Get("TrustProxyReport.Boolean.02") : DisplayText.Get("TrustProxyReport.Boolean.03");
+    private static string Display(string? value) => string.IsNullOrEmpty(value) ? DisplayText.Get("TrustProxyReport.Display.01") :
         ScriptSignals.RedactSecrets(value).Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
 }

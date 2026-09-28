@@ -1,5 +1,7 @@
+using SteamSentinel.Core.Reporting;
 using System.Text.RegularExpressions;
 using System.Text;
+using System.Security.Cryptography;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Steam;
@@ -27,7 +29,7 @@ public sealed class SteamSecurityScanner(RuleSet rules)
         {
             try
             {
-                if (!ContentDiscovery.IsLocalSafePath(path) || new FileInfo(path).Length > MaximumScriptBytes) throw new IOException("路径或大小超出检查范围");
+                if (!ContentDiscovery.IsLocalSafePath(path) || new FileInfo(path).Length > MaximumScriptBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.01"), sourceText => new IOException(sourceText));
                 string text = await ReadUtf8BoundedAsync(path, MaximumScriptBytes, cancellationToken);
                 if (!WallpaperUiInspector.HasCombinedSuppression(text)) continue;
                 report.Findings.Add(new Finding
@@ -36,18 +38,18 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                     Category = FindingCategory.WallpaperEngine,
                     Severity = FindingSeverity.High,
                     Score = 75,
-                    Title = "Wallpaper 举报入口存在组合隐藏信号",
+                    TitleText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.02"),
                     Target = path,
                     Sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
                         maximumBytes: new FileInfo(path).Length),
-                    Description = "同时出现举报能力强制关闭与界面隐藏，需核对插件和修改来源，不自动替换版本未知的 Wallpaper 文件。",
-                    Evidence = "举报状态常量与隐藏样式组合",
+                    DescriptionText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.03"),
+                    EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.04"),
                     SuggestedActions = [SuggestedActionKind.ReviewOnly],
                     CanRemediate = false
                 });
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { report.Coverage = ScanCoverage.Partial; report.CoverageNotes.Add("Wallpaper 界面检查未完成：" + path); }
+            { report.Coverage = ScanCoverage.Partial; report.AddCoverageNote(MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.05") + path); }
         }
         foreach (string steamRoot in layout.SteamRoots)
         {
@@ -64,10 +66,10 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                     Category = FindingCategory.Steam,
                     Severity = FindingSeverity.Information,
                     Score = 5,
-                    Title = "检测到 Millennium 或同名模组目录",
-                    Description = "合法模组可能修改 Steam UI，不能仅凭目录存在自动删除。",
+                    TitleText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.06"),
+                    DescriptionText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.07"),
                     Target = millennium,
-                    Evidence = "仅记录，需要与恶意哈希、隐藏地址栏或异常安装时间关联。",
+                    EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanAsync.08"),
                     CanRemediate = false,
                     SuggestedActions = [SuggestedActionKind.ReviewOnly]
                 });
@@ -102,12 +104,12 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                     Category = FindingCategory.Steam,
                     Severity = paired ? FindingSeverity.High : suspicious ? FindingSeverity.Medium : FindingSeverity.Low,
                     Score = paired ? 85 : suspicious ? 45 : 15,
-                    Title = paired ? "Steam 自更新被成对抑制" : suspicious ? "Steam 配置包含更新/离线控制项" : "Steam 根目录存在 steam.cfg",
-                    Description = paired
-                        ? "同时启用 BootStrapperInhibitAll 并禁用 BootStrapperForceSelfUpdate，本次真实样本使用这一组合维持被篡改的前端。"
-                        : suspicious ? "单项高级配置需要结合用途核对。" : "配置存在，但未命中本版目标键值。",
+                    TitleText = paired ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.01") : suspicious ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.02") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.03"),
+                    DescriptionText = paired
+                        ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.04")
+                        : suspicious ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.05") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.06"),
                     Target = path,
-                    Evidence = $"SHA-256={sha256}；设置={string.Join(';', values.Select(item => $"{item.Key}={item.Value}"))}",
+                    EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.07", (sha256), (string.Join(';', values.Select(item => $"{item.Key}={item.Value}")))),
                     Sha256 = sha256,
                     IsKnownMalware = false,
                     CanRemediate = paired,
@@ -126,10 +128,10 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                 Category = FindingCategory.Steam,
                 Severity = severity,
                 Score = score,
-                Title = known?.Malware == true ? "Steam 根目录存在已确认恶意 DLL" : "Steam 根目录存在可旁加载 DLL",
-                Description = "该名称也可能来自合法模组，必须结合签名、哈希和安装来源判断。",
+                TitleText = known?.Malware == true ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.08") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.09"),
+                DescriptionText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.10"),
                 Target = path,
-                Evidence = $"{signature.Detail}；SHA-256={sha256}",
+                EvidenceText = $"{signature.Detail}；SHA-256={sha256}",
                 Sha256 = sha256,
                 IsKnownMalware = known?.Malware == true,
                 CanRemediate = known?.Malware == true,
@@ -145,15 +147,18 @@ public sealed class SteamSecurityScanner(RuleSet rules)
         long totalBytes = 0;
         int checkedFiles = 0;
         int skippedFiles = 0;
-        foreach (string root in new[] { Path.Combine(steamRoot, "steamui"), Path.Combine(steamRoot, "clientui") })
+        VPetSteamUiInspector family = new(rules.KnownDomains);
+        foreach (string root in new[] { Path.Combine(steamRoot, "steamui"), Path.Combine(steamRoot, "clientui"), Path.Combine(steamRoot, "resource") })
         {
             string[] files;
-            List<string> discoveryNotes = [];
+            MessageTextCollection discoveryNotes = [];
             try
             {
-                files = Directory.Exists(root)
+                files = root == Path.Combine(steamRoot, "resource")
+                    ? File.Exists(Path.Combine(root, "webkit.css")) ? [Path.Combine(root, "webkit.css")] : []
+                    : Directory.Exists(root)
                     ? ContentDiscovery.Files(root, discoveryNotes, 100_000, 32, cancellationToken)
-                        .Where(path => Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase))
+                        .Where(path => Path.GetExtension(path).ToLowerInvariant() is ".js" or ".html" or ".css")
                         .Take(2001).ToArray()
                     : [];
             }
@@ -161,46 +166,47 @@ public sealed class SteamSecurityScanner(RuleSet rules)
             { skippedFiles++; continue; }
             if (files.Length > 2000)
             {
-                discoveryNotes.Add($"Steam UI 脚本数量超过 2,000 项上限：{root}");
+                discoveryNotes.AddText(MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.01", (root)));
                 files = files[..2000];
             }
             if (discoveryNotes.Count > 0)
             {
                 skippedFiles += discoveryNotes.Count;
-                report.CoverageNotes.AddRange(discoveryNotes.Distinct().Take(16));
+                foreach (MessageText note in discoveryNotes.Texts.DistinctBy(n => n.OriginalText).Take(16)) report.AddCoverageNote(note);
                 if (discoveryNotes.Count > 16)
-                    report.CoverageNotes.Add($"Steam UI 发现阶段另有 {discoveryNotes.Count - 16:N0} 条受限路径说明未逐条列出。");
+                    report.AddCoverageNote(MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.02", (System.FormattableString.Invariant($"{discoveryNotes.Count - 16:N0}"))));
             }
 
             foreach (string path in files)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                FileInfo info;
-                try { info = new FileInfo(path); }
-                catch { skippedFiles++; continue; }
-                if (info.Length > MaximumScriptBytes || totalBytes + info.Length > MaximumTotalScriptBytes)
+                long length;
+                try { length = new FileInfo(path).Length; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { skippedFiles++; continue; }
+                if (length > MaximumScriptBytes || totalBytes + length > MaximumTotalScriptBytes)
                 {
                     skippedFiles++;
                     continue;
                 }
 
-                string text, sha256;
+                string text, sha256; long capturedLength;
                 try
                 {
-                    text = await ReadUtf8BoundedAsync(path, MaximumScriptBytes, cancellationToken);
-                    sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
-                        bytes => report.Metrics.BytesHashed += bytes, maximumBytes: info.Length);
+                    (text, sha256, capturedLength) = await ReadSteamUiSnapshotAsync(path,
+                        Math.Min(MaximumScriptBytes, MaximumTotalScriptBytes - totalBytes), cancellationToken);
+                    report.Metrics.BytesHashed += capturedLength;
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or DecoderFallbackException)
                 {
                     skippedFiles++;
                     continue;
                 }
-                totalBytes += info.Length;
+                totalBytes += capturedLength;
                 checkedFiles++;
+                family.Observe(Path.GetRelativePath(steamRoot, path), sha256, text);
 
                 HashRule? known = FindKnownHash(sha256);
-                List<string> signals = AnalyzeSteamUi(text);
+                List<MessageText> signals = Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase) ? AnalyzeSteamUiMessages(text) : [];
                 if (known?.Malware != true && signals.Count == 0) continue;
 
                 bool highConfidence = known?.Malware == true || signals.Count >= 2;
@@ -210,10 +216,10 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                     Category = FindingCategory.Steam,
                     Severity = known?.Malware == true ? FindingSeverity.Critical : highConfidence ? FindingSeverity.High : FindingSeverity.Medium,
                     Score = known?.Malware == true ? 100 : highConfidence ? 90 : 55,
-                    Title = known?.Malware == true ? "命中已确认被篡改的 Steam 前端文件" : "Steam 前端出现假红信语义篡改",
-                    Description = string.Join("；", signals.Count == 0 ? [known!.Label] : signals),
+                    TitleText = known?.Malware == true ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.03") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.04"),
+                    DescriptionText = MessageText.List(signals.Count == 0 ? [known!.LabelText] : signals),
                     Target = path,
-                    Evidence = $"SHA-256={sha256}；大小={info.Length:N0}；修改时间={info.LastWriteTimeUtc:O}",
+                    EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.05", (sha256), (System.FormattableString.Invariant($"{capturedLength:N0}"))),
                     Sha256 = sha256,
                     IsKnownMalware = known?.Malware == true,
                     CanRemediate = highConfidence,
@@ -224,8 +230,52 @@ public sealed class SteamSecurityScanner(RuleSet rules)
             }
         }
 
-        report.CoverageNotes.Add($"Steam UI 语义检查：读取 {checkedFiles} 个脚本、{totalBytes / 1024.0 / 1024.0:N1} MiB，跳过 {skippedFiles} 个权限或大小受限文件。本项只覆盖已支持的假红信模式。");
+        foreach (var match in family.Complete())
+        {
+            report.Findings.Add(new()
+            {
+                RuleId = match.Evidence.SupportRoutesLinked ? "VPET-STEAM-UI-CHAIN" : "VPET-STEAM-UI-PROVIDER",
+                Category = FindingCategory.Steam,
+                Severity = FindingSeverity.High,
+                Score = match.Evidence.SupportRoutesLinked ? 90 : 80,
+                TitleText = match.Evidence.SupportRoutesLinked ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.06") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.07"),
+                DescriptionText = (match.Evidence.SupportRoutesLinked ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.08") :
+                    MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.09")) +
+                    (match.Evidence.EntryReferenceVerified ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.10") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.11")) +
+                    (match.Evidence.ActivationGateObserved ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.12") : (MessageText)"") +
+                    MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.13"),
+                Target = Path.Combine(steamRoot, match.Target.Replace('/', Path.DirectorySeparatorChar)),
+                Sha256 = match.Hash,
+                EvidenceText = string.Join("；", match.Evidence.Signals),
+                SteamUiEvidence = match.Evidence,
+                IsKnownMalware = false,
+                CanRemediate = false,
+                SuggestedActions = [SuggestedActionKind.ReviewOnly]
+            });
+        }
+        if (family.Incomplete)
+        {
+            skippedFiles++; report.AddCoverageNote(MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.14"));
+        }
+        report.AddCoverageNote(MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.15", (checkedFiles), (System.FormattableString.Invariant($"{totalBytes / 1024.0 / 1024.0:N1}")), (skippedFiles)));
         if (skippedFiles > 0) report.Coverage = ScanCoverage.Partial;
+    }
+
+    private static async Task<(string Text, string Hash, long Length)> ReadSteamUiSnapshotAsync(string path, long maximumBytes, CancellationToken token)
+    {
+        await using FileStream stream = RelatedArtifactReader.Open(path);
+        if (stream.Length > maximumBytes || stream.Length > int.MaxValue) throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadSteamUiSnapshotAsync.01"), sourceText => new IOException(sourceText));
+        byte[] bytes = new byte[checked((int)stream.Length)];
+        try
+        {
+            await stream.ReadExactlyAsync(bytes, token);
+            if (stream.ReadByte() != -1) throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadSteamUiSnapshotAsync.02"), sourceText => new IOException(sourceText));
+            string text = new UTF8Encoding(false, true).GetString(bytes);
+            string hash = Convert.ToHexString(SHA256.HashData(bytes));
+            RelatedArtifactReader.ValidatePath(stream.SafeFileHandle, Path.GetFullPath(path));
+            return (text, hash, bytes.Length);
+        }
+        finally { Array.Clear(bytes); }
     }
 
     private static async Task<string> ReadUtf8BoundedAsync(string path, long maximumBytes, CancellationToken token)
@@ -233,7 +283,7 @@ public sealed class SteamSecurityScanner(RuleSet rules)
         await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read,
             64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         if (stream.Length > maximumBytes || maximumBytes >= int.MaxValue)
-            throw new IOException("脚本超过读取大小上限。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadUtf8BoundedAsync.01"), sourceText => new IOException(sourceText));
         byte[] bytes = new byte[(int)Math.Min(maximumBytes + 1, stream.Length + 1)];
         int total = 0;
         while (total < bytes.Length)
@@ -243,17 +293,19 @@ public sealed class SteamSecurityScanner(RuleSet rules)
             total += read;
         }
         if (total > maximumBytes || stream.ReadByte() >= 0)
-            throw new IOException("脚本在读取期间超过大小上限。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadUtf8BoundedAsync.02"), sourceText => new IOException(sourceText));
         return Encoding.UTF8.GetString(bytes, 0, total);
     }
 
-    internal static List<string> AnalyzeSteamUi(string text)
+    internal static List<string> AnalyzeSteamUi(string text) => AnalyzeSteamUiMessages(text).Select(message => message.OriginalText).ToList();
+
+    internal static List<MessageText> AnalyzeSteamUiMessages(string text)
     {
-        List<string> signals = [];
-        foreach ((string method, string label) in new[]
+        List<MessageText> signals = [];
+        foreach ((string method, MessageText label) in new[]
         {
-            ("BMustShowSupportAlertDialog", "客服弹窗条件"),
-            ("BHasActiveSupportAlerts", "客服告警状态")
+            ("BMustShowSupportAlertDialog", MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.01")),
+            ("BHasActiveSupportAlerts", MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.02"))
         })
         {
             int index = text.IndexOf(method, StringComparison.Ordinal);
@@ -263,7 +315,7 @@ public sealed class SteamSecurityScanner(RuleSet rules)
             if (!constant.Success || constant.Index > 260) continue;
             string expression = Regex.Replace(constant.Groups["expr"].Value, @"\s+", string.Empty);
             bool? value = JavaScriptBoolean(expression);
-            if (value is not null) signals.Add($"{label}被固定为{(value.Value ? "真" : "假")}（return {expression}）");
+            if (value is not null) signals.Add(MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.03", (label), ((value.Value ? MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.04") : MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.05"))), (expression)));
         }
 
         int action = text.IndexOf("OnGameActionUserRequest", StringComparison.Ordinal);
@@ -274,7 +326,7 @@ public sealed class SteamSecurityScanner(RuleSet rules)
             int returnIndex = call.Success ? window.IndexOf("return", call.Index + call.Length, StringComparison.Ordinal) : -1;
             int switchIndex = window.IndexOf("switch", StringComparison.Ordinal);
             if (call.Success && returnIndex >= 0 && returnIndex - (call.Index + call.Length) < 90 && (switchIndex < 0 || call.Index < switchIndex))
-                signals.Add("游戏启动处理被改成先打开 steam://open/supportalert 并立即返回");
+                signals.Add(MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.06"));
         }
 
         foreach (Match hidden in HiddenUrlBarRegex.Matches(text).Cast<Match>().Take(80))
@@ -283,7 +335,7 @@ public sealed class SteamSecurityScanner(RuleSet rules)
             if (window.Contains("URLBar", StringComparison.OrdinalIgnoreCase) &&
                 (window.Contains("bIsSecure", StringComparison.Ordinal) || window.Contains("Browser_NotSecure", StringComparison.Ordinal)))
             {
-                signals.Add("Steam 内置浏览器地址栏在证书状态逻辑附近被设为 display:none");
+                signals.Add(MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.07"));
                 break;
             }
         }
@@ -312,8 +364,8 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                 if (assignment is not null) AddThirdPartyHost(assignment.Groups["url"].Value, routeHosts);
             }
         }
-        foreach (string host in routeHosts) signals.Add($"客服路由被映射到第三方主机 {host}");
-        return signals.Distinct(StringComparer.Ordinal).ToList();
+        foreach (string host in routeHosts) signals.Add(MessageText.Create("Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.08", (host)));
+        return signals.DistinctBy(message => message.OriginalText, StringComparer.Ordinal).ToList();
     }
 
     private HashRule? FindKnownHash(string sha256) => rules.KnownHashes.FirstOrDefault(rule =>

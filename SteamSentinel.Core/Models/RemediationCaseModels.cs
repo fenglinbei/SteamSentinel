@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 namespace SteamSentinel.Core.Models;
 
 public enum CaseSessionRequirement { NewBoot, NewInteractiveLogon, NewBootOrInteractiveLogon }
@@ -29,14 +30,18 @@ public sealed class RemediationCaseRecord
     public bool RequireRelatedFollowUp { get; set; } = true;
     public List<CaseVerificationEpisode> Episodes { get; init; } = [];
     public List<string> Notes { get; init; } = [];
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<int, DisplayMessage>? NoteMessages { get => SteamSentinel.Core.Models.DisplayMessageMap.Bound(Notes, field); set => field = value; }
+    [System.Text.Json.Serialization.JsonIgnore] public IEnumerable<MessageText> NoteTexts => DisplayMessageMap.Read(Notes, NoteMessages);
+    public void AddNote(MessageText text) => NoteMessages = DisplayMessageMap.Add(Notes, NoteMessages, text);
     public bool IsWholeMachineClear => false;
     public bool WriterIdentified => false;
     public bool MayReplaySavedPlans => false;
     public string Authority => "UserOwnedReadOnlyRecordNotBrokerAuthorization";
-    public string WriterSummary => "写入来源尚未证实；启动、加载、同路径和同机配置观察不能代替写入证据。";
+    public string WriterSummary => MessageText.Create("Backend.Core.RemediationCaseModels.WriterSummary.01");
 }
 
-public sealed class CaseSessionObservation
+public sealed partial class CaseSessionObservation
 {
     public DateTimeOffset CapturedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public string UserSid { get; init; } = string.Empty;
@@ -54,7 +59,7 @@ public sealed class CaseSessionObservation
     public string Detail { get; init; } = string.Empty;
 }
 
-public sealed class CaseVerificationEpisode
+public sealed partial class CaseVerificationEpisode
 {
     public Guid EpisodeId { get; init; } = Guid.NewGuid();
     public DateTimeOffset StartedAtUtc { get; init; } = DateTimeOffset.UtcNow;
@@ -72,7 +77,7 @@ public sealed class CaseVerificationEpisode
     public bool IsWholeMachineClear => false;
 }
 
-public sealed class CaseActionVerification
+public sealed partial class CaseActionVerification
 {
     public Guid PlanId { get; init; }
     public Guid ActionId { get; init; }
@@ -86,7 +91,7 @@ public sealed class CaseActionVerification
     public bool IsOriginalProcessIdentityOnly => Type is RemediationActionType.StopProcess or RemediationActionType.StopHostProcess;
 }
 
-public sealed class CaseFollowUpResult
+public sealed partial class CaseFollowUpResult
 {
     public ScanReport? ContentReport { get; init; }
     public ScanReport? RelatedReport { get; init; }
@@ -102,7 +107,7 @@ public sealed class CaseReverificationLimits
     public TimeSpan MaximumDuration { get; init; } = TimeSpan.FromMinutes(2);
 }
 
-public sealed class RemediationCaseSummary
+public sealed partial class RemediationCaseSummary
 {
     public Guid CaseId { get; init; }
     public string UserSid { get; init; } = string.Empty;

@@ -179,17 +179,23 @@ internal static partial class Program
             }
         }
         Check("0.2.0 临时删除释放占用后作用域重试结清计账", retained.Snapshot().CurrentTemporaryBytes == 0 && retained.Snapshot().PeakTemporaryBytes == 12);
+        Console.WriteLine("V020_WORKSPACE_PROBE=create");
         await using (WorkerWorkspace workspace = new())
         {
+            Console.WriteLine("V020_WORKSPACE_PROBE=created");
             string recovery = Path.Combine(workspace.Path, "recovery");
             Directory.CreateDirectory(recovery);
+            Console.WriteLine("V020_WORKSPACE_PROBE=directory-created");
             string path = Path.Combine(recovery, "inert-path-probe.scan");
             await File.WriteAllBytesAsync(path, [1, 2, 3]);
+            Console.WriteLine("V020_WORKSPACE_PROBE=written");
             bool readable = false;
             try
             {
                 using FileStream locked = RelatedArtifactReader.Open(path);
+                Console.WriteLine("V020_WORKSPACE_PROBE=opened");
                 RelatedArtifactReader.ValidatePath(locked.SafeFileHandle, Path.GetFullPath(path));
+                Console.WriteLine("V020_WORKSPACE_PROBE=validated");
                 readable = locked.Length == 3 && locked.ReadByte() == 1;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
@@ -197,6 +203,7 @@ internal static partial class Program
                 string.Equals(Path.GetDirectoryName(workspace.Path), OwnedDirectoryPhysicalPath.ResolveForCreation(AppPaths.WorkerTemporaryRoot),
                     StringComparison.OrdinalIgnoreCase));
         }
+        Console.WriteLine("V020_WORKSPACE_PROBE=disposed");
     }
 
     private static void TestV020ContainerFragments()

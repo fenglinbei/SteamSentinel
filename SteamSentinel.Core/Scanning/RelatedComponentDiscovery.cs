@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+using SteamSentinel.Core.Reporting;
 using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -27,15 +29,99 @@ public sealed record RelatedSourceRead
     public string? ShortcutPath { get; init; }
     public DiagnosticReadStatus Status { get; init; } = DiagnosticReadStatus.Complete;
     public string Detail { get; init; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+    [JsonIgnore] public MessageText DetailText { get => new(Detail, DetailMessage); init { Detail = value.OriginalText; DetailMessage = value.Message; } }
     public int SnapshotBytesRead { get; init; }
 }
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record RelatedProcessRead(int ProcessId, DateTimeOffset? StartedAtUtc, string ImagePath, DiagnosticReadStatus Status, string Detail, string? CommandLine = null, string? WorkingDirectory = null, string SignatureStatus = "NotChecked", string? SignatureDetail = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
 
-public sealed record RelatedProcessRead(int ProcessId, DateTimeOffset? StartedAtUtc, string ImagePath,
-    DiagnosticReadStatus Status, string Detail, string? CommandLine = null, string? WorkingDirectory = null,
-    string SignatureStatus = "NotChecked", string? SignatureDetail = null);
-public sealed record RelatedModuleRead(DiagnosticReadStatus Status, string Detail, bool IdentityMatched, IReadOnlyList<string> Paths);
-public sealed record RelatedFileRead(DiagnosticReadStatus Status, string Detail, byte[] Bytes, int BytesRead = 0);
-public sealed record RelatedPathRead(DiagnosticReadStatus Status, string Detail, bool IsFile, bool IsDirectory, bool IsUserArea, bool IsProtected);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public RelatedProcessRead(int ProcessId, DateTimeOffset? StartedAtUtc, string ImagePath, DiagnosticReadStatus Status, SteamSentinel.Core.Reporting.MessageText Detail, string? CommandLine = null, string? WorkingDirectory = null, string SignatureStatus = "NotChecked", string? SignatureDetail = null) : this(ProcessId, StartedAtUtc, ImagePath, Status, Detail.OriginalText, CommandLine, WorkingDirectory, SignatureStatus, SignatureDetail)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record RelatedModuleRead(DiagnosticReadStatus Status, string Detail, bool IdentityMatched, IReadOnlyList<string> Paths)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public RelatedModuleRead(DiagnosticReadStatus Status, SteamSentinel.Core.Reporting.MessageText Detail, bool IdentityMatched, IReadOnlyList<string> Paths) : this(Status, Detail.OriginalText, IdentityMatched, Paths)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record RelatedFileRead(DiagnosticReadStatus Status, string Detail, byte[] Bytes, int BytesRead = 0)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public RelatedFileRead(DiagnosticReadStatus Status, SteamSentinel.Core.Reporting.MessageText Detail, byte[] Bytes, int BytesRead = 0) : this(Status, Detail.OriginalText, Bytes, BytesRead)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record RelatedPathRead(DiagnosticReadStatus Status, string Detail, bool IsFile, bool IsDirectory, bool IsUserArea, bool IsProtected)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public RelatedPathRead(DiagnosticReadStatus Status, SteamSentinel.Core.Reporting.MessageText Detail, bool IsFile, bool IsDirectory, bool IsUserArea, bool IsProtected) : this(Status, Detail.OriginalText, IsFile, IsDirectory, IsUserArea, IsProtected)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
 
 /// <summary>Inputs are bounded local snapshots. Implementations must never execute a target or resolve a shell link.</summary>
 public interface IRelatedComponentDataSource
@@ -77,37 +163,36 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
         Dictionary<string, RelatedPathRead> pathSnapshots = new(StringComparer.OrdinalIgnoreCase);
         IReadOnlyDictionary<string, string> environment = new Dictionary<string, string>();
 
-        void Check(string name, DiagnosticReadStatus status, string detail, string? observation = null, bool required = true)
+        void Check(string code, MessageText name, DiagnosticReadStatus status, MessageText detail, string? observation = null, bool required = true)
         {
-            if (output.Checks.Any(c => c.Name == name && c.Status == status && c.Detail == detail && c.ObservationId == observation)) return;
-            if (output.Checks.Count < 1023) output.Checks.Add(new() { Name = name, Status = status, Detail = detail, ObservationId = observation, Required = required });
-            else if (!output.Checks.Any(c => c.Name == "关联检查说明数量")) output.Checks.Add(new()
-            { Name = "关联检查说明数量", Status = DiagnosticReadStatus.LimitReached, Detail = "检查说明达到 1024 项上限，其余逐项说明未保存；保留已取得原始观察。" });
+            if (output.Checks.Count < 1023) output.Checks.Add(new() { CheckCode = code, NameText = name, Status = status, DetailText = detail, ObservationId = observation, Required = required });
+            else if (!output.Checks.Any(c => c.CheckCode == "related.discovery_check_limit")) output.Checks.Add(new()
+            { CheckCode = "related.discovery_check_limit", NameText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.01"), Status = DiagnosticReadStatus.LimitReached, DetailText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.02") });
         }
         bool Continue()
         {
             if (stopped) return false;
             if (token.IsCancellationRequested)
-            { stopped = true; Check("关联候选采集", DiagnosticReadStatus.Cancelled, "已取消；保留此前取得的观察，未继续读取其他来源。"); return false; }
+            { stopped = true; Check("related.collection", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.03"), DiagnosticReadStatus.Cancelled, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.04")); return false; }
             if (_time.GetElapsedTime(started) >= limits.MaximumDiscoveryDuration)
-            { stopped = true; Check("关联发现时间预算", DiagnosticReadStatus.LimitReached, "发现阶段时间预算已用尽，保留此前取得的观察；同步原生调用只在前后检查预算。"); return false; }
+            { stopped = true; Check("related.discovery_time", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.05"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.06")); return false; }
             try
             {
                 string? current = _source.ReadCurrentUserSid();
                 if (!string.IsNullOrWhiteSpace(current) && current.Equals(request.TargetUserSid, StringComparison.OrdinalIgnoreCase)) return true;
                 stopped = true;
-                Check("关联发现用户身份", DiagnosticReadStatus.AccessDenied, "扫描用户 SID 不匹配或发生变化；未改用另一账户视图，已停止新增关联。");
+                Check("related.discovery_identity", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.07"), DiagnosticReadStatus.AccessDenied, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.08"));
                 return false;
             }
             catch (Exception ex) when (IsReadException(ex))
-            { stopped = true; Check("关联发现用户身份", StatusFor(ex), "无法核验当前用户：" + ex.Message); return false; }
+            { stopped = true; Check("related.discovery_identity", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.09"), StatusFor(ex), MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.10") + MessageExceptions.Describe(ex)); return false; }
         }
         bool Excluded(string path) => request.ExcludedRoots.Any(root => !string.IsNullOrWhiteSpace(root) && ContentDiscovery.IsWithin(path, root));
         RelatedPathRead Probe(string path)
         {
             if (pathSnapshots.TryGetValue(path, out RelatedPathRead? saved)) return saved;
             try { saved = _source.ProbePath(path); }
-            catch (Exception ex) when (IsReadException(ex)) { saved = new(StatusFor(ex), ex.Message, false, false, false, false); }
+            catch (Exception ex) when (IsReadException(ex)) { saved = new(StatusFor(ex), MessageExceptions.Describe(ex), false, false, false, false); }
             pathSnapshots.Add(path, saved);
             return saved;
         }
@@ -116,16 +201,16 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
             if (!pathSources.TryGetValue(path, out HashSet<string>? ids)) pathSources.Add(path, ids = new(StringComparer.Ordinal));
             ids.Add(sourceId);
         }
-        RelatedComponentCandidate? AddCandidate(string raw, string reason, string? sourceId = null, string? hostId = null, bool requireUserArea = false, int priority = 50)
+        RelatedComponentCandidate? AddCandidate(string raw, MessageText reason, string? sourceId = null, string? hostId = null, bool requireUserArea = false, int priority = 50)
         {
             if (!Continue()) return null;
             if (!RelatedCommandResolver.TryNormalizeLocalLiteral(raw, null, out string? path, out _))
-            { Check("候选路径范围", DiagnosticReadStatus.NotChecked, "未采纳非明确本地文件路径：" + Short(raw), sourceId); return null; }
+            { Check("related.candidate_scope", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.11"), DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.12") + Short(raw), sourceId); return null; }
             RelatedPathRead probe = Probe(path!);
             if (Excluded(path!) || probe.IsProtected)
-            { Check("候选路径范围", DiagnosticReadStatus.NotChecked, "此路径属于排除或受保护范围，未纳入内容候选：" + path, sourceId, required: false); return null; }
+            { Check("related.candidate_scope", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.13"), DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.14") + path, sourceId, required: false); return null; }
             if (probe.IsDirectory)
-            { Check("精确文件候选", DiagnosticReadStatus.NotChecked, "来源指向目录，未扩大为目录全扫：" + path, sourceId); return null; }
+            { Check("related.exact_file", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.15"), DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.16") + path, sourceId); return null; }
             if (requireUserArea && !probe.IsUserArea && !seeds.Contains(path!)) return null;
             if (!candidates.TryGetValue(path!, out RelatedComponentCandidate? candidate))
             {
@@ -134,21 +219,22 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                     RelatedComponentCandidate? displaced = output.Candidates.Where(c => candidatePriorities.GetValueOrDefault(c.Path, 1000) < priority)
                         .OrderBy(c => candidatePriorities[c.Path]).FirstOrDefault();
                     if (displaced is null)
-                    { Check("关联候选数量", DiagnosticReadStatus.LimitReached, $"达到 {limits.MaximumCandidates} 个精确文件上限，未纳入：{path}", sourceId); return null; }
+                    { Check("related.candidate_count", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.17"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.18", (limits.MaximumCandidates), (path)), sourceId); return null; }
                     output.Candidates.Remove(displaced);
                     candidates.Remove(displaced.Path);
                     candidatePriorities.Remove(displaced.Path);
                     output.Relations.RemoveAll(r => r.FromId == displaced.Id || r.ToId == displaced.Id);
-                    Check("关联候选优先级", DiagnosticReadStatus.LimitReached,
-                        "候选达到上限，优先保留精确种子或实际模块路径；较低优先级引用仍保存在来源快照中但本轮未纳入内容检查：" + displaced.Path);
+                    Check("related.candidate_priority", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.19"), DiagnosticReadStatus.LimitReached,
+                        MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.20") + displaced.Path);
                 }
                 candidate = new()
                 {
                     Path = path!,
-                    Reason = reason,
+                    ReasonText = reason,
+                    ContentDetailText = MessageText.Create("Backend.Core.RelatedComponentModels.ContentDetail.01"),
                     Status = probe.Status == DiagnosticReadStatus.Complete ? DiagnosticReadStatus.NotChecked : probe.Status,
-                    Detail = probe.Status == DiagnosticReadStatus.Complete
-                        ? "仅取得本地精确路径与文件属性；尚未核验文件哈希、内容或归属。" : probe.Detail
+                    DetailText = probe.Status == DiagnosticReadStatus.Complete
+                        ? MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.21") : probe.DetailText
                 };
                 candidates.Add(path!, candidate);
                 candidatePriorities.Add(path!, priority);
@@ -159,12 +245,12 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
             {
                 AddUnique(candidate.SourceObservationIds, sourceId);
                 RecordPathSource(path!, sourceId);
-                AddRelation(output, sourceId, candidate.Id, "SourceReferencesFile", "来源快照含有此精确路径；不证明实际执行或写入配置。");
+                AddRelation(output, sourceId, candidate.Id, "SourceReferencesFile", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.22"));
             }
             if (hostId is not null)
             {
                 AddUnique(candidate.HostObservationIds, hostId);
-                AddRelation(output, hostId, candidate.Id, "ObservedLoadedModulePath", "在相同 PID、启动时间和映像身份下枚举到此模块路径；文件内容身份尚未核验，也不证明写入行为。");
+                AddRelation(output, hostId, candidate.Id, "ObservedLoadedModulePath", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.23"));
             }
             return candidate;
         }
@@ -172,57 +258,57 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
         {
             if (!Continue() || !ScriptExtensions.Contains(Path.GetExtension(path)) || !scriptSnapshots.Add(path)) return;
             if (scriptBytes >= limits.MaximumTotalScriptBytes)
-            { Check("脚本正文读取", DiagnosticReadStatus.LimitReached, "脚本与快捷方式总字节预算不足，未继续读取正文。", parent.Id); return; }
+            { Check("related.script_read", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.24"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.25"), parent.Id); return; }
             int remaining = (int)Math.Min(limits.MaximumScriptBytes, limits.MaximumTotalScriptBytes - scriptBytes);
             RelatedFileRead read;
             try { read = _source.ReadFile(path, remaining, token); }
-            catch (Exception ex) when (IsReadException(ex)) { read = new(StatusFor(ex), ex.Message, []); }
+            catch (Exception ex) when (IsReadException(ex)) { read = new(StatusFor(ex), MessageExceptions.Describe(ex), []); }
             scriptBytes += Math.Max(read.BytesRead, read.Bytes.Length);
             if (!Continue()) return;
             if (scriptBytes > limits.MaximumTotalScriptBytes || read.Bytes.Length > remaining)
-            { Check("脚本正文读取", DiagnosticReadStatus.LimitReached, "数据源返回的正文超过约定字节限额，未解析此正文。", parent.Id); return; }
+            { Check("related.script_read", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.26"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.27"), parent.Id); return; }
             if (read.Status != DiagnosticReadStatus.Complete)
-            { Check("脚本正文读取", read.Status, path + "：" + read.Detail, parent.Id); return; }
+            { Check("related.script_read", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.28"), read.Status, path + "：" + read.DetailText, parent.Id); return; }
             string text = DecodeText(read.Bytes);
             RelatedCommandResolution nested = RelatedCommandResolver.ResolveScriptLiterals(text, path, sourceEnvironment);
-            Check("脚本字面引用", nested.Status, string.Join("；", nested.Notes), parent.Id);
+            Check("related.script_literals", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.29"), nested.Status, MessageText.Join("；", nested.NoteTexts), parent.Id);
             foreach (RelatedResolvedCommandTarget target in nested.Targets)
             {
                 if (!AddSourceTarget(parent, target.Path)) continue;
-                AddCandidate(target.Path, "启动脚本中出现的本地字面引用，未证明分支运行。", parent.Id, requireUserArea: false, priority: 60);
+                AddCandidate(target.Path, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.30"), parent.Id, requireUserArea: false, priority: 60);
             }
         }
         bool AddSourceTarget(RelatedSourceObservation source, string path)
         {
             if (RelatedComponentRecordBounds.TryAddTarget(source, path)) return true;
-            if (!output.Checks.Any(c => c.Name == "来源目标列表限额" && c.ObservationId == source.Id))
-                Check("来源目标列表限额", DiagnosticReadStatus.LimitReached, RelatedComponentRecordBounds.SourceTargetLimitDetail, source.Id);
+            if (!output.Checks.Any(c => c.CheckCode == "related.source_target_limit" && c.ObservationId == source.Id))
+                Check("related.source_target_limit", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.31"), DiagnosticReadStatus.LimitReached, RelatedComponentRecordBounds.SourceTargetLimitDetail, source.Id);
             return false;
         }
         try
         {
             if (limits.MaximumSources < 0 || limits.MaximumProcesses < 0 || limits.MaximumHosts < 0 || limits.MaximumModulesPerHost < 0 ||
                 limits.MaximumCandidates < 0 || limits.MaximumScriptBytes < 0 || limits.MaximumTotalScriptBytes < 0 || limits.MaximumDiscoveryDuration < TimeSpan.Zero)
-            { Check("关联发现限额", DiagnosticReadStatus.Failed, "发现限额不能为负数，未开始读取。"); return; }
+            { Check("related.discovery_limits", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.32"), DiagnosticReadStatus.Failed, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.33")); return; }
             if (string.IsNullOrWhiteSpace(request.TargetUserSid) || output.TargetUserSid != request.TargetUserSid)
-            { Check("关联发现用户身份", DiagnosticReadStatus.AccessDenied, "缺少目标 SID 或请求和输出的目标 SID 不一致，未开始读取。"); return; }
+            { Check("related.discovery_identity", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.34"), DiagnosticReadStatus.AccessDenied, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.35")); return; }
             try { _ = new SecurityIdentifier(request.TargetUserSid); }
-            catch (ArgumentException) { Check("关联发现用户身份", DiagnosticReadStatus.AccessDenied, "目标 SID 格式无效，未开始读取。"); return; }
+            catch (ArgumentException) { Check("related.discovery_identity", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.36"), DiagnosticReadStatus.AccessDenied, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.37")); return; }
             if (!Continue()) return;
             try { environment = _source.ReadEnvironmentVariables(request.TargetUserSid); }
-            catch (Exception ex) when (IsReadException(ex)) { Check("关联命令环境", StatusFor(ex), "来源身份下的环境未取得；不猜测变量值。" + ex.Message); }
+            catch (Exception ex) when (IsReadException(ex)) { Check("related.command_environment", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.38"), StatusFor(ex), MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.39") + MessageExceptions.Describe(ex)); }
             foreach (string seed in request.SeedPaths.Take(Math.Max(limits.MaximumCandidates, 1) + 1))
             {
                 if (!Continue()) return;
                 if (RelatedCommandResolver.TryNormalizeLocalLiteral(seed, null, out string? path, out _))
                 {
                     seeds.Add(path!);
-                    AddCandidate(path!, "已有内容风险或明确选择提供的精确文件路径；内容身份需要独立核验。", priority: 100);
+                    AddCandidate(path!, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.40"), priority: 100);
                 }
-                else Check("精确种子范围", DiagnosticReadStatus.NotChecked, "种子不是明确本地文件路径，未扩大为目录扫描：" + Short(seed));
+                else Check("related.seed_scope", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.41"), DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.42") + Short(seed));
             }
             if (request.SeedPaths.Count > Math.Max(limits.MaximumCandidates, 1))
-                Check("精确种子数量", DiagnosticReadStatus.LimitReached, "精确种子超过候选数量限额，其余未纳入。");
+                Check("related.seed_count", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.43"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.44"));
 
             int sourcesRead = 0;
             using (IEnumerator<RelatedSourceRead> enumerator = _source.ReadSources(request, limits,
@@ -231,29 +317,29 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                 while (Continue())
                 {
                     if (sourcesRead >= limits.MaximumSources)
-                    { Check("启动来源数量", DiagnosticReadStatus.LimitReached, $"达到 {limits.MaximumSources} 个来源上限，后续来源未读取。"); break; }
+                    { Check("related.source_count", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.45"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.46", (limits.MaximumSources))); break; }
                     if (!enumerator.MoveNext()) break;
                     RelatedSourceRead read = enumerator.Current;
                     if (!Continue()) break;
                     sourcesRead++;
                     scriptBytes += read.SnapshotBytesRead;
                     if (scriptBytes > limits.MaximumTotalScriptBytes)
-                    { Check("启动元数据字节预算", DiagnosticReadStatus.LimitReached, "启动来源数据源返回了超出剩余预算的快照，未解析此记录。"); break; }
+                    { Check("related.source_bytes", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.47"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.48")); break; }
                     string rawCommand = read.RawCommand;
                     string? executable = read.ExecutablePath, arguments = read.Arguments, working = read.WorkingDirectory;
                     DiagnosticReadStatus readStatus = read.Status;
-                    string readDetail = read.Detail;
+                    MessageText readDetail = read.DetailText;
                     if (read.ShortcutPath is not null && readStatus == DiagnosticReadStatus.Complete)
                     {
                         int remaining = (int)Math.Max(0, Math.Min(limits.MaximumScriptBytes, limits.MaximumTotalScriptBytes - scriptBytes));
-                        RelatedFileRead link = remaining == 0 ? new(DiagnosticReadStatus.LimitReached, "快捷方式读取字节预算不足。", []) :
+                        RelatedFileRead link = remaining == 0 ? new(DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.49"), []) :
                             _source.ReadFile(read.ShortcutPath, remaining, token);
                         scriptBytes += Math.Max(link.BytesRead, link.Bytes.Length);
                         if (!Continue()) break;
                         if (scriptBytes > limits.MaximumTotalScriptBytes || link.Bytes.Length > remaining)
-                            link = new(DiagnosticReadStatus.LimitReached, "数据源返回的快捷方式超过约定字节限额，未解析此对象。", []);
+                            link = new(DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.50"), []);
                         readStatus = link.Status;
-                        readDetail += " " + link.Detail;
+                        readDetail += " " + link.DetailText;
                         if (link.Status == DiagnosticReadStatus.Complete)
                         {
                             ShortcutInspection shortcut = ShortcutInspector.Inspect(link.Bytes);
@@ -262,7 +348,7 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                             working = shortcut.WorkingDirectory;
                             rawCommand = (executable is null ? "" : "\"" + executable + "\"") + (string.IsNullOrEmpty(arguments) ? "" : " " + arguments);
                             if (!shortcut.Complete) readStatus = DiagnosticReadStatus.NotChecked;
-                            readDetail += " " + shortcut.Detail;
+                            readDetail += " " + shortcut.DetailText;
                         }
                     }
                     RelatedSourceObservation source = new()
@@ -274,24 +360,24 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                         WorkingDirectory = working,
                         UserSid = read.UserSid,
                         Status = readStatus,
-                        Detail = readDetail
+                        DetailText = readDetail
                     };
                     source = RelatedComponentRecordBounds.PrepareOriginal(source, out bool sourceOmitted, request.TargetUserSid);
                     output.Sources.Add(source);
                     if (sourceOmitted)
                     {
-                        Check("原始来源记录限额", DiagnosticReadStatus.LimitReached, RelatedComponentRecordBounds.OriginalSourceLimitDetail, source.Id);
+                        Check("related.source_record_limit", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.51"), DiagnosticReadStatus.LimitReached, RelatedComponentRecordBounds.OriginalSourceLimitDetail, source.Id);
                         continue;
                     }
                     if (string.IsNullOrWhiteSpace(rawCommand) && string.IsNullOrWhiteSpace(executable))
-                    { Check(source.Kind, source.Status, source.Detail, source.Id); continue; }
+                    { Check("related.source_read", source.Kind, source.Status, source.DetailText, source.Id); continue; }
                     IReadOnlyDictionary<string, string>? sourceEnvironment = read.Kind is "Run" or "StartupFile" || read.UserSid == request.TargetUserSid
                         ? environment : environment.Where(p => p.Key.Equals("SystemRoot", StringComparison.OrdinalIgnoreCase) || p.Key.Equals("windir", StringComparison.OrdinalIgnoreCase))
                             .ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
                     RelatedCommandResolution resolution = RelatedCommandResolver.Resolve(new(rawCommand, working, executable, arguments, sourceEnvironment));
                     if (source.Status == DiagnosticReadStatus.Complete && resolution.Status != DiagnosticReadStatus.Complete) source.Status = resolution.Status;
-                    if (resolution.Notes.Count > 0 && !RelatedComponentRecordBounds.TryAppendDetail(source, string.Join("；", resolution.Notes)))
-                        Check("来源解析说明限额", DiagnosticReadStatus.LimitReached, RelatedComponentRecordBounds.SourceDetailLimitDetail, source.Id);
+                    if (resolution.Notes.Count > 0 && !RelatedComponentRecordBounds.TryAppendDetail(source, MessageText.Join("；", resolution.NoteTexts)))
+                        Check("related.source_detail_limit", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.52"), DiagnosticReadStatus.LimitReached, RelatedComponentRecordBounds.SourceDetailLimitDetail, source.Id);
                     foreach (RelatedResolvedCommandTarget target in resolution.Targets)
                     {
                         if (!AddSourceTarget(source, target.Path)) continue;
@@ -299,18 +385,18 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                         RecordPathSource(target.Path, source.Id);
                         bool userOnly = source.Kind is "Service" or "ServiceDll" || source.Scope == "LocalMachine";
                         int priority = target.Kind is "ScriptArgument" or "ModuleArgument" ? 90 : target.Kind is "Executable" or "WrapperExecutable" ? 80 : 50;
-                        RelatedComponentCandidate? candidate = AddCandidate(target.Path, "启动来源中的本地命令目标或字面引用，尚未核验内容。", source.Id, requireUserArea: userOnly, priority: priority);
+                        RelatedComponentCandidate? candidate = AddCandidate(target.Path, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.53"), source.Id, requireUserArea: userOnly, priority: priority);
                         if (candidate is not null) ReadScript(candidate.Path, source, sourceEnvironment);
                     }
                     // This is only a bounded host search hint, not a running-instance identity match.
                     foreach (string name in WrapperNames)
                         if (rawCommand.TrimStart(' ', '"').StartsWith(name + ".exe", StringComparison.OrdinalIgnoreCase) ||
                             rawCommand.TrimStart(' ', '"').StartsWith(name + " ", StringComparison.OrdinalIgnoreCase)) wrapperContexts.Add(name);
-                    Check(source.Kind, source.Status, source.Detail, source.Id);
+                    Check("related.source_read", source.Kind, source.Status, source.DetailText, source.Id);
                 }
             }
             if (!Continue()) return;
-            List<(RelatedProcessRead Process, int Priority, string Reason)> hostCandidates = [];
+            List<(RelatedProcessRead Process, int Priority, MessageText Reason)> hostCandidates = [];
             int processesRead = 0;
             Dictionary<DiagnosticReadStatus, int> inaccessible = [];
             using (IEnumerator<RelatedProcessRead> enumerator = _source.ReadProcesses(limits.MaximumProcesses, token).GetEnumerator())
@@ -318,7 +404,7 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                 while (Continue())
                 {
                     if (processesRead >= limits.MaximumProcesses)
-                    { Check("进程元数据数量", DiagnosticReadStatus.LimitReached, $"达到 {limits.MaximumProcesses} 个进程元数据上限，其他进程未读取。"); break; }
+                    { Check("related.process_count", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.54"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.55", (limits.MaximumProcesses))); break; }
                     if (!enumerator.MoveNext()) break;
                     RelatedProcessRead process = enumerator.Current;
                     if (!Continue()) break;
@@ -327,23 +413,23 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                     if (process.Status != DiagnosticReadStatus.Complete && !explicitPid)
                     { inaccessible[process.Status] = inaccessible.GetValueOrDefault(process.Status) + 1; continue; }
                     int score = 0;
-                    string reason = string.Empty;
-                    if (explicitPid) { score = 100; reason = "已有观察提供的 PID；当前身份需独立读取。"; }
-                    else if (seeds.Contains(process.ImagePath)) { score = 90; reason = "进程映像路径与精确种子相同。"; }
+                    MessageText reason = string.Empty;
+                    if (explicitPid) { score = 100; reason = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.56"); }
+                    else if (seeds.Contains(process.ImagePath)) { score = 90; reason = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.57"); }
                     else if (SameComponentDirectory(process.ImagePath, seeds))
-                    { score = 85; reason = "映像与精确文件种子位于同一组件目录，优先检查模块但不据此确认加载关系。"; }
-                    else if (sourceTargets.Contains(process.ImagePath)) { score = 80; reason = "进程映像路径出现在启动来源快照中；未证明此实例由该入口启动。"; }
+                    { score = 85; reason = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.58"); }
+                    else if (sourceTargets.Contains(process.ImagePath)) { score = 80; reason = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.59"); }
                     else if (SameComponentDirectory(process.ImagePath, sourceTargets))
-                    { score = 50; reason = "映像与精确候选位于同一组件目录，仅用于限制宿主检查范围。"; }
+                    { score = 50; reason = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.60"); }
                     else if (wrapperContexts.Contains(Path.GetFileNameWithoutExtension(process.ImagePath)))
-                    { score = 30; reason = "启动来源使用同类包装器，仅作为有界宿主搜索范围，不证明此实例执行该命令。"; }
+                    { score = 30; reason = MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.61"); }
                     if (score > 0 && !Excluded(process.ImagePath)) hostCandidates.Add((process, score, reason));
                 }
             }
-            foreach (var incomplete in inaccessible) Check("进程元数据读取", incomplete.Key,
-                $"{incomplete.Value} 个进程的映像或启动身份未完整取得（{incomplete.Key}），未枚举它们的模块；无法据此排除相关宿主。");
-            if (hostCandidates.Count > limits.MaximumHosts) Check("候选宿主数量", DiagnosticReadStatus.LimitReached,
-                $"有 {hostCandidates.Count} 个范围候选，按已有 PID、精确路径和启动上下文优先读取 {limits.MaximumHosts} 个；其他宿主未枚举模块。");
+            foreach (var incomplete in inaccessible) Check("related.process_read", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.62"), incomplete.Key,
+                MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.63", (incomplete.Value), (incomplete.Key)));
+            if (hostCandidates.Count > limits.MaximumHosts) Check("related.host_count", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.64"), DiagnosticReadStatus.LimitReached,
+                MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.65", (hostCandidates.Count), (limits.MaximumHosts)));
             foreach (var selection in hostCandidates.OrderByDescending(p => p.Priority).ThenBy(p => p.Process.ProcessId).Take(limits.MaximumHosts))
             {
                 if (!Continue()) return;
@@ -356,31 +442,31 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                     CommandLine = process.CommandLine,
                     WorkingDirectory = process.WorkingDirectory,
                     Status = process.Status,
-                    Detail = selection.Reason + " " + process.Detail,
+                    DetailText = selection.Reason + " " + process.DetailText,
                     SignatureStatus = process.SignatureStatus,
-                    SignatureDetail = process.SignatureDetail ?? "签名未检查；宿主签名不豁免模块内容检查，也不授权隔离宿主。"
+                    SignatureDetailText = process.SignatureDetail is null ? MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.66") : (MessageText)process.SignatureDetail
                 };
                 if (pathSources.TryGetValue(process.ImagePath, out HashSet<string>? ids)) host.SourceObservationIds.AddRange(ids);
                 output.Hosts.Add(host);
                 foreach (string sourceId in host.SourceObservationIds)
-                    AddRelation(output, sourceId, host.Id, "SourceAndHostImagePathMatch", "来源目标与运行映像路径相同；尚未证明启动实例或文件内容身份。");
+                    AddRelation(output, sourceId, host.Id, "SourceAndHostImagePathMatch", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.67"));
                 if (host.Status != DiagnosticReadStatus.Complete || process.StartedAtUtc is null || string.IsNullOrWhiteSpace(process.ImagePath))
-                { Check("候选宿主身份", host.Status == DiagnosticReadStatus.Complete ? DiagnosticReadStatus.NotChecked : host.Status, host.Detail, host.Id); continue; }
+                { Check("related.host_identity", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.68"), host.Status == DiagnosticReadStatus.Complete ? DiagnosticReadStatus.NotChecked : host.Status, host.DetailText, host.Id); continue; }
                 if (process.CommandLine is null || process.WorkingDirectory is null)
-                    Check("宿主命令与工作目录", DiagnosticReadStatus.NotChecked, "当前进程命令行或工作目录未取得；未借用启动项内容当作实际进程参数。", host.Id);
+                    Check("related.host_command", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.69"), DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.70"), host.Id);
                 RelatedModuleRead modules;
                 try { modules = _source.ReadModules(process, limits.MaximumModulesPerHost, token); }
-                catch (Exception ex) when (IsReadException(ex)) { modules = new(StatusFor(ex), ex.Message, false, []); }
+                catch (Exception ex) when (IsReadException(ex)) { modules = new(StatusFor(ex), MessageExceptions.Describe(ex), false, []); }
                 if (!Continue())
                 {
                     host.Status = token.IsCancellationRequested ? DiagnosticReadStatus.Cancelled :
                         _time.GetElapsedTime(started) >= limits.MaximumDiscoveryDuration ? DiagnosticReadStatus.LimitReached : DiagnosticReadStatus.AccessDenied;
-                    host.Detail += " 本次模块读取返回后采集已停止，未将此批路径确认为当前加载关系。";
-                    Check("宿主模块读取", host.Status, host.Detail, host.Id);
+                    host.DetailText += MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.71");
+                    Check("related.host_modules", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.72"), host.Status, host.DetailText, host.Id);
                     return;
                 }
                 host.Status = modules.Status;
-                host.Detail += " " + modules.Detail;
+                host.DetailText += " " + modules.DetailText;
                 int metadataLimit = limits.MaximumModulesPerHost == 0 ? 0 : (int)Math.Clamp((long)limits.MaximumModulesPerHost * 16, 256, 8192);
                 string[] eligibleModules = modules.Paths.Take(metadataLimit).Where(p =>
                         RelatedCommandResolver.TryNormalizeLocalLiteral(p, null, out _, out _) &&
@@ -391,31 +477,31 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                 if (!modules.IdentityMatched)
                 {
                     if (host.Status == DiagnosticReadStatus.Complete) host.Status = DiagnosticReadStatus.NotChecked;
-                    host.Detail += " 未取得稳定 PID、启动时间和映像身份，未将模块路径绑定为当前加载关系。";
+                    host.DetailText += MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.73");
                     foreach (string module in eligibleModules.Take(limits.MaximumModulesPerHost))
                     {
                         if (module.Equals(process.ImagePath, StringComparison.OrdinalIgnoreCase)) continue;
-                        RelatedComponentCandidate? unbound = AddCandidate(module, "模块枚举期间出现的路径，但宿主身份无法复核，未建立当前加载关系。", priority: 40);
-                        if (unbound is not null) unbound.Detail += " 宿主身份变化或无法核验；此记录没有新增宿主绑定，需重新读取运行关系。";
+                        RelatedComponentCandidate? unbound = AddCandidate(module, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.74"), priority: 40);
+                        if (unbound is not null) unbound.DetailText += MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.75");
                     }
                 }
                 else foreach (string module in eligibleModules.Take(limits.MaximumModulesPerHost))
                 {
                     if (!module.Equals(process.ImagePath, StringComparison.OrdinalIgnoreCase))
-                        AddCandidate(module, "在限定宿主快照中枚举到的未知加载组件；宿主签名不会豁免其内容检查。", hostId: host.Id,
+                        AddCandidate(module, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.76"), hostId: host.Id,
                             priority: Path.GetDirectoryName(module)?.Equals(Path.GetDirectoryName(process.ImagePath), StringComparison.OrdinalIgnoreCase) == true ? 95 : 85);
                 }
                 if (eligibleModules.Length > limits.MaximumModulesPerHost || modules.Paths.Count > metadataLimit)
-                { host.Status = DiagnosticReadStatus.LimitReached; host.Detail += " 模块路径超过单宿主上限，超出部分未纳入。"; }
-                Check("宿主模块读取", host.Status, host.Detail, host.Id);
+                { host.Status = DiagnosticReadStatus.LimitReached; host.DetailText += MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.77"); }
+                Check("related.host_modules", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.78"), host.Status, host.DetailText, host.Id);
             }
-            Check("关联候选范围", DiagnosticReadStatus.Complete,
-                "仅以启动链、已有精确路径/PID和组件目录确定有界宿主范围；未检查所有进程模块。未以代理/PAC与组件同机出现定位写入者；未验证签名、执行文件、读取任意目录或创建处理动作。", required: false);
+            Check("related.discovery_scope", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.79"), DiagnosticReadStatus.Complete,
+                MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.80"), required: false);
         }
         catch (OperationCanceledException)
-        { Check("关联候选采集", DiagnosticReadStatus.Cancelled, "已取消，此前取得的观察保留。"); }
+        { Check("related.collection", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.81"), DiagnosticReadStatus.Cancelled, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.82")); }
         catch (Exception ex) when (IsReadException(ex))
-        { Check("关联候选采集", StatusFor(ex), "某个来源读取未完成，已保留此前观察：" + ex.Message); }
+        { Check("related.collection", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.83"), StatusFor(ex), MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.84") + MessageExceptions.Describe(ex)); }
     }
 
     private static bool SameComponentDirectory(string image, IEnumerable<string> paths)
@@ -426,12 +512,12 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
             ContentDiscovery.IsWithin(directory, Environment.GetFolderPath(Environment.SpecialFolder.Windows))) return false;
         return paths.Any(path => Path.GetDirectoryName(path)?.Equals(directory, StringComparison.OrdinalIgnoreCase) == true);
     }
-    private static void AddRelation(RelatedComponentDiagnosticReport output, string from, string to, string kind, string evidence)
+    private static void AddRelation(RelatedComponentDiagnosticReport output, string from, string to, string kind, MessageText evidence)
     {
         if (output.Relations.Count < 4096 && !output.Relations.Any(r => r.FromId == from && r.ToId == to && r.Kind == kind))
             output.Relations.Add(new(from, to, kind, evidence));
-        else if (output.Relations.Count >= 4096 && !output.Checks.Any(c => c.Name == "关联关系数量")) output.Checks.Add(new()
-        { Name = "关联关系数量", Status = DiagnosticReadStatus.LimitReached, Detail = "关系记录达到 4096 条上限；原始观察和候选来源 ID 保留，关联图未完成。" });
+        else if (output.Relations.Count >= 4096 && !output.Checks.Any(c => c.CheckCode == "related.relation_count")) output.Checks.Add(new()
+        { CheckCode = "related.relation_count", NameText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.AddRelation.01"), Status = DiagnosticReadStatus.LimitReached, DetailText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.AddRelation.02") });
     }
     private static void AddUnique(List<string> values, string value) { if (!values.Contains(value, StringComparer.OrdinalIgnoreCase)) values.Add(value); }
     private static string Short(string value) => value.Length <= 256 ? value : value[..256] + "…";
@@ -472,7 +558,7 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
     }
     public IReadOnlyDictionary<string, string> ReadEnvironmentVariables(string targetUserSid)
     {
-        if (ReadCurrentUserSid() != targetUserSid) throw new UnauthorizedAccessException("当前有效用户 SID 已变化。");
+        if (ReadCurrentUserSid() != targetUserSid) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadEnvironmentVariables.01"), sourceText => new UnauthorizedAccessException(sourceText));
         Dictionary<string, string> variables = new(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry pair in Environment.GetEnvironmentVariables())
             if (pair.Key is string key && pair.Value is string value && key.Length <= 128 && value.Length <= RelatedCommandResolver.MaximumCommandCharacters)
@@ -506,7 +592,7 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                     token.ThrowIfCancellationRequested();
                     using RegistryKey baseKey = RegistryKey.OpenBaseKey(machine ? RegistryHive.LocalMachine : RegistryHive.Users, view);
                     using RegistryKey? key = baseKey.OpenSubKey(keyPath, writable: false);
-                    if (key is null) rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location, DiagnosticReadStatus.NotPresent, "来源键不存在。", machine ? null : sid));
+                    if (key is null) rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location, DiagnosticReadStatus.NotPresent, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadRun.01"), machine ? null : sid));
                     else
                     {
                         string[] names = key.GetValueNames();
@@ -524,25 +610,25 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                                         Location = location + "\\" + name,
                                         RawCommand = command,
                                         UserSid = machine ? null : sid,
-                                        Detail = "只读保存原始注册表命令；工作目录未记录，不以当前扫描目录替代。"
+                                        DetailText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadRun.02")
                                     }
-                                    : SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location + "\\" + name, DiagnosticReadStatus.NotChecked, "注册表值不是有界命令字符串。", machine ? null : sid));
+                                    : SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location + "\\" + name, DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadRun.03"), machine ? null : sid));
                             }
                             catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-                            { rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location + "\\" + name, RelatedComponentDiscovery.StatusFor(ex), ex.Message, machine ? null : sid)); }
+                            { rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location + "\\" + name, RelatedComponentDiscovery.StatusFor(ex), MessageExceptions.Describe(ex), machine ? null : sid)); }
                         }
-                        if (names.Length > maximum) rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location, DiagnosticReadStatus.LimitReached, "此键值数量超过来源限额。", machine ? null : sid));
+                        if (names.Length > maximum) rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location, DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadRun.04"), machine ? null : sid));
                     }
                 }
                 catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-                { rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location, RelatedComponentDiscovery.StatusFor(ex), ex.Message, machine ? null : sid)); }
+                { rows.Add(SourceState("Run", machine ? "LocalMachine" : "CurrentUser", location, RelatedComponentDiscovery.StatusFor(ex), MessageExceptions.Describe(ex), machine ? null : sid)); }
                 foreach (RelatedSourceRead row in rows) yield return row;
             }
     }
 
     private IEnumerable<RelatedSourceRead> ReadStartup(string root, string? sid, int maximum, CancellationToken token)
     {
-        List<string> notes = [];
+        List<DiscoveryReadNote> notes = [];
         List<string> files = [];
         RelatedSourceRead? unavailable = null;
         try
@@ -551,7 +637,7 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
             FileAttributes attributes = File.GetAttributes(root);
             if ((attributes & FileAttributes.ReparsePoint) != 0 || !ContentDiscovery.IsLocalSafePath(root))
                 unavailable = SourceState("StartupDirectory", sid is null ? "LocalMachine" : "CurrentUser", root,
-                    DiagnosticReadStatus.NotChecked, "启动目录是重解析点或无法验证为安全本地路径。", sid);
+                    DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadStartup.01"), sid);
             else
             {
                 string[] entries = Directory.EnumerateFileSystemEntries(root).Take(maximum < int.MaxValue ? maximum + 1 : maximum).ToArray();
@@ -561,17 +647,17 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                     try
                     {
                         FileAttributes item = File.GetAttributes(entry);
-                        if ((item & FileAttributes.ReparsePoint) != 0) { notes.Add("启动目录条目为重解析点，未读取：" + entry); continue; }
+                        if ((item & FileAttributes.ReparsePoint) != 0) { notes.Add(new(DiagnosticReadStatus.NotChecked, ReasonCodes.UnsafePath, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadStartup.02") + entry)); continue; }
                         if ((item & FileAttributes.Directory) == 0) files.Add(entry);
                     }
                     catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-                    { notes.Add("启动目录条目未完整读取（" + RelatedComponentDiscovery.StatusFor(ex) + "）：" + entry + "；" + ex.Message); }
+                    { notes.Add(new(RelatedComponentDiscovery.StatusFor(ex), ReasonCodes.ForFailureType(ex.GetType().Name), MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadStartup.03") + entry + "；" + MessageExceptions.Describe(ex))); }
                 }
-                if (entries.Length > maximum) notes.Add("启动目录条目达到数量上限，其余未读取。");
+                if (entries.Length > maximum) notes.Add(new(DiagnosticReadStatus.LimitReached, ReasonCodes.ResourceLimit, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadStartup.04")));
             }
         }
         catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-        { unavailable = SourceState("StartupDirectory", sid is null ? "LocalMachine" : "CurrentUser", root, RelatedComponentDiscovery.StatusFor(ex), ex.Message, sid); }
+        { unavailable = SourceState("StartupDirectory", sid is null ? "LocalMachine" : "CurrentUser", root, RelatedComponentDiscovery.StatusFor(ex), MessageExceptions.Describe(ex), sid); }
         if (unavailable is not null) yield return unavailable;
         foreach (string file in files)
         {
@@ -586,25 +672,25 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                 RawCommand = file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ? "" : "\"" + file + "\"",
                 ExecutablePath = file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ? null : file,
                 ShortcutPath = file.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) ? file : null,
-                Detail = "启动目录中的精确文件；快捷方式只解析本地字节，不启动目标或进行 Shell 解析。"
+                DetailText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadStartup.05")
             };
         }
-        foreach (string note in notes) yield return SourceState("StartupDirectory", sid is null ? "LocalMachine" : "CurrentUser", root,
-            note.Contains("上限", StringComparison.Ordinal) ? DiagnosticReadStatus.LimitReached :
-                note.Contains("AccessDenied", StringComparison.Ordinal) ? DiagnosticReadStatus.AccessDenied : DiagnosticReadStatus.NotChecked, note, sid);
+        foreach (DiscoveryReadNote note in notes) yield return SourceState("StartupDirectory", sid is null ? "LocalMachine" : "CurrentUser", root,
+            note.Status, note.DetailText, sid);
     }
 
     private IEnumerable<RelatedSourceRead> ReadTasks(RelatedComponentLimits limits, Func<long> remainingSnapshotBytes, CancellationToken token)
     {
         string root = RelatedTaskSnapshotReader.TaskRoot;
-        List<string> notes = [];
-        foreach (string path in ContentDiscovery.Files(root, notes, limits.MaximumSources, 8, token))
+        MessageTextCollection notes = [];
+        List<DiscoveryReadNote> readNotes = [];
+        foreach (string path in ContentDiscovery.Files(root, notes, limits.MaximumSources, 8, token, readNotes))
         {
             token.ThrowIfCancellationRequested();
             int budget = (int)Math.Max(0, Math.Min(limits.MaximumScriptBytes, remainingSnapshotBytes()));
             RelatedFileRead read = ReadFile(path, budget, token);
             if (read.Status != DiagnosticReadStatus.Complete)
-            { yield return SourceState("Task", "LocalMachine", path, read.Status, read.Detail) with { SnapshotBytesRead = read.BytesRead }; continue; }
+            { yield return SourceState("Task", "LocalMachine", path, read.Status, read.DetailText) with { SnapshotBytesRead = read.BytesRead }; continue; }
             List<RelatedSourceRead> rows = [];
             try
             {
@@ -617,19 +703,19 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                     MaxCharactersFromEntities = 1024
                 });
                 XDocument document = XDocument.Load(reader);
-                if (document.Root?.Name.LocalName != "Task") throw new InvalidDataException("来源不是 Task XML。");
+                if (document.Root?.Name.LocalName != "Task") throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadTasks.01"), sourceText => new InvalidDataException(sourceText));
                 string? principal = document.Descendants().FirstOrDefault(e => e.Name.LocalName == "UserId")?.Value;
                 XElement[] actions = document.Root.Elements().Where(e => e.Name.LocalName == "Actions").SelectMany(e => e.Elements()).ToArray();
                 int index = 0;
                 foreach (XElement action in actions.Take(32))
                 {
                     if (action.Name.LocalName != "Exec")
-                    { rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.NotChecked, "任务含非 Exec 动作，未调用 COM 或执行动作。", principal)); continue; }
+                    { rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadTasks.02"), principal)); continue; }
                     string[] commands = action.Elements().Where(e => e.Name.LocalName == "Command").Select(e => e.Value).ToArray();
                     string[] arguments = action.Elements().Where(e => e.Name.LocalName == "Arguments").Select(e => e.Value).ToArray();
                     string[] working = action.Elements().Where(e => e.Name.LocalName == "WorkingDirectory").Select(e => e.Value).ToArray();
                     if (commands.Length != 1 || arguments.Length > 1 || working.Length > 1 || commands.Concat(arguments).Concat(working).Any(s => s.Length > RelatedCommandResolver.MaximumCommandCharacters))
-                    { rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.NotChecked, "任务 Exec 字段重复、缺失或超过长度上限。", principal)); continue; }
+                    { rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadTasks.03"), principal)); continue; }
                     rows.Add(new()
                     {
                         Kind = "Task",
@@ -640,19 +726,19 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                         Arguments = arguments.FirstOrDefault(),
                         WorkingDirectory = working.FirstOrDefault(),
                         RawCommand = "\"" + commands[0] + "\"" + (arguments.Length == 0 ? "" : " " + arguments[0]),
-                        Detail = "只读解析任务 XML 中 Command、Arguments 与 WorkingDirectory；没有替换为扫描进程工作目录。"
+                        DetailText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadTasks.04")
                     });
                 }
-                if (actions.Length > 32) rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.LimitReached, "单任务动作超过 32 个上限。", principal));
+                if (actions.Length > 32) rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadTasks.05"), principal));
             }
             catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-            { rows.Add(SourceState("Task", "LocalMachine", path, RelatedComponentDiscovery.StatusFor(ex), ex.Message)); }
-            if (rows.Count == 0) rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.Complete, "任务没有 Exec 动作。"));
+            { rows.Add(SourceState("Task", "LocalMachine", path, RelatedComponentDiscovery.StatusFor(ex), MessageExceptions.Describe(ex))); }
+            if (rows.Count == 0) rows.Add(SourceState("Task", "LocalMachine", path, DiagnosticReadStatus.Complete, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadTasks.06")));
             rows[0] = rows[0] with { SnapshotBytesRead = Math.Max(read.BytesRead, read.Bytes.Length) };
             foreach (RelatedSourceRead row in rows) yield return row;
         }
-        foreach (string note in notes) yield return SourceState("TaskEnumeration", "LocalMachine", root,
-            note.Contains("上限", StringComparison.Ordinal) ? DiagnosticReadStatus.LimitReached : DiagnosticReadStatus.NotChecked, note);
+        foreach (DiscoveryReadNote note in readNotes) yield return SourceState("TaskEnumeration", "LocalMachine", root,
+            note.Status, note.DetailText);
     }
 
     private static IEnumerable<RelatedSourceRead> ReadServices(int maximum, CancellationToken token)
@@ -662,7 +748,7 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
         try
         {
             using RegistryKey? root = Registry.LocalMachine.OpenSubKey(rootPath, writable: false);
-            if (root is null) rows.Add(SourceState("Service", "LocalMachine", rootPath, DiagnosticReadStatus.NotPresent, "服务来源键不存在。"));
+            if (root is null) rows.Add(SourceState("Service", "LocalMachine", rootPath, DiagnosticReadStatus.NotPresent, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadServices.01")));
             else
             {
                 string[] names = root.GetSubKeyNames();
@@ -673,7 +759,7 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                     try
                     {
                         using RegistryKey? key = root.OpenSubKey(name, writable: false);
-                        if (key is null) { rows.Add(SourceState("Service", "LocalMachine", location, DiagnosticReadStatus.NotPresent, "服务键在读取时不存在。")); continue; }
+                        if (key is null) { rows.Add(SourceState("Service", "LocalMachine", location, DiagnosticReadStatus.NotPresent, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadServices.02"))); continue; }
                         object? image = key.GetValue("ImagePath", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
                         if (image is string command && command.Length <= RelatedCommandResolver.MaximumCommandCharacters)
                             rows.Add(new()
@@ -682,9 +768,9 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                                 Scope = "LocalMachine",
                                 Location = location + "\\ImagePath",
                                 RawCommand = command,
-                                Detail = "只读保存服务 ImagePath；未猜测服务工作目录或将服务视为已启动。"
+                                DetailText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadServices.03")
                             });
-                        else if (image is not null) rows.Add(SourceState("Service", "LocalMachine", location + "\\ImagePath", DiagnosticReadStatus.NotChecked, "ImagePath 不是有界字符串。"));
+                        else if (image is not null) rows.Add(SourceState("Service", "LocalMachine", location + "\\ImagePath", DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadServices.04")));
                         using RegistryKey? parameters = key.OpenSubKey("Parameters", writable: false);
                         object? dll = parameters?.GetValue("ServiceDll", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
                         if (dll is string module && module.Length <= RelatedCommandResolver.MaximumCommandCharacters)
@@ -695,17 +781,17 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
                                 Location = location + "\\Parameters\\ServiceDll",
                                 RawCommand = "\"" + module + "\"",
                                 ExecutablePath = module,
-                                Detail = "只读保存服务 DLL 精确配置；不证明当前实例已加载或写入任何配置。"
+                                DetailText = MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadServices.05")
                             });
                     }
                     catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-                    { rows.Add(SourceState("Service", "LocalMachine", location, RelatedComponentDiscovery.StatusFor(ex), ex.Message)); }
+                    { rows.Add(SourceState("Service", "LocalMachine", location, RelatedComponentDiscovery.StatusFor(ex), MessageExceptions.Describe(ex))); }
                 }
-                if (names.Length > maximum) rows.Add(SourceState("ServiceEnumeration", "LocalMachine", rootPath, DiagnosticReadStatus.LimitReached, "服务数量超过来源限额。"));
+                if (names.Length > maximum) rows.Add(SourceState("ServiceEnumeration", "LocalMachine", rootPath, DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadServices.06")));
             }
         }
         catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-        { rows.Add(SourceState("ServiceEnumeration", "LocalMachine", rootPath, RelatedComponentDiscovery.StatusFor(ex), ex.Message)); }
+        { rows.Add(SourceState("ServiceEnumeration", "LocalMachine", rootPath, RelatedComponentDiscovery.StatusFor(ex), MessageExceptions.Describe(ex))); }
         foreach (RelatedSourceRead row in rows) yield return row;
     }
 
@@ -723,12 +809,12 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
     public RelatedModuleRead ReadModules(RelatedProcessRead expected, int maximumModules, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (maximumModules <= 0) return new(DiagnosticReadStatus.LimitReached, "单宿主模块限额为零，未开始枚举。", false, []);
+        if (maximumModules <= 0) return new(DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadModules.01"), false, []);
         RelatedProcessRead before = ReadProcess(expected.ProcessId);
-        if (!SameProcess(expected, before)) return new(DiagnosticReadStatus.NotChecked, "模块读取前 PID、启动时间或映像身份已变化或无法核验。", false, []);
+        if (!SameProcess(expected, before)) return new(DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadModules.02"), false, []);
         List<string> paths = [];
         DiagnosticReadStatus status = DiagnosticReadStatus.Complete;
-        string detail = "只读枚举限定宿主的模块路径；没有停止进程、读取模块内存或核验模块内容。";
+        MessageText detail = MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadModules.03");
         try
         {
             using Process process = Process.GetProcessById(expected.ProcessId);
@@ -737,26 +823,26 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
             {
                 token.ThrowIfCancellationRequested();
                 if (++visited > maximumMetadata)
-                { status = DiagnosticReadStatus.LimitReached; detail += $" 模块路径元数据达到 {maximumMetadata} 项上限。"; break; }
+                { status = DiagnosticReadStatus.LimitReached; detail += MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadModules.04", (maximumMetadata)); break; }
                 string path = module.FileName;
                 if (path.Equals(expected.ImagePath, StringComparison.OrdinalIgnoreCase) || RelatedArtifactReader.IsProtected(path)) continue;
                 if (paths.Count >= maximumModules)
-                { status = DiagnosticReadStatus.LimitReached; detail += " 模块枚举达到单宿主上限。"; break; }
+                { status = DiagnosticReadStatus.LimitReached; detail += MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadModules.05"); break; }
                 paths.Add(path);
             }
-            detail += $" 排除 Windows/本工具模块后最多保留 {maximumModules} 条组件路径；最多查看 {maximumMetadata} 条模块路径元数据，未对系统 DLL 进行内容扫描。";
+            detail += MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadModules.06", (maximumModules), (maximumMetadata));
         }
         catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-        { status = RelatedComponentDiscovery.StatusFor(ex); detail += " " + ex.Message; }
+        { status = RelatedComponentDiscovery.StatusFor(ex); detail += " " + MessageExceptions.Describe(ex); }
         RelatedProcessRead after = ReadProcess(expected.ProcessId);
         bool matches = SameProcess(expected, after);
-        if (!matches) { status = DiagnosticReadStatus.NotChecked; detail += " 模块读取后宿主身份变化，未建立当前加载关系。"; }
+        if (!matches) { status = DiagnosticReadStatus.NotChecked; detail += MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadModules.07"); }
         return new(status, detail, matches, paths);
     }
 
     public RelatedPathRead ProbePath(string path)
     {
-        if (!ContentDiscovery.IsLocalSafePath(path)) return new(DiagnosticReadStatus.NotChecked, "网络路径、重解析点或路径安全属性未验证。", false, false, false, false);
+        if (!ContentDiscovery.IsLocalSafePath(path)) return new(DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ProbePath.01"), false, false, false, false);
         bool protectedPath = RelatedArtifactReader.IsProtected(path);
         bool user = new[] { Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.GetTempPath() }
             .Any(root => !string.IsNullOrWhiteSpace(root) && ContentDiscovery.IsWithin(path, root));
@@ -764,38 +850,38 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
         {
             FileAttributes attributes = File.GetAttributes(path);
             bool directory = (attributes & FileAttributes.Directory) != 0;
-            return new(DiagnosticReadStatus.Complete, "只读取得本地文件属性；用户目录位置不等于已验证 ACL 可写性。", !directory, directory, user, protectedPath);
+            return new(DiagnosticReadStatus.Complete, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ProbePath.02"), !directory, directory, user, protectedPath);
         }
         catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-        { return new(RelatedComponentDiscovery.StatusFor(ex), ex.Message, false, false, user, protectedPath); }
+        { return new(RelatedComponentDiscovery.StatusFor(ex), MessageExceptions.Describe(ex), false, false, user, protectedPath); }
     }
 
     public RelatedFileRead ReadFile(string path, int maximumBytes, CancellationToken token)
     {
-        if (maximumBytes <= 0) return new(DiagnosticReadStatus.LimitReached, "没有剩余元数据读取预算。", []);
+        if (maximumBytes <= 0) return new(DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadFile.01"), []);
         int bytesRead = 0;
         try
         {
             token.ThrowIfCancellationRequested();
             using FileStream stream = RelatedArtifactReader.Open(path);
-            if (stream.Length > maximumBytes) return new(DiagnosticReadStatus.LimitReached, "文件超过单项或剩余字节预算，未读取正文。", []);
+            if (stream.Length > maximumBytes) return new(DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadFile.02"), []);
             byte[] bytes = new byte[checked((int)stream.Length)];
             while (bytesRead < bytes.Length)
             {
                 token.ThrowIfCancellationRequested();
                 int read = stream.Read(bytes, bytesRead, Math.Min(64 * 1024, bytes.Length - bytesRead));
-                if (read == 0) throw new EndOfStreamException("文件在读取过程中长度变化。");
+                if (read == 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadFile.03"), sourceText => new EndOfStreamException(sourceText));
                 bytesRead += read;
             }
             RelatedArtifactReader.ValidatePath(stream.SafeFileHandle, Path.GetFullPath(path));
-            return new(DiagnosticReadStatus.Complete, "通过只读、拒绝写入/删除的句柄取得字节快照并核对最终路径。", bytes, bytesRead);
+            return new(DiagnosticReadStatus.Complete, MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadFile.04"), bytes, bytesRead);
         }
         catch (Exception ex) when (RelatedComponentDiscovery.IsReadException(ex))
-        { return new(RelatedComponentDiscovery.StatusFor(ex), ex is Win32Exception { NativeErrorCode: 32 or 33 } ? "文件被占用，未强行解锁或停止进程。" : ex.Message, [], bytesRead); }
+        { return new(RelatedComponentDiscovery.StatusFor(ex), ex is Win32Exception { NativeErrorCode: 32 or 33 } ? MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadFile.05") : MessageExceptions.Describe(ex), [], bytesRead); }
     }
 
-    private static RelatedSourceRead SourceState(string kind, string scope, string location, DiagnosticReadStatus status, string detail, string? sid = null) =>
-        new() { Kind = kind, Scope = scope, Location = location, Status = status, Detail = detail, UserSid = sid };
+    private static RelatedSourceRead SourceState(string kind, string scope, string location, DiagnosticReadStatus status, MessageText detail, string? sid = null) =>
+        new() { Kind = kind, Scope = scope, Location = location, Status = status, DetailText = detail, UserSid = sid };
     private static bool SameProcess(RelatedProcessRead expected, RelatedProcessRead actual) => actual.Status == DiagnosticReadStatus.Complete &&
         expected.ProcessId == actual.ProcessId && expected.StartedAtUtc is not null && expected.StartedAtUtc == actual.StartedAtUtc &&
         expected.ImagePath.Equals(actual.ImagePath, StringComparison.OrdinalIgnoreCase);
@@ -806,21 +892,21 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
         if (handle.IsInvalid)
         {
             Win32Exception ex = new(Marshal.GetLastWin32Error());
-            return new(pid, null, "", RelatedComponentDiscovery.StatusFor(ex), "无法只读取得进程身份：" + ex.Message);
+            return new(pid, null, "", RelatedComponentDiscovery.StatusFor(ex), MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadProcess.01") + MessageExceptions.Describe(ex));
         }
         StringBuilder image = new(RelatedCommandResolver.MaximumCommandCharacters);
         uint length = (uint)image.Capacity;
         if (!QueryFullProcessImageName(handle, 0, image, ref length) || !GetProcessTimes(handle, out long created, out _, out _, out _))
         {
             Win32Exception ex = new(Marshal.GetLastWin32Error());
-            return new(pid, null, image.ToString(), RelatedComponentDiscovery.StatusFor(ex), "进程映像或启动时间未取得：" + ex.Message);
+            return new(pid, null, image.ToString(), RelatedComponentDiscovery.StatusFor(ex), MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadProcess.02") + MessageExceptions.Describe(ex));
         }
         try
         {
             return new(pid, DateTimeOffset.FromFileTime(created).ToUniversalTime(), image.ToString(), DiagnosticReadStatus.Complete,
-            "已取得 PID、启动时间和映像路径；命令行/工作目录没有公开直接读取结果，保留未知，未读取 PEB 或猜测偏移。");
+            MessageText.Create("Backend.Core.RelatedComponentDiscovery.ReadProcess.03"));
         }
-        catch (ArgumentOutOfRangeException ex) { return new(pid, null, image.ToString(), DiagnosticReadStatus.Failed, ex.Message); }
+        catch (ArgumentOutOfRangeException ex) { return new(pid, null, image.ToString(), DiagnosticReadStatus.Failed, MessageExceptions.Describe(ex)); }
     }
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);

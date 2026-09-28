@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Windows;
 using SteamSentinel.App.Dialogs;
 using SteamSentinel.App.Services;
@@ -19,22 +20,22 @@ public partial class MainWindow
         if (_busy || _lastReport is null) return;
         if (_reportNeedsRefresh)
         {
-            MessageBox.Show(this, "请先重新扫描，再核对新的处理方案，不能重复提交旧结果。", "请先重新扫描", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.01"), DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.02"), MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (!await EnsureRemediationAvailableAsync()) return;
         Finding[] selected = Findings.Where(i => i.IsSelected && i.CanSelect).Select(i => i.Finding).ToArray();
-        if (selected.Length == 0) { MessageBox.Show(this, "请先勾选至少一项可处置发现。", "SteamSentinel"); return; }
+        if (selected.Length == 0) { MessageBox.Show(this, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.03"), "SteamSentinel"); return; }
         if (selected.Any(f => f.Category == FindingCategory.Steam) && IsSteamRunning())
-        { MessageBox.Show(this, "所选动作包含 Steam 恢复，请先从 Steam 菜单完整退出客户端，再生成处置方案。", "请先退出 Steam"); return; }
+        { MessageBox.Show(this, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.04"), DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.05")); return; }
         ScanReport original = _lastReport;
-        bool amsi = AmsiCheckBox.IsChecked == true, block = DomainBlockCheckBox.IsChecked == true;
+        bool amsi = ScanEnhancements.AmsiAvailable && AmsiCheckBox.IsChecked == true, block = DomainBlockCheckBox.IsChecked == true;
         try
         {
-            SetBusy(true); ShowActivity(ActivityPhase.Preparing, "按文件去重核验，并按关联组准备批次，尚未修改文件，可取消。");
+            SetBusy(true); ShowActivity(ActivityPhase.Preparing, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.06"));
             _scanCancellation = new(); CancelScanButton.IsEnabled = true;
             using DispatcherProgress<ScanProgress> progress = CreateUiProgress(p =>
-            { ProgressStageText.Text = p.Stage; ProgressItemText.Text = p.CurrentItem; HeaderDetailText.Text = p.Message; });
+            { ProgressStageText.Text = p.DisplayStage; ProgressItemText.Text = p.DisplayCurrentItem; HeaderDetailText.Text = p.DisplayDetail; });
             async Task<ScanReport> Inspect(IReadOnlyList<string> paths, CancellationToken token)
             {
                 try
@@ -63,17 +64,17 @@ public partial class MainWindow
             UpdateBatchResults();
             if (batch.Plans.Count == 0)
             {
-                HeaderStatusText.Text = "所选目标尚未处置"; HeaderDetailText.Text = batch.Summary;
-                MessageBox.Show(this, batch.Summary + "\n请查看“处置结果”中的逐项原因，没有执行处置。", "没有可执行方案", MessageBoxButton.OK, MessageBoxImage.Warning);
+                HeaderStatusText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.07"); HeaderDetailText.Text = batch.Summary;
+                MessageBox.Show(this, batch.Summary + DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.08"), DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.09"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             ShowActivity(ActivityPhase.Confirmation);
             RemediationPreviewWindow preview = new(batch) { Owner = this };
-            if (preview.ShowDialog() != true) { batch.Notes.Add("用户未确认，没有执行任何批次。"); return; }
+            if (preview.ShowDialog() != true) { batch.AddNote(MessageText.Create("Remediation.ExecuteSelectedRemediationAsync.10")); return; }
             await BeginPersistentCaseAsync(batch, original);
             _scanCancellation.Dispose(); _scanCancellation = null; CancelScanButton.IsEnabled = false;
             _operationCommitted = true; _reportNeedsRefresh = true;
-            ShowActivity(ActivityPhase.Applying, "按关联组依次执行，出现 Windows 授权时请确认，遇到失败或身份变化会暂停后续批次。");
+            ShowActivity(ActivityPhase.Applying, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.11"));
             await Task.Run(() => RemediationBatchPlanner.ExecuteAsync(batch, ExecuteRecordedPlanAsync, progress));
             await _caseStore.SaveAsync(_persistedCase!);
             DisplayCaseRecord(_persistedCase!);
@@ -82,37 +83,37 @@ public partial class MainWindow
             UpdateBatchResults();
             if (_remediationClient.HasUnresolvedExecution)
             {
-                HeaderStatusText.Text = "管理员操作尚未返回确定结果";
-                HeaderDetailText.Text = "已暂停后续处置与复查，可导出记录。点击重新检查可读取迟到的结果。";
+                HeaderStatusText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.12");
+                HeaderDetailText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.13");
                 return;
             }
             await RunBatchFollowUpAsync(batch, original);
             if (_closeWhenIdle) return;
-            HeaderStatusText.Text = batch.Interruption is not null || batch.Targets.Any(t => t.Status != "已完成") ? "处置尚未全部完成" : "所选动作已完成，请查看复查结果";
+            HeaderStatusText.Text = batch.InterruptionReasonCode is not null || batch.Targets.Any(t => t.State != RemediationTargetState.Completed) ? DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.14") : DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.15");
             HeaderDetailText.Text = batch.Summary;
-            string details = batch.Summary + "\n" + (batch.Interruption ?? "") + "\n" + BatchFollowUpText.Text;
+            string details = batch.Summary + "\n" + batch.InterruptionText.Display + "\n" + BatchFollowUpText.Text;
             if (selected.Any(f => f.Category == FindingCategory.Steam) && batch.Results.SelectMany(r => r.Actions).Any(a => a.Success &&
                 a.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory))
-                details += "\nSteam 恢复文件已准备，请从原快捷方式启动官方客户端补全组件，必要时使用官方安装包覆盖安装。";
-            details += "\n\n请重启后复扫。仍在订阅的工坊项目可能重新下载，涉及窃密时请从可信设备处理账户安全。";
+                details += DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.16");
+            details += DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.17");
             HideActivity();
             new TextDetailsWindow(HeaderStatusText.Text, details) { Owner = this }.ShowDialog();
-            FooterText.Text = "逐项结果在“处置结果”，导出完整记录包可保留所有批次、原扫描范围复查及系统复查。";
+            FooterText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.18");
             await RefreshQuarantineItemsAsync();
         }
-        catch (OperationCanceledException) { HeaderStatusText.Text = "方案准备已取消，未开始处置"; }
+        catch (OperationCanceledException) { HeaderStatusText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.19"); }
         catch (Exception ex)
         {
             AppErrorLog.Write("BatchRemediation", ex);
-            HeaderStatusText.Text = _operationCommitted ? "操作未全部完成，请导出记录" : "处置方案未完成";
-            if (!_closeWhenIdle) MessageBox.Show(this, ex.Message, HeaderStatusText.Text, MessageBoxButton.OK, MessageBoxImage.Warning);
+            HeaderStatusText.Text = _operationCommitted ? DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.20") : DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.21");
+            if (!_closeWhenIdle) MessageBox.Show(this, SteamSentinel.Core.Reporting.MessageExceptions.Display(ex), HeaderStatusText.Text, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
             if (_persistedCase is { } savedCase && savedCase.BatchSession == _caseBatch)
             {
                 try { await _caseStore.SaveAsync(savedCase); await RefreshCaseRecordsAsync(); }
-                catch (Exception ex) { AppErrorLog.Write("SaveCaseAfterRemediation", ex); FooterText.Text = "病例保存未完成，请导出当前记录：" + ex.Message; }
+                catch (Exception ex) { AppErrorLog.Write("SaveCaseAfterRemediation", ex); FooterText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.22") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex); }
             }
             UpdateBatchResults(); _operationCommitted = false;
             _scanCancellation?.Dispose(); _scanCancellation = null; SetBusy(false);
@@ -124,7 +125,7 @@ public partial class MainWindow
         if (_caseBatch is null) return;
         BatchSummaryText.Text = _caseBatch.Summary;
         BatchResultsGrid.ItemsSource = null; BatchResultsGrid.ItemsSource = _caseBatch.Targets;
-        BatchResultsTab.Header = $"处置结果（{_caseBatch.Targets.Count}）";
+        BatchResultsTab.Header = DisplayText.Format("Remediation.UpdateBatchResults.01", (_caseBatch.Targets.Count));
     }
 
     internal async Task<ScanReport> RunOriginalContentCheckAsync(ScanOptions options, CancellationToken token,
@@ -133,7 +134,7 @@ public partial class MainWindow
         Dispatcher.VerifyAccess();
         ShowActivity(ActivityPhase.ContentFollowUp);
         using DispatcherProgress<ScanProgress> progress = CreateUiProgress(p =>
-        { ProgressStageText.Text = "原扫描范围复查 · " + p.Stage; ProgressItemText.Text = p.CurrentItem; });
+        { ProgressStageText.Text = DisplayText.Get("Remediation.RunOriginalContentCheckAsync.01") + p.DisplayStage; ProgressItemText.Text = p.DisplayCurrentItem; });
         runner ??= (settings, reporter, cancellation) => _workerClient.RunAsync(settings, RequestPasswordAsync, reporter, cancellation);
         return await Task.Run(() => runner(options, progress, token), token);
     }
@@ -150,7 +151,7 @@ public partial class MainWindow
             try
             {
                 _caseContentFollowUp = await RunOriginalContentCheckAsync(settings, _scanCancellation.Token);
-                _caseContentFollowUp.ScopeNotes.Add("处置后原扫描范围复查，沿用原范围、模式和安全限制，不自动进行第二轮处置。");
+                _caseContentFollowUp.AddScopeNote(MessageText.Create("Remediation.RunBatchFollowUpAsync.01"));
                 _lastReport = _caseContentFollowUp; PopulateFindings(_lastReport);
                 messages.Add(ContentFollowUpSummary(_caseContentFollowUp));
             }
@@ -158,18 +159,18 @@ public partial class MainWindow
             {
                 _caseContentFollowUp = ScanFailureReports.PreserveSystemResults(null, settings.Mode, settings.CustomRoots, _coordinator.Rules.Version, ex, ex is OperationCanceledException);
                 _lastReport = _caseContentFollowUp; PopulateFindings(_lastReport);
-                messages.Add("原扫描范围复查未完成或已取消，不能据此判断已清除，可稍后手动复扫。" + ex.Message);
+                messages.Add(DisplayText.Get("Remediation.RunBatchFollowUpAsync.02") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex));
             }
             finally { _scanCancellation.Dispose(); _scanCancellation = null; CancelScanButton.IsEnabled = false; }
-            if (_closeWhenIdle) { BatchFollowUpText.Text = string.Join("\n", messages) + "\n系统与 Steam 复查未进行，窗口正在关闭。"; return; }
+            if (_closeWhenIdle) { BatchFollowUpText.Text = string.Join("\n", messages) + DisplayText.Get("Remediation.RunBatchFollowUpAsync.03"); return; }
         }
-        else messages.Add("原扫描范围：无法恢复原内容扫描设置，本次未复查原目录，请手动重新扫描。");
+        else messages.Add(DisplayText.Get("Remediation.RunBatchFollowUpAsync.04"));
         _operationCommitted = true;
         try
         {
             using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(2));
             _caseFollowUp = await RunPostRemediationCheckAsync(timeout.Token);
-            _caseFollowUp.ScopeNotes.Add("单独的系统与 Steam 状态复查，不替代原目录内容复查。系统防护提示不表示样本重新出现。");
+            _caseFollowUp.AddScopeNote(MessageText.Create("Remediation.RunBatchFollowUpAsync.05"));
             messages.Add(SystemFollowUpSummary(_caseFollowUp));
             // Never silently replace a content result with the unrelated system findings.
             if (_caseContentFollowUp is null) { _lastReport = _caseFollowUp; PopulateFindings(_lastReport); }
@@ -177,20 +178,20 @@ public partial class MainWindow
         catch (Exception ex)
         {
             AppErrorLog.Write("PostRemediationCheck", ex);
-            _caseFollowUp = new() { Coverage = ScanCoverage.Partial, CompletedAtUtc = DateTimeOffset.UtcNow };
-            _caseFollowUp.CoverageNotes.Add("系统与 Steam 复查未完成：" + ex.Message);
-            messages.Add("系统与 Steam 复查未完成，不能判定安全。" + ex.Message);
+            _caseFollowUp = new() { Coverage = ScanCoverage.Partial, CompletedAtUtc = DateTimeOffset.UtcNow, StatusSchemaVersion = ScanExecution.SchemaVersion, ExecutionState = ScanExecutionState.Failed, ExecutionReasonCode = ReasonCodes.ComponentFailed };
+            _caseFollowUp.AddCoverageNote(MessageText.Create("Remediation.RunBatchFollowUpAsync.06") + MessageExceptions.Describe(ex));
+            messages.Add(DisplayText.Get("Remediation.RunBatchFollowUpAsync.07") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex));
         }
         BatchFollowUpText.Text = string.Join("\n", messages);
         ResultTabs.SelectedItem = BatchResultsTab;
     }
 
-    internal static string ContentFollowUpSummary(ScanReport report) => "原扫描范围：" +
-        (report.Findings.Any(f => f.CanRemediate || f.IsKnownMalware) ? "仍有可处置的项目或已知威胁，请查看“风险与提示”。" : "在已完成的内容检查中，未发现可处置的项目或已知威胁。") +
-        (report.Coverage != ScanCoverage.Complete ? "仍有未检查内容，不代表全部清除。" : "结论仅适用于本次已完成的检查范围，不代表电脑绝对安全。");
-    internal static string SystemFollowUpSummary(ScanReport report) => "系统与 Steam：" +
+    internal static string ContentFollowUpSummary(ScanReport report) => DisplayText.Get("Remediation.ContentFollowUpSummary.01") +
+        (report.Findings.Any(f => f.CanRemediate || f.IsKnownMalware) ? DisplayText.Get("Remediation.ContentFollowUpSummary.02") : DisplayText.Get("Remediation.ContentFollowUpSummary.03")) +
+        (report.Coverage != ScanCoverage.Complete ? DisplayText.Get("Remediation.ContentFollowUpSummary.04") : DisplayText.Get("Remediation.ContentFollowUpSummary.05"));
+    internal static string SystemFollowUpSummary(ScanReport report) => DisplayText.Get("Remediation.SystemFollowUpSummary.01") +
         (report.Findings.Any(f => f.IsKnownMalware && f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam)
-            ? "仍有活动威胁或篡改证据，请导出记录进一步处理。" : "在已完成的检查中，未发现已知活动威胁。") +
-        (report.Findings.Any(f => f.RuleId == "SECURITY-CONTROLS-DISABLED") ? "Windows 安全防护未完全开启，这是配置提示，不是样本复活。" : "") +
-        (report.Coverage != ScanCoverage.Complete ? "仍有未完成的系统或 Steam 检查，请查看报告中的原因。" : "");
+            ? DisplayText.Get("Remediation.SystemFollowUpSummary.02") : DisplayText.Get("Remediation.SystemFollowUpSummary.03")) +
+        (report.Findings.Any(f => f.RuleId == "SECURITY-CONTROLS-DISABLED") ? DisplayText.Get("Remediation.SystemFollowUpSummary.04") : "") +
+        (report.Coverage != ScanCoverage.Complete ? DisplayText.Get("Remediation.SystemFollowUpSummary.05") : "");
 }

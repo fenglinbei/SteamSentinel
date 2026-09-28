@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
@@ -41,11 +42,11 @@ public sealed partial class RelatedComponentPipeline
         try { sid = _sid(); } catch (Exception ex) when (ex is not OutOfMemoryException) { sid = string.Empty; }
         RelatedComponentDiagnosticReport diagnostic = new() { TargetUserSid = sid, AppliedLimits = limits };
         report.RelatedComponentDiagnostics = diagnostic;
-        progress?.Report(new("组件关联", "启动入口与已加载模块", 0, null, "只读收集精确候选，未知组件交由受限扫描组件检查"));
+        progress?.Report(new(MessageText.Create("Backend.Core.RelatedComponentPipeline.CollectInitial.01"), MessageText.Create("Backend.Core.RelatedComponentPipeline.CollectInitial.02"), 0, null, MessageText.Create("Backend.Core.RelatedComponentPipeline.CollectInitial.03")));
         Collect(report, options, diagnostic, limits, token);
         foreach (RelatedComponentCandidate candidate in diagnostic.Candidates.Where(c => IsSafeCandidate(c.Path, options)))
             if (!report.CandidateRoots.Contains(candidate.Path, StringComparer.OrdinalIgnoreCase)) report.CandidateRoots.Add(candidate.Path);
-        report.ScopeNotes.Add("组件关联：启动命令、宿主及已加载模块为只读观察；同目录、文件名、有效签名或同机代理不授权隔离，也不能定位写入者。");
+        report.AddScopeNote(MessageText.Create("Backend.Core.RelatedComponentPipeline.CollectInitial.04"));
         MarkIncomplete(report, diagnostic);
     }
 
@@ -56,7 +57,7 @@ public sealed partial class RelatedComponentPipeline
         limits ??= report.RelatedComponentDiagnostics?.AppliedLimits ?? new();
         if (limits.MaximumRounds is < 0 or > 2 || limits.MaximumCandidates is < 0 or > 128 ||
             limits.MaximumTotalBytes < 0 || limits.MaximumFileBytes < 0 || limits.MaximumDuration < TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(limits), "组件补查最多两轮、128个候选，字节和时间限额不得为负数。");
+            throw SteamSentinel.Core.Reporting.MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.01"), sourceText => new ArgumentOutOfRangeException(nameof(limits), sourceText));
         if (report.RelatedComponentDiagnostics is null) CollectInitial(report, originalContentOptions, progress, token, limits);
         RelatedComponentDiagnosticReport diagnostic = report.RelatedComponentDiagnostics!;
         ScanOptions? originalSettings = report.ContentScanSettings;
@@ -69,9 +70,9 @@ public sealed partial class RelatedComponentPipeline
             if (summary is null) continue;
             visited.Add(candidate.Path);
             candidate.ContentStatus = summary.Coverage == ScanCoverage.Complete ? DiagnosticReadStatus.Complete : DiagnosticReadStatus.NotChecked;
-            candidate.ContentDetail = summary.Coverage == ScanCoverage.Complete
-                ? "此精确文件已在原内容阶段完成支持范围内的检查；没有命中不等于未知威胁已排除。"
-                : "原内容阶段未完成此精确目标，不把未命中视为排除。";
+            candidate.ContentDetailText = summary.Coverage == ScanCoverage.Complete
+                ? MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.02")
+                : MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.03");
         }
         long consumed = 0;
         Stopwatch elapsed = Stopwatch.StartNew();
@@ -86,7 +87,7 @@ public sealed partial class RelatedComponentPipeline
                 RelatedScanRound round = new() { Number = number, MaximumBytes = Math.Max(0, limits.MaximumTotalBytes - consumed), Status = DiagnosticReadStatus.NotChecked };
                 diagnostic.Rounds.Add(round);
                 long before = consumed;
-                progress?.Report(new("组件关联", $"第 {number} 轮", number - 1, limits.MaximumRounds, "核对内容证据与启动入口、宿主和模块，再补查新增的精确目标"));
+                progress?.Report(new(MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.04"), MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.05", (number)), number - 1, limits.MaximumRounds, MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.06")));
                 try
                 {
                     consumed += await CloseEvidenceAsync(report, Math.Max(0, limits.MaximumTotalBytes - consumed), bounded, closedEvidence);
@@ -104,7 +105,7 @@ public sealed partial class RelatedComponentPipeline
                         .Select(h => h.ImagePath).Distinct(StringComparer.OrdinalIgnoreCase).Take(32).ToList();
                     long signatureBudget = signatures.Count == 0 ? 0 : Math.Min(128L * 1024 * 1024, Math.Max(0, limits.MaximumTotalBytes - consumed) / 4);
                     if (pending.Length == 0 && signatures.Count == 0)
-                    { round.Status = DiagnosticReadStatus.Complete; round.Detail = "本轮没有新增的精确内容候选，已回填可验证关系。"; break; }
+                    { round.Status = DiagnosticReadStatus.Complete; round.DetailText = MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.07"); break; }
 
                     List<(RelatedComponentCandidate Candidate, FileStream Lease)> leases = [];
                     long reservedContentBytes = 0;
@@ -121,22 +122,22 @@ public sealed partial class RelatedComponentPipeline
                                 long remaining = limits.MaximumTotalBytes - consumed - reservedContentBytes - signatureBudget;
                                 // Leave capacity for the worker to read these same bytes and expand supported content.
                                 if (lease.Length > limits.MaximumFileBytes || lease.Length > remaining / 3)
-                                    throw new RelatedBudgetException("剩余关联字节预算不足或超过单文件上限，未核验或补查该文件。");
+                                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.08"), sourceText => new RelatedBudgetException(sourceText));
                                 candidate.Length = lease.Length;
                                 candidate.Sha256 = await Hashing.Sha256StreamAsync(lease, bounded, bytes => consumed += bytes);
                                 candidate.VerifiedAtUtc = DateTimeOffset.UtcNow;
                                 reservedContentBytes += lease.Length * 2;
                                 candidate.Status = DiagnosticReadStatus.Complete;
-                                candidate.Detail = "使用拒绝写入和删除的只读句柄核验身份，补查结束后释放；未强行解锁。";
+                                candidate.DetailText = MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.09");
                                 leases.Add((candidate, lease)); lease = null;
                             }
                             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
                             {
                                 candidate.Status = candidate.ContentStatus = ex is RelatedBudgetException ? DiagnosticReadStatus.LimitReached :
                                     ex is UnauthorizedAccessException || ex is Win32Exception { NativeErrorCode: 5 } ? DiagnosticReadStatus.AccessDenied : DiagnosticReadStatus.Failed;
-                                candidate.Detail = candidate.ContentDetail = ex.Message;
-                                Check(diagnostic, "精确文件核验", candidate.Status, ex.Message, candidate.Id);
-                                if (ex is RelatedBudgetException) AddOuterRecheck(report, candidate.Path, ex.Message);
+                                candidate.DetailText = candidate.ContentDetailText = MessageExceptions.Describe(ex);
+                                Check(diagnostic, "related.file_identity", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.10"), candidate.Status, MessageExceptions.Describe(ex), candidate.Id);
+                                if (ex is RelatedBudgetException) AddOuterRecheck(report, candidate.Path, MessageExceptions.Describe(ex));
                             }
                             finally { if (lease is not null) await lease.DisposeAsync(); }
                         }
@@ -145,8 +146,8 @@ public sealed partial class RelatedComponentPipeline
                             long remaining = Math.Max(0, limits.MaximumTotalBytes - consumed);
                             if (remaining - signatureBudget < 2)
                             {
-                                Check(diagnostic, "关联容器补查预算", DiagnosticReadStatus.LimitReached, "剩余关联预算不足以建立容器读取与展开限额，未启动后续内容检查。");
-                                foreach (var held in leases) AddOuterRecheck(report, held.Candidate.Path, "关联补查预算已用尽。");
+                                Check(diagnostic, "related.container_budget", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.11"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.12"));
+                                foreach (var held in leases) AddOuterRecheck(report, held.Candidate.Path, MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.13"));
                                 continue;
                             }
                             ScanOptions followUp = FollowUpOptions(originalContentOptions, leases.Select(l => l.Candidate.Path).ToList(), remaining, signatures, signatureBudget);
@@ -159,23 +160,23 @@ public sealed partial class RelatedComponentPipeline
                                 bool pathValid = true;
                                 try { RelatedArtifactReader.ValidatePath(lease.SafeFileHandle, Path.GetFullPath(candidate.Path)); }
                                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
-                                { pathValid = false; Check(diagnostic, "补查后路径身份", DiagnosticReadStatus.Failed, ex.Message, candidate.Id); }
+                                { pathValid = false; Check(diagnostic, "related.followup_identity", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.14"), DiagnosticReadStatus.Failed, MessageExceptions.Describe(ex), candidate.Id); }
                                 bool mismatch = !pathValid || content.Findings.Where(f => SamePath(f.Target, candidate.Path))
                                     .Select(f => f.TargetSha256 ?? (f.ContentPath is null || SamePath(f.ContentPath, f.Target) ? f.Sha256 : null))
                                     .Any(hash => hash is not null && !hash.Equals(candidate.Sha256, StringComparison.OrdinalIgnoreCase));
                                 ScanRootSummary? summary = content.RootSummaries.LastOrDefault(r => SamePath(r.Path, candidate.Path));
                                 bool complete = !mismatch && summary?.Coverage == ScanCoverage.Complete;
                                 candidate.ContentStatus = complete ? DiagnosticReadStatus.Complete : DiagnosticReadStatus.NotChecked;
-                                candidate.ContentDetail = complete ? "受限组件已读取固定身份的目标，未发现不等于未知威胁已排除。" :
-                                    mismatch ? "内容结果与已固定的文件身份不一致，已拒绝该目标的处置资格。" : "受限组件没有完成此目标的全部支持范围检查，具体缺口已保留。";
+                                candidate.ContentDetailText = complete ? MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.15") :
+                                    mismatch ? MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.16") : MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.17");
                                 if (mismatch) content.Findings.RemoveAll(f => SamePath(f.Target, candidate.Path));
-                                if (!complete) Check(diagnostic, "新增组件内容检查", DiagnosticReadStatus.NotChecked, candidate.ContentDetail, candidate.Id);
+                                if (!complete) Check(diagnostic, "related.new_content", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.18"), DiagnosticReadStatus.NotChecked, candidate.ContentDetailText, candidate.Id);
                             }
                             AppendContent(report, content);
                         }
                         round.Status = diagnostic.Candidates.Where(c => round.CandidateIds.Contains(c.Id)).All(c => c.ContentStatus == DiagnosticReadStatus.Complete)
                             ? DiagnosticReadStatus.Complete : DiagnosticReadStatus.NotChecked;
-                        round.Detail = "新增候选已交给受限组件；文件身份、内容缺口和原始扫描范围分别保留。";
+                        round.DetailText = MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.19");
                     }
                     finally { foreach (var item in leases) await item.Lease.DisposeAsync(); }
                 }
@@ -188,14 +189,14 @@ public sealed partial class RelatedComponentPipeline
             AssociateEvidence(report);
             foreach (Finding pendingProof in report.Findings.Where(RelatedArtifactRelations.IsFileEvidence)
                 .DistinctBy(ClosureKey).Where(f => !closedEvidence.Contains(ClosureKey(f))))
-                Check(diagnostic, "剩余文件证据关联", DiagnosticReadStatus.LimitReached,
-                    "轮次或身份核验预算结束，未完成此文件证据的宿主及启动关联复核：" + pendingProof.Target);
+                Check(diagnostic, "related.remaining_evidence", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.20"), DiagnosticReadStatus.LimitReached,
+                    MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.21") + pendingProof.Target);
             foreach (RelatedComponentCandidate candidate in diagnostic.Candidates.Where(c => !visited.Contains(c.Path)))
             {
                 candidate.ContentStatus = DiagnosticReadStatus.LimitReached;
-                candidate.ContentDetail = "达到关联轮数、范围或字节上限，未补查此候选。可使用原始文件路径单独完整内容补查：" + candidate.Path;
-                AddOuterRecheck(report, candidate.Path, candidate.ContentDetail);
-                Check(diagnostic, "剩余组件候选", DiagnosticReadStatus.LimitReached, candidate.ContentDetail, candidate.Id);
+                candidate.ContentDetailText = MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.22") + candidate.Path;
+                AddOuterRecheck(report, candidate.Path, candidate.ContentDetailText);
+                Check(diagnostic, "related.remaining_candidates", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.23"), DiagnosticReadStatus.LimitReached, candidate.ContentDetailText, candidate.Id);
             }
         }
         catch (OperationCanceledException)
@@ -203,16 +204,16 @@ public sealed partial class RelatedComponentPipeline
             DiagnosticReadStatus state = token.IsCancellationRequested ? DiagnosticReadStatus.Cancelled : DiagnosticReadStatus.LimitReached;
             if (diagnostic.Rounds.LastOrDefault() is { Status: DiagnosticReadStatus.NotChecked } round)
             { round.Status = state; round.CompletedAtUtc = DateTimeOffset.UtcNow; }
-            Check(diagnostic, "组件关联补查", state, token.IsCancellationRequested ? "已取消；保留此前观察、内容结果和未完成对象。" : "达到关联时间预算；保留已取得的结果。");
+            Check(diagnostic, "related.followup", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.24"), state, token.IsCancellationRequested ? MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.25") : MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.26"));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
-        { Check(diagnostic, "组件关联补查", DiagnosticReadStatus.Failed, "补查未完成：" + ex.Message); }
+        { Check(diagnostic, "related.followup", MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.27"), DiagnosticReadStatus.Failed, MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.28") + MessageExceptions.Describe(ex)); }
         finally
         {
             diagnostic.CompletedAtUtc = DateTimeOffset.UtcNow;
             report.CompletedAtUtc = diagnostic.CompletedAtUtc;
             report.ContentScanSettings = originalSettings;
-            report.ScopeNotes.Add($"组件关联：最多 {limits.MaximumRounds} 轮新增目标内容补查；本次关联核验与补查累计计入 {consumed} 字节，用时 {elapsed.Elapsed.TotalSeconds:F1} 秒。容器按实际流读取、解码和原生预留计量，另对宿主签名预算保守计入；不是物理I/O。关联补查使用较窄预算，大归档未必完成，可按原始外层文件单独补查。原内容范围与设置未被补查覆盖。");
+            report.AddScopeNote(MessageText.Create("Backend.Core.RelatedComponentPipeline.CompleteAsync.29", (limits.MaximumRounds), (consumed), (System.FormattableString.Invariant($"{elapsed.Elapsed.TotalSeconds:F1}"))));
             MarkIncomplete(report, diagnostic);
         }
         return report;
@@ -222,7 +223,7 @@ public sealed partial class RelatedComponentPipeline
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(output.TargetUserSid)) { Check(output, "组件采集用户身份", DiagnosticReadStatus.Failed, "无法取得目标用户 SID，未进行当前用户采集。"); return; }
+            if (string.IsNullOrWhiteSpace(output.TargetUserSid)) { Check(output, "related.collection_identity", MessageText.Create("Backend.Core.RelatedComponentPipeline.Collect.01"), DiagnosticReadStatus.Failed, MessageText.Create("Backend.Core.RelatedComponentPipeline.Collect.02")); return; }
             _collect(new()
             {
                 TargetUserSid = output.TargetUserSid,
@@ -233,8 +234,8 @@ public sealed partial class RelatedComponentPipeline
                 SeedProcessIds = report.Findings.Where(f => f.ProcessId is not null).Select(f => f.ProcessId!.Value).Distinct().Take(limits.MaximumHosts).ToArray()
             }, output, limits, token);
         }
-        catch (OperationCanceledException) { Check(output, "组件来源采集", DiagnosticReadStatus.Cancelled, "来源采集已取消，保留已读取记录。"); throw; }
-        catch (Exception ex) when (ex is not OutOfMemoryException) { Check(output, "组件来源采集", DiagnosticReadStatus.Failed, ex.Message); }
+        catch (OperationCanceledException) { Check(output, "related.source_collection", MessageText.Create("Backend.Core.RelatedComponentPipeline.Collect.03"), DiagnosticReadStatus.Cancelled, MessageText.Create("Backend.Core.RelatedComponentPipeline.Collect.04")); throw; }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { Check(output, "related.source_collection", MessageText.Create("Backend.Core.RelatedComponentPipeline.Collect.05"), DiagnosticReadStatus.Failed, MessageExceptions.Describe(ex)); }
     }
 
     private async Task<long> CloseEvidenceAsync(ScanReport report, long budget, CancellationToken token, HashSet<string> closed)
@@ -242,13 +243,13 @@ public sealed partial class RelatedComponentPipeline
         Finding[] evidence = report.Findings.Where(RelatedArtifactRelations.IsFileEvidence).Reverse().DistinctBy(ClosureKey)
             .OrderBy(f => closed.Contains(ClosureKey(f))).Take(64).ToArray();
         if (evidence.Length == 0) return 0;
-        if (budget <= 0) { Check(report.RelatedComponentDiagnostics!, "关联身份复核", DiagnosticReadStatus.LimitReached, "没有剩余字节预算，未重核启动与加载关系。"); return 0; }
+        if (budget <= 0) { Check(report.RelatedComponentDiagnostics!, "related.identity_recheck", MessageText.Create("Backend.Core.RelatedComponentPipeline.CloseEvidenceAsync.01"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentPipeline.CloseEvidenceAsync.02")); return 0; }
         RelatedArtifactExpansion closure = await _expand(evidence, report, token, budget);
         foreach (Finding finding in evidence) closed.Add(ClosureKey(finding));
         foreach (Finding finding in closure.Findings.Where(f => f.Category is FindingCategory.Process or FindingCategory.Persistence))
             if (!report.Findings.Any(old => FindingKey(old) == FindingKey(finding))) report.Findings.Add(finding);
-        foreach (string scope in closure.ScopeNotes) if (!report.ScopeNotes.Contains(scope)) report.ScopeNotes.Add(scope);
-        foreach (string note in closure.Notes) Check(report.RelatedComponentDiagnostics!, "内容证据关联复核", DiagnosticReadStatus.NotChecked, note);
+        foreach (MessageText scope in closure.ScopeTexts) if (!report.ScopeNotes.Contains(scope.OriginalText)) report.AddScopeNote(scope);
+        foreach (MessageText note in closure.NoteTexts) Check(report.RelatedComponentDiagnostics!, "related.evidence_recheck", MessageText.Create("Backend.Core.RelatedComponentPipeline.CloseEvidenceAsync.03"), DiagnosticReadStatus.NotChecked, note);
         return closure.VerificationBytesRead;
     }
 
@@ -258,7 +259,7 @@ public sealed partial class RelatedComponentPipeline
         List<string>? signatures = null, long signatureBudget = 0)
     {
         if (signatureBudget < 0 || remaining < signatureBudget || remaining - signatureBudget < 2)
-            throw new ArgumentOutOfRangeException(nameof(remaining), "关联补查没有可分配的容器读取与展开预算。");
+            throw SteamSentinel.Core.Reporting.MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedComponentPipeline.FollowUpOptions.01"), sourceText => new ArgumentOutOfRangeException(nameof(remaining), sourceText));
         long available = remaining - signatureBudget, hashAllowance = available / 2;
         ContainerResourceLimits source = original.ContainerLimits ?? new();
         ContainerResourceLimits narrowed = new()
@@ -288,7 +289,7 @@ public sealed partial class RelatedComponentPipeline
             CustomRoots = paths,
             ExcludedRoots = [.. original.ExcludedRoots],
             InspectArchives = original.InspectArchives,
-            UseAmsi = original.UseAmsi,
+            UseAmsi = ScanEnhancements.UseAmsi(original),
             MaximumStringScanBytes = original.MaximumStringScanBytes,
             MaximumAmsiBytes = original.MaximumAmsiBytes,
             MaximumWorkerMemoryBytes = original.MaximumWorkerMemoryBytes,
@@ -327,17 +328,18 @@ public sealed partial class RelatedComponentPipeline
         return checked(work + Math.Min(signatureBudget, legacy));
     }
 
-    private static void AddOuterRecheck(ScanReport report, string path, string detail)
+    private static void AddOuterRecheck(ScanReport report, string path, MessageText detail)
     {
         if (report.Findings.Any(f => f.RuleId == "CONTENT-BYTE-BUDGET" && SamePath(f.Target, path))) return;
         report.Findings.Add(new()
         {
             RuleId = "CONTENT-BYTE-BUDGET",
+            ReasonCode = ReasonCodes.ReadBudget,
             Category = FindingCategory.Coverage,
             SourceKind = SourceKind,
             Target = path,
-            Title = "关联补查未覆盖完整原始文件",
-            Description = detail + " 关联补查保留较窄预算，不能代表大归档已完成。请按此原始外层文件路径单独补查。",
+            TitleText = MessageText.Create("Backend.Core.RelatedComponentPipeline.AddOuterRecheck.01"),
+            DescriptionText = detail + MessageText.Create("Backend.Core.RelatedComponentPipeline.AddOuterRecheck.02"),
             HandlingReason = FindingHandlingReason.IncompleteInspection,
             CanRemediate = false
         });
@@ -349,9 +351,14 @@ public sealed partial class RelatedComponentPipeline
         report.Containers = Reporting.ContainerReportMerger.Merge(report, content);
         foreach (Finding finding in content.Findings) if (!report.Findings.Any(old => FindingKey(old) == FindingKey(finding))) report.Findings.Add(finding);
         report.RootSummaries.AddRange(content.RootSummaries);
-        report.CoverageNotes.AddRange(content.CoverageNotes.Where(n => !report.CoverageNotes.Contains(n)));
+        foreach (MessageText note in content.CoverageTexts.Where(n => !report.CoverageNotes.Contains(n.OriginalText))) report.AddCoverageNote(note);
+        report.CoverageNotices.AddRange(content.CoverageNotices);
+        ScanExecutionState combinedState = ScanExecution.Combine(report.ExecutionState, content.ExecutionState);
+        if (combinedState != report.ExecutionState) report.ExecutionReasonCode = content.ExecutionReasonCode;
+        report.ExecutionState = combinedState;
+        report.StatusSchemaVersion = Math.Max(report.StatusSchemaVersion, content.StatusSchemaVersion);
         report.CoverageAggregates.AddRange(content.CoverageAggregates);
-        report.ContentSources.AddRange(content.CustomSourceNames());
+        foreach (MessageText source in content.CustomSourceNames()) report.AddContentSource(source);
         report.Metrics.FilesVisited += content.Metrics.FilesVisited; report.Metrics.BytesHashed += content.Metrics.BytesHashed;
         report.Metrics.ArchiveEntriesVisited += content.Metrics.ArchiveEntriesVisited; report.Metrics.ArchiveBytesExpanded += content.Metrics.ArchiveBytesExpanded;
         report.Metrics.MediaStructuresChecked += content.Metrics.MediaStructuresChecked;
@@ -365,16 +372,16 @@ public sealed partial class RelatedComponentPipeline
     private static string FindingKey(Finding f) => string.Join("|", f.RuleId, f.Target.ToUpperInvariant(), f.ContentPath, f.TargetSha256 ?? f.Sha256,
         f.ProcessId, f.ProcessStartedAtUtc, f.RelatedFilePath?.ToUpperInvariant(), f.RelatedFileSha256, f.RegistryHive, f.RegistryView, f.RegistryKey, f.RegistryValueName, f.ConfigurationSnapshot);
 
-    internal static void Check(RelatedComponentDiagnosticReport diagnostic, string name, DiagnosticReadStatus status, string detail, string? observationId = null)
+    internal static void Check(RelatedComponentDiagnosticReport diagnostic, string code, MessageText name, DiagnosticReadStatus status, MessageText detail, string? observationId = null)
     {
-        if (diagnostic.Checks.Any(c => c.Name == name && c.Status == status && c.Detail == detail && c.ObservationId == observationId)) return;
-        if (diagnostic.Checks.Count < 2047) diagnostic.Checks.Add(new() { Name = name, Status = status, Detail = detail, ObservationId = observationId });
-        else if (!diagnostic.Checks.Any(c => c.Name == "累计关联检查说明限额"))
+        if (diagnostic.Checks.Count < 2047) diagnostic.Checks.Add(new() { CheckCode = code, NameText = name, Status = status, DetailText = detail, ObservationId = observationId });
+        else if (!diagnostic.Checks.Any(c => c.CheckCode == "related.total_check_limit"))
             diagnostic.Checks.Add(new()
             {
-                Name = "累计关联检查说明限额",
+                CheckCode = "related.total_check_limit",
+                NameText = MessageText.Create("Backend.Core.RelatedComponentPipeline.Check.01"),
                 Status = DiagnosticReadStatus.LimitReached,
-                Detail = "累计检查说明达到2048项上限，其余逐项缺口未保存，检查不能视为完整。"
+                DetailText = MessageText.Create("Backend.Core.RelatedComponentPipeline.Check.02")
             });
     }
 
@@ -387,12 +394,13 @@ public sealed partial class RelatedComponentPipeline
             report.Findings.Add(new()
             {
                 RuleId = "ASSOCIATION-COVERAGE",
+                ReasonCode = ReasonCodes.ForReadStatus(check.Status),
                 Category = FindingCategory.Coverage,
                 SourceKind = SourceKind,
-                Title = "组件关联检查未完成",
-                Target = check.Name,
-                Description = check.Detail,
-                Evidence = check.Status.ToString(),
+                TitleText = MessageText.Create("Backend.Core.RelatedComponentPipeline.MarkIncomplete.01"),
+                TargetText = check.NameText,
+                DescriptionText = check.DetailText,
+                EvidenceText = check.Status.ToString(),
                 HandlingReason = FindingHandlingReason.IncompleteInspection,
                 AssociationObservationIds = [check.Id],
                 AssociationEvidenceTier = RelatedEvidenceTier.Observation
@@ -400,10 +408,13 @@ public sealed partial class RelatedComponentPipeline
         }
     }
 
-    private sealed class RelatedBudgetException(string message) : IOException(message);
+    private sealed class RelatedBudgetException : IOException
+    {
+        public RelatedBudgetException(MessageText message) : base(message.OriginalText) { MessageExceptions.Attach(this, message); }
+    }
 }
 
 internal static class RelatedContentSourceExtensions
 {
-    internal static IEnumerable<string> CustomSourceNames(this ScanReport content) => content.Roots.Select(path => "关联补查精确目标：" + path);
+    internal static IEnumerable<MessageText> CustomSourceNames(this ScanReport content) => content.Roots.Select(path => MessageText.Create("Backend.Core.RelatedComponentPipeline.CustomSourceNames.01") + path);
 }

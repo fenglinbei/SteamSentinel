@@ -6,12 +6,18 @@ public sealed record FindingHandlingInfo(FindingDisposition Disposition, string 
 public sealed record FindingHandlingCounts(int Actionable, int NeedsReview, int Unsupported, int Blocked, int Informational)
 {
     public int AttentionCount => NeedsReview + Unsupported + Blocked;
-    public string Summary => $"可处理 {Actionable} 项 · 待确认 {NeedsReview} 项 · 暂不支持 {Unsupported} 项 · 条件未满足 {Blocked} 项 · 普通说明 {Informational} 项";
+    public string Summary => DisplayText.Format("FindingHandling.Summary.01", (Actionable), (NeedsReview), (Unsupported), (Blocked), (Informational));
 }
 
 /// <summary>Eligibility only. Never infer execution failure/success from CanRemediate.</summary>
 public static class FindingHandlingPresentation
 {
+    public static FindingHandlingInfo Get(Finding finding, System.Globalization.CultureInfo culture)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return Get(finding);
+    }
+
     public static bool IsTrustProxyFinding(Finding finding) => finding.RuleId == "NETWORK-PROXY-PRESENT" ||
         finding.SourceKind == "trust-proxy-diagnostics" || finding.DiagnosticObservationIds.Count > 0;
 
@@ -20,22 +26,25 @@ public static class FindingHandlingPresentation
         bool boundContainer = finding.ContentPath?.Contains("!/", StringComparison.Ordinal) != true ||
             !string.IsNullOrWhiteSpace(finding.TargetSha256);
         if (finding.CanRemediate && boundContainer)
-            return new(FindingDisposition.Actionable, "可选择处理", "已有可核验的处理目标，仍需确认预览。", "核对目标后选择处理。", true);
+            return new(FindingDisposition.Actionable, DisplayText.Get("FindingHandling.Get.01"), DisplayText.Get("FindingHandling.Get.02"), DisplayText.Get("FindingHandling.Get.03"), true);
         if (finding.CanRemediate && !boundContainer)
-            return new(FindingDisposition.Blocked, "检查未完成", "外层文件尚未完成哈希读取，暂不能隔离。", "对外层文件执行完整内容检查。", false);
+            return new(FindingDisposition.Blocked, DisplayText.Get("FindingHandling.Get.04"), DisplayText.Get("FindingHandling.Get.05"), DisplayText.Get("FindingHandling.Get.06"), false);
         if (finding.HandlingReason == FindingHandlingReason.UnsupportedAction)
-            return new(FindingDisposition.Unsupported, "暂不支持自动处理", finding.HandlingDetails ?? "当前版本没有此问题对应的自动处理能力。", "查看证据并导出诊断记录。", false);
+            return new(FindingDisposition.Unsupported, DisplayText.Get("FindingHandling.Get.07"), Reason("FindingHandling.Get.08", finding.HandlingDetailsText.Display), DisplayText.Get("FindingHandling.Get.09"), false);
         if (finding.HandlingReason is FindingHandlingReason.IncompleteInspection or FindingHandlingReason.PrerequisiteNotMet)
-            return new(FindingDisposition.Blocked, "暂不能处理", finding.HandlingDetails ?? "关键检查或执行条件尚未满足。", "查看具体原因并完成相应检查。", false);
+            return new(FindingDisposition.Blocked, DisplayText.Get("FindingHandling.Get.10"), Reason("FindingHandling.Get.11", finding.HandlingDetailsText.Display), DisplayText.Get("FindingHandling.Get.12"), false);
         bool diagnostic = IsTrustProxyFinding(finding);
         if (finding.HandlingReason == FindingHandlingReason.InsufficientEvidence || diagnostic || finding.IsKnownMalware ||
             finding.Category != FindingCategory.Coverage && (finding.Severity >= FindingSeverity.Medium || finding.SuggestedActions.Contains(SuggestedActionKind.ReviewOnly)))
-            return new(FindingDisposition.NeedsReview, "需进一步确认", finding.HandlingDetails ?? (diagnostic
-                ? "检测到配置线索，但尚不能确认其来源或是否恶意，暂不能自动处理。"
-                : "尚无足够依据执行处置，需要进一步核对。"), diagnostic
-                ? "检查代理与证书，或导出诊断记录。" : "对适用目标进一步检查，或导出诊断记录。", false);
-        return new(FindingDisposition.Informational, "信息提示", "此项为普通说明，没有要求执行处理。", "可查看详情。", false);
+            return new(FindingDisposition.NeedsReview, DisplayText.Get("FindingHandling.Get.13"), Reason(diagnostic
+                ? "FindingHandling.Get.14"
+                : "FindingHandling.Get.15", finding.HandlingDetailsText.Display), diagnostic
+                ? DisplayText.Get("FindingHandling.Get.16") : DisplayText.Get("FindingHandling.Get.17"), false);
+        return new(FindingDisposition.Informational, DisplayText.Get("FindingHandling.Get.18"), DisplayText.Get("FindingHandling.Get.19"), DisplayText.Get("FindingHandling.Get.20"), false);
     }
+
+    private static string Reason(string id, string? original) => DisplayText.Get(id) +
+        (string.IsNullOrWhiteSpace(original) ? "" : Environment.NewLine + DisplayText.Format("Common.RawDetail", original));
 
     public static FindingHandlingCounts Count(IEnumerable<Finding> findings)
     {

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -29,15 +30,15 @@ internal sealed class RestrictedProcess : IDisposable
     {
         0 => true,
         258 => false,
-        _ => throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取扫描组件的进程状态。")
+        _ => throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.HasExited.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText))
     };
     public int ExitCode
     {
         get
         {
-            if (!HasExited) throw new InvalidOperationException("扫描组件尚未退出。");
+            if (!HasExited) throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.ExitCode.01"), sourceText => new InvalidOperationException(sourceText));
             if (!GetExitCodeProcess(_processHandle, out uint code))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取扫描组件的退出码。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.ExitCode.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             return unchecked((int)code);
         }
     }
@@ -70,10 +71,10 @@ internal sealed class RestrictedProcess : IDisposable
             environment = BuildEnvironmentBlock(fullWorkingDirectory);
             nuint attributeBytes = 0;
             InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeBytes);
-            if (attributeBytes == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法确定句柄白名单大小。");
+            if (attributeBytes == 0) throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.Start.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             attributes = Marshal.AllocHGlobal(checked((nint)attributeBytes));
             if (!InitializeProcThreadAttributeList(attributes, 1, 0, ref attributeBytes))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建扫描组件句柄白名单。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.Start.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             attributesInitialized = true;
             inheritedHandles = Marshal.AllocHGlobal(3 * IntPtr.Size);
             Marshal.WriteIntPtr(inheritedHandles, 0, childStdin.DangerousGetHandle());
@@ -81,7 +82,7 @@ internal sealed class RestrictedProcess : IDisposable
             Marshal.WriteIntPtr(inheritedHandles, 2 * IntPtr.Size, childStderr.DangerousGetHandle());
             if (!UpdateProcThreadAttribute(attributes, 0, 0x00020002, inheritedHandles,
                     (nuint)(3 * IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法限制扫描组件继承句柄。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.Start.03"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             StartupInfoEx startup = new()
             {
                 Info = new StartupInfo
@@ -109,7 +110,7 @@ internal sealed class RestrictedProcess : IDisposable
                     ref startup,
                     out ProcessInformation information))
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法以受限令牌启动压缩包扫描进程。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.Start.04"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             }
 
             processHandle = new SafeKernelHandle(information.Process, ownsHandle: true);
@@ -119,7 +120,7 @@ internal sealed class RestrictedProcess : IDisposable
             {
                 int error = Marshal.GetLastWin32Error();
                 TerminateProcess(processHandle, 1);
-                throw new Win32Exception(error, "无法恢复受限扫描进程。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.Start.05"), sourceText => new Win32Exception(error, sourceText));
             }
 
             childStdin.Dispose();
@@ -170,7 +171,7 @@ internal sealed class RestrictedProcess : IDisposable
     public void Kill()
     {
         if (!HasExited && !TerminateProcess(_processHandle, 1) && !HasExited)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法结束扫描组件。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.Kill.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
     }
 
     public void Dispose()
@@ -191,7 +192,7 @@ internal sealed class RestrictedProcess : IDisposable
         out SafeFileHandle parent)
     {
         if (!CreatePipe(out SafeFileHandle read, out SafeFileHandle write, ref attributes, 0))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建受限进程通信管道。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.CreatePipePair.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
 
         child = childReads ? read : write;
         parent = childReads ? write : read;
@@ -199,7 +200,7 @@ internal sealed class RestrictedProcess : IDisposable
         {
             read.Dispose();
             write.Dispose();
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法限制通信管道继承。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.CreatePipePair.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
         }
     }
 
@@ -207,7 +208,7 @@ internal sealed class RestrictedProcess : IDisposable
     {
         uint access = TokenAssignPrimary | TokenDuplicate | TokenQuery | TokenAdjustDefault | TokenAdjustSessionId;
         if (!OpenProcessToken(GetCurrentProcess(), access, out SafeAccessTokenHandle current))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法打开当前进程令牌。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.CreateLowIntegrityToken.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
         using (current) return CreateLowIntegrityToken(current);
     }
 
@@ -224,7 +225,7 @@ internal sealed class RestrictedProcess : IDisposable
                 IntPtr.Zero,
                 out SafeAccessTokenHandle restricted))
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建受限扫描令牌。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.CreateLowIntegrityToken.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
         }
 
         try
@@ -243,7 +244,7 @@ internal sealed class RestrictedProcess : IDisposable
     private static void SetLowIntegrity(SafeAccessTokenHandle token)
     {
         if (!ConvertStringSidToSid("S-1-16-4096", out IntPtr sid))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建 Low Integrity SID。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.SetLowIntegrity.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
         try
         {
             TokenMandatoryLabel label = new()
@@ -257,7 +258,7 @@ internal sealed class RestrictedProcess : IDisposable
                 Marshal.StructureToPtr(label, buffer, false);
                 uint totalSize = checked((uint)size + GetLengthSid(sid));
                 if (!SetTokenInformation(token, TokenIntegrityLevel, buffer, totalSize))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "无法将扫描令牌降至 Low Integrity。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedProcess.SetLowIntegrity.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             }
             finally
             {
@@ -276,6 +277,9 @@ internal sealed class RestrictedProcess : IDisposable
         {
             ["SystemRoot"] = Environment.GetFolderPath(Environment.SpecialFolder.Windows),
             ["WINDIR"] = Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            // The Defender AMSI provider needs this even in a Low-integrity process.
+            // Derive it from the Windows directory; do not inherit a caller-supplied value.
+            ["SystemDrive"] = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows))!.TrimEnd('\\'),
             ["COMSPEC"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
             ["PATH"] = Environment.GetFolderPath(Environment.SpecialFolder.System),
             ["TEMP"] = temporaryDirectory,

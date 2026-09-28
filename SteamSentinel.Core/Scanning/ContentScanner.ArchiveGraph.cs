@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers;
 using System.Security.Cryptography;
 using SharpCompress.Common;
@@ -22,7 +23,7 @@ public sealed partial class ContentScanner
             if (node.Depth >= 32 && (archives.Length > 0 || inspection.UnknownRanges.Count > 0))
             {
                 ContainerGap(context, node, ContainerStageStatus.LimitReached,
-                    $"容器来源关系已达 32 层；本层另有 {archives.Length} 个已识别嵌入范围和 {inspection.UnknownRanges.Count} 个未知范围未建立子项。");
+                    MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerRangesAsync.01", (archives.Length), (inspection.UnknownRanges.Count)));
                 return;
             }
             foreach (ContainerRange range in archives)
@@ -30,15 +31,17 @@ public sealed partial class ContentScanner
                 if (range.Offset == 0 && range.Length == node.Length && node.Kind == ContainerNodeKind.EmbeddedRange) continue;
                 string suffix = range.Type == ContainerRangeType.Zip ? ".zip" : ".rar";
                 string display = node.DisplayPath + $"!/@range-{range.Offset}-{range.Length}" + suffix;
+                if (context.Options.InspectArchives && node.Depth >= context.Budget.Limits.MaximumDepth)
+                    ScanResourceSession.Allow("ContainerLimits.MaximumDepth", node.Depth + 1L);
                 if (range.Status is not (ContainerRangeStatus.Validated or ContainerRangeStatus.ValidatedContainerHeader) ||
                     !context.Options.InspectArchives || node.Depth >= context.Budget.Limits.MaximumDepth)
                 {
                     ContainerScanNode skipped = AddContainerNode(context, display, node.OriginalTarget, node, node.Depth + 1,
                         ContainerNodeKind.EmbeddedRange, range.Length, range.Offset);
-                    skipped.Format = range.Type.ToString(); skipped.Recognition = ContainerStageStatus.Complete;
+                    skipped.FormatText = range.Type.ToString(); skipped.Recognition = ContainerStageStatus.Complete;
                     int firstFinding = context.Report.Findings.Count;
                     ContainerGap(context, skipped, !context.Options.InspectArchives ? ContainerStageStatus.NotRequested : ContainerStageStatus.LimitReached,
-                        "已识别嵌入范围，本次未展开。");
+                        MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerRangesAsync.02"));
                     BindContainerFindings(context, skipped, firstFinding);
                     FinishContainer(context, skipped); continue;
                 }
@@ -48,7 +51,7 @@ public sealed partial class ContentScanner
             foreach (ContainerRange range in inspection.UnknownRanges)
                 await ScanUnknownContainerRangeAsync(source, context, node, range, () => executableTail = true);
             if (inspection.Status is ContainerRangeStatus.Malformed or ContainerRangeStatus.Unsupported or ContainerRangeStatus.LimitReached)
-                ContainerGap(context, node, ContainerStageStatus.Partial, inspection.Detail, "CONTAINER-STRUCTURE-PARTIAL");
+                ContainerGap(context, node, ContainerStageStatus.Partial, inspection.DetailText, "CONTAINER-STRUCTURE-PARTIAL");
         }
         finally
         {
@@ -59,14 +62,14 @@ public sealed partial class ContentScanner
                     Category = FindingCategory.WallpaperEngine,
                     Severity = archives.Length > 0 || executableTail ? FindingSeverity.High : FindingSeverity.Medium,
                     Score = archives.Length > 0 || executableTail ? 75 : 45,
-                    Title = "MP4 存在容器外尾随数据",
-                    Description = "媒体结构之外存在内容，已按验证得到的范围分别记录。" +
-                        (executableTail ? "尾部静态识别到启动型内容，未执行。" : ""),
+                    TitleText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerRangesAsync.03"),
+                    DescriptionText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerRangesAsync.04") +
+                        (executableTail ? MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerRangesAsync.05") : (MessageText)""),
                     Target = node.OriginalTarget,
                     TargetSha256 = node.OriginalTargetSha256,
                     ContentPath = node.DisplayPath,
                     Sha256 = node.Sha256,
-                    Evidence = inspection.Detail + "；内容位置：" + node.DisplayPath,
+                    EvidenceText = inspection.DetailText + MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerRangesAsync.06") + node.DisplayPath,
                     WorkshopId = context.WorkshopId,
                     SuggestedActions = [SuggestedActionKind.ReviewOnly]
                 });
@@ -76,17 +79,22 @@ public sealed partial class ContentScanner
     private async Task ScanUnknownContainerRangeAsync(ArchiveVolumeCandidate source, ContainerContext context,
         ContainerScanNode parent, ContainerRange range, Action executableFound)
     {
-        ContainerScanNode node = AddContainerNode(context, parent.DisplayPath + $"!/@unknown-{range.Offset}-{range.Length}",
-            parent.OriginalTarget, parent, parent.Depth + 1, ContainerNodeKind.UnknownRange, range.Length, range.Offset);
-        node.Format = "未归属范围"; node.Recognition = ContainerStageStatus.Unsupported;
-        node.Integrity = ContainerStageStatus.UnsupportedIntegrity;
+        bool familyMetadata = parent.VPetFamily is { EnvelopeValidated: true } family &&
+            family.FooterOffset == range.Offset && family.FooterLength == range.Length;
+        ContainerScanNode node = AddContainerNode(context, parent.DisplayPath + $"!/@{(familyMetadata ? "vpet-footer" : "unknown")}-{range.Offset}-{range.Length}",
+            parent.OriginalTarget, parent, parent.Depth + 1, familyMetadata ? ContainerNodeKind.EmbeddedRange : ContainerNodeKind.UnknownRange, range.Length, range.Offset);
+        node.FormatText = familyMetadata ? MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.01") : MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.02");
+        node.Recognition = familyMetadata ? ContainerStageStatus.Complete : ContainerStageStatus.Unsupported;
+        node.Integrity = familyMetadata ? ContainerStageStatus.NotRequested : ContainerStageStatus.UnsupportedIntegrity;
         int firstFinding = context.Report.Findings.Count;
-        ContainerGap(context, node, ContainerStageStatus.Unsupported, range.Detail, "CONTAINER-UNKNOWN-RANGE");
+        if (familyMetadata) node.AddDetail(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.03"));
+        else ContainerGap(context, node, ContainerStageStatus.Unsupported, range.DetailText, "CONTAINER-UNKNOWN-RANGE");
         try
         {
             context.Budget.Check(); _resources.Check(context.Report);
-            if (context.Report.Metrics.FilesVisited >= context.Options.MaximumFiles)
-                throw new ScanResourceLimitException("本轮文件数达到上限，未知范围尚未检查。");
+            if (context.Report.Metrics.FilesVisited >= context.Options.MaximumFiles &&
+                !ScanResourceSession.Allow("MaximumFiles", context.Report.Metrics.FilesVisited + 1, context.Report.Metrics.FilesVisited, known: false))
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.04"), sourceText => new ScanResourceLimitException(sourceText));
             await using FileStream file = RelatedArtifactReader.Open(source.PhysicalPath);
             RelatedArtifactReader.ValidatePath(file.SafeFileHandle, Path.GetFullPath(source.PhysicalPath));
             ArchiveVolumeCandidate selected = new(source.PhysicalPath, node.DisplayPath, checked(source.Offset + range.Offset), range.Length);
@@ -94,12 +102,16 @@ public sealed partial class ContentScanner
             context.Report.Metrics.FilesVisited++;
             // A bounded recognition head is still useful when full-content hashing is not scheduled.
             FileTypeResult type = await FileTypeDetector.DetectAsync(stream, node.DisplayPath, context.Token);
-            node.Details.Add(ShortContainerDetail("内容魔数提示：" + type.Label + "；仅用于选择静态引擎，未取得完整容器边界。"));
+            node.AddDetail(ShortContainerDetail(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.05") + type.LabelText + MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.06")));
             if (type.IsExecutableOrScript) executableFound();
             long charged = Math.Max(0, context.Report.Metrics.BytesHashed -
                 (context.Options.Mode == ScanMode.Quick ? context.Report.Metrics.QuickPriorityBytesHashed : 0));
             long remaining = context.Options.MaximumContentBytes == long.MaxValue ? long.MaxValue :
                 Math.Max(0, context.Options.MaximumContentBytes - charged);
+            if (range.Length > remaining && range.Length <= long.MaxValue - charged && ScanResourceSession.Allow("MaximumContentBytes", charged + range.Length, charged))
+                remaining = context.Options.MaximumContentBytes - charged;
+            if (context.Options.Mode == ScanMode.Quick && range.Length > context.Options.MaximumQuickFileBytes)
+                ScanResourceSession.Allow("MaximumQuickFileBytes", range.Length);
             if (range.Length > remaining || context.Options.Mode == ScanMode.Quick && range.Length > context.Options.MaximumQuickFileBytes)
             {
                 node.ContentCheck = ContainerStageStatus.LimitReached;
@@ -108,9 +120,9 @@ public sealed partial class ContentScanner
                     Engine = "SHA-256",
                     Status = ContainerStageStatus.Skipped,
                     Length = 0,
-                    Detail = "未知范围超过快速大小或剩余内容读取预算。"
+                    DetailText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.07")
                 });
-                ContainerGap(context, node, ContainerStageStatus.LimitReached, "未知范围尚未完成独立哈希和内容检查。", "CONTENT-BYTE-BUDGET");
+                ContainerGap(context, node, ContainerStageStatus.LimitReached, MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.08"), "CONTENT-BYTE-BUDGET");
                 return;
             }
             stream.Position = 0;
@@ -122,31 +134,31 @@ public sealed partial class ContentScanner
                 Status = ContainerStageStatus.Complete,
                 Offset = 0,
                 Length = range.Length,
-                Detail = "仅此未知范围的完整流式 SHA-256；不代表格式完整性通过。"
+                DetailText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.09")
             });
             bool suspicious = _rules.DangerousExtensions.Contains(Path.GetExtension(node.DisplayPath), StringComparer.OrdinalIgnoreCase);
             AddContainerFileFindings(context, node, type, suspicious);
             await ScanContainerLeafAsync(file, stream, selected, context, node, type, suspicious, archive: type.IsArchive);
             // Recognition and integrity remain unsupported even when all requested leaf engines ran.
-            node.Overall = ContainerStageStatus.Unsupported;
+            if (!familyMetadata) node.Overall = ContainerStageStatus.Unsupported;
             RelatedArtifactReader.ValidatePath(file.SafeFileHandle, Path.GetFullPath(source.PhysicalPath));
         }
         catch (OperationCanceledException)
         {
             node.ContentCheck = ContainerStageStatus.Cancelled;
-            ContainerGap(context, node, ContainerStageStatus.Cancelled, "未知范围内容检查已取消。"); throw;
+            ContainerGap(context, node, ContainerStageStatus.Cancelled, MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.10")); throw;
         }
         catch (ScanResourceLimitException ex)
         {
             node.ContentCheck = ContainerStageStatus.LimitReached;
-            ContainerGap(context, node, ContainerStageStatus.LimitReached, ex.Message); throw;
+            ContainerGap(context, node, ContainerStageStatus.LimitReached, MessageExceptions.Describe(ex)); throw;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException or
             ArgumentException or OverflowException or System.ComponentModel.Win32Exception or SharpCompressException)
         {
             node.ContentCheck = ex is UnauthorizedAccessException or System.ComponentModel.Win32Exception
                 ? ContainerStageStatus.AccessDenied : ContainerStageStatus.Failed;
-            ContainerGap(context, node, node.ContentCheck, "未知范围未完整检查（" + ex.GetType().Name + "）：" + ex.Message);
+            ContainerGap(context, node, node.ContentCheck, MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanUnknownContainerRangeAsync.11") + ex.GetType().Name + "）：" + MessageExceptions.Describe(ex));
         }
         finally
         {
@@ -185,7 +197,7 @@ public sealed partial class ContentScanner
         foreach (string directory in directories)
         {
             if (!ContentDiscovery.IsLocalSafePath(directory) || !Directory.Exists(directory)) continue;
-            foreach (string path in Directory.EnumerateFiles(directory).Take(limits.MaximumCandidates + 1))
+            foreach (string path in Directory.EnumerateFiles(directory))
             {
                 context.Budget.Check();
                 if (IsExcluded(path, context.Options.ExcludedRoots)) continue;
@@ -194,7 +206,11 @@ public sealed partial class ContentScanner
                 string display = Path.Combine(Path.GetDirectoryName(source.DisplayName) ?? "", Path.GetFileName(path));
                 candidates.Add(new(path, display));
                 if (candidates.Count > limits.MaximumCandidates)
-                    return ArchiveVolumeResolver.Resolve(source, candidates, limits);
+                {
+                    if (!ScanResourceSession.Allow("ContainerLimits.MaximumDirectoryCandidates", candidates.Count, candidates.Count - 1, known: false))
+                        return ArchiveVolumeResolver.Resolve(source, candidates, limits);
+                    limits = limits with { MaximumCandidates = context.Budget.Limits.MaximumDirectoryCandidates };
+                }
             }
         }
         ArchiveVolumePlan result = ArchiveVolumeResolver.Resolve(source, candidates, limits);
@@ -210,9 +226,11 @@ public sealed partial class ContentScanner
         public bool MetricsRecorded { get; set; }
         public Guid? PublishedNodeId { get; set; }
     }
-    private sealed class ContainerEntryLimitException(string ruleId, string detail) : IOException(detail)
+    private sealed class ContainerEntryLimitException : IOException
     {
-        public string RuleId { get; } = ruleId;
+        public string RuleId { get; }
+        public ContainerEntryLimitException(string ruleId, MessageText detail) : base(detail.OriginalText)
+        { RuleId = ruleId; MessageExceptions.Attach(this, detail); }
     }
     private sealed class ContainerGroupLease : IDisposable
     {
@@ -235,10 +253,10 @@ public sealed partial class ContentScanner
                     context.Budget.Check();
                     FileStream file = RelatedArtifactReader.Open(member.PhysicalPath); lease._locks.Add(file);
                     string fileId = ArchiveVolumeSession.VerifyHandle(file, Path.GetFullPath(member.PhysicalPath));
-                    if (!fileIds.Add(fileId)) throw new ArchiveVolumeException(ArchiveVolumeStatus.DuplicateVolume, "卷组引用了重复的物理文件身份。");
+                    if (!fileIds.Add(fileId)) throw new ArchiveVolumeException(ArchiveVolumeStatus.DuplicateVolume, MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.CaptureAsync.01"));
                     physical.AppendData(System.Text.Encoding.UTF8.GetBytes($"{fileId}\0{member.Offset}\0{member.Length}\0"));
                     total = checked(total + file.Length);
-                    if (total > plan.Limits.MaximumTotalBytes) throw new ScanResourceLimitException("卷组总输入超过本轮限额。");
+                    if (total > plan.Limits.MaximumTotalBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.CaptureAsync.02"), sourceText => new ScanResourceLimitException(sourceText));
                     long length = member.Length ?? checked(file.Length - member.Offset);
                     using BoundedReadOnlyStream full = new(file, 0, file.Length, budget: context.Budget);
                     string fullHash = Convert.ToHexString(await SHA256.HashDataAsync(full, context.Token));
@@ -276,7 +294,7 @@ public sealed partial class ContentScanner
         public void Dispose() => Store.Dispose();
     }
 
-    private sealed record SkippedContainerMember(string Display, long Length, bool IsEncrypted, string RuleId, string Detail);
+    private sealed record SkippedContainerMember(string Display, long Length, bool IsEncrypted, string RuleId, MessageText Detail);
 
     private async Task<ContainerDecodeAttempt> DecodeContainerAttemptAsync(ArchiveVolumePlan plan, string? password,
         ContainerContext context, ContainerScanNode node)
@@ -284,8 +302,8 @@ public sealed partial class ContentScanner
         ContainerDecodeAttempt attempt = new(new(context.Budget));
         try
         {
-            context.Progress?.Report(new("压缩包目录", node.DisplayPath, context.Report.Metrics.ArchiveEntriesVisited, null,
-                $"正在核验 {plan.Members.Count} 个已限定输入与归档目录"));
+            context.Progress?.Report(new(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.01"), node.DisplayPath, context.Report.Metrics.ArchiveEntriesVisited, null,
+                MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.02", (plan.Members.Count))));
             using ArchiveVolumeSession session = await ArchiveVolumeSession.OpenAsync(plan, password, context.Token,
                 source => new BoundedReadOnlyStream(source, 0, source.Length, budget: context.Budget));
             attempt.Identities.AddRange(session.Identities); attempt.GroupHash = session.GroupSha256;
@@ -300,26 +318,32 @@ public sealed partial class ContentScanner
                     IEntry entry = reader.Entry;
                     attempt.HasEncryption |= entry.IsEncrypted && entry.Size > 0;
                     if (entry.IsEncrypted && entry.Size > 0 && password is null) throw new PasswordNeededException();
-                    if (attempt.Members.Count + attempt.SkippedMembers.Count + attempt.DirectoryEntries + context.Report.Metrics.ArchiveEntriesVisited >= context.Budget.Limits.MaximumEntries)
-                        throw new ScanResourceLimitException("归档成员数量达到上限。");
+                    long visitedEntries = (long)attempt.Members.Count + attempt.SkippedMembers.Count + attempt.DirectoryEntries + context.Report.Metrics.ArchiveEntriesVisited;
+                    if (visitedEntries >= context.Budget.Limits.MaximumEntries &&
+                        !ScanResourceSession.Allow("ContainerLimits.MaximumEntries", visitedEntries + 1, visitedEntries, known: false))
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.03"), sourceText => new ScanResourceLimitException(sourceText));
                     if (entry.IsDirectory) { attempt.DirectoryEntries++; continue; }
                     string name = entry.Key ?? "(unnamed)";
                     string display = node.DisplayPath + "!/" + SanitizeEntryDisplayName(name);
-                    if (entry.Size < 0 || entry.Size > context.Budget.Limits.MaximumEntryBytes)
+                    using IDisposable resourceTarget = ScanResourceSession.EnterTarget(display);
+                    if (entry.Size < 0 || entry.Size > context.Budget.Limits.MaximumEntryBytes &&
+                        !ScanResourceSession.Allow("ContainerLimits.MaximumEntryBytes", entry.Size))
                     {
-                        if (SkipLimitedZipMember("ARCHIVE-SIZE-LIMIT", "成员声明大小超过单成员上限；该成员未打开、未解码，继续检查后续 ZIP 成员。")) continue;
-                        throw new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", "成员声明大小超过单成员上限，当前格式不能安全跳过未解码成员，已停止本归档。");
+                        if (SkipLimitedZipMember("ARCHIVE-SIZE-LIMIT", MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.04"))) continue;
+                        throw new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.05"));
                     }
-                    if (entry.CompressedSize > 0 && entry.Size / (double)entry.CompressedSize > context.Budget.Limits.MaximumCompressionRatio)
+                    if (entry.CompressedSize > 0 && entry.Size / (double)entry.CompressedSize > context.Budget.Limits.MaximumCompressionRatio &&
+                        !ScanResourceSession.Allow("ContainerLimits.MaximumCompressionRatio", checked((long)Math.Ceiling(entry.Size / (double)entry.CompressedSize))))
                     {
-                        if (SkipLimitedZipMember("ARCHIVE-RATIO-LIMIT", "成员声明压缩比超过安全上限；该成员未打开、未解码，继续检查后续 ZIP 成员。")) continue;
-                        throw new ContainerEntryLimitException("ARCHIVE-RATIO-LIMIT", "成员压缩比超过安全上限，当前格式不能安全跳过未解码成员，已停止本归档。");
+                        if (SkipLimitedZipMember("ARCHIVE-RATIO-LIMIT", MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.06"))) continue;
+                        throw new ContainerEntryLimitException("ARCHIVE-RATIO-LIMIT", MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.07"));
                     }
-                    if (entry.Size > context.Budget.Limits.MaximumExpandedBytes - context.Budget.AcceptedExpandedBytes)
-                        throw new ScanResourceLimitException("成员声明大小超过本轮剩余逻辑展开上限。");
+                    if (entry.Size > context.Budget.Limits.MaximumExpandedBytes - context.Budget.AcceptedExpandedBytes &&
+                        !ScanResourceSession.Allow("ContainerLimits.MaximumExpandedBytes", checked(context.Budget.AcceptedExpandedBytes + entry.Size), context.Budget.AcceptedExpandedBytes))
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.08"), sourceText => new ScanResourceLimitException(sourceText));
                     using ArchiveIntegrityEntryVerifier verifier = ArchiveIntegrity.Begin(session, entry);
                     if (!verifier.Requirement.Supported)
-                        throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, verifier.Requirement.Detail);
+                        throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, verifier.Requirement.DetailText);
                     ContainerTemporaryFile output = attempt.Store.CreateFile();
                     using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                     using Crc32Stream checksum = new(Stream.Null);
@@ -340,10 +364,11 @@ public sealed partial class ContentScanner
                                     int read = await input.ReadAsync(buffer.AsMemory(0, request), context.Token);
                                     if (read == 0) break;
                                     context.Budget.ChargeDecoded(read); copied = checked(copied + read);
-                                    if (copied > context.Budget.Limits.MaximumEntryBytes)
-                                        throw new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", "成员实际展开长度超过单成员限额，已停止本归档。");
+                                    if (copied > context.Budget.Limits.MaximumEntryBytes &&
+                                        !ScanResourceSession.Allow("ContainerLimits.MaximumEntryBytes", copied, known: false))
+                                        throw new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.09"));
                                     if (copied > entry.Size)
-                                        throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, "成员实际展开长度超过声明大小。");
+                                        throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.10"));
                                     hash.AppendData(buffer, 0, read); checksum.Write(buffer, 0, read);
                                     await output.WriteAsync(buffer.AsMemory(0, read), context.Token);
                                 }
@@ -357,10 +382,10 @@ public sealed partial class ContentScanner
                     context.Budget.AcceptExpansion(copied);
                     attempt.ValidatedPassword |= verifier.CanValidatePassword;
                     attempt.Members.Add(new(output, name, display, Convert.ToHexString(hash.GetHashAndReset()), copied, entry.IsEncrypted));
-                    context.Progress?.Report(new("归档成员已校验", display, attempt.Members.Count, null,
-                        "已核对成员长度、归档完整性和内容 SHA-256；内容引擎尚未开始。"));
+                    context.Progress?.Report(new(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.11"), display, attempt.Members.Count, null,
+                        MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.12")));
 
-                    bool SkipLimitedZipMember(string ruleId, string detail)
+                    bool SkipLimitedZipMember(string ruleId, MessageText detail)
                     {
                         if (!session.CanSkipCurrentUnopenedEntry) return false;
                         session.SkipCurrentUnopenedEntry(entry);
@@ -383,12 +408,12 @@ public sealed partial class ContentScanner
     {
         if (plan.Status != ArchiveVolumeStatus.Ready)
         {
-            node.DirectoryRead = VolumeStatus(plan.Status); ContainerGap(context, node, node.DirectoryRead, plan.Detail,
+            node.DirectoryRead = VolumeStatus(plan.Status); ContainerGap(context, node, node.DirectoryRead, plan.DetailText,
                 plan.Status == ArchiveVolumeStatus.MissingVolume ? "ARCHIVE-MISSING-VOLUME" : "ARCHIVE-UNSUPPORTED"); return;
         }
         node.DirectoryRead = node.Integrity = ContainerStageStatus.Pending;
         if (plan.Layout != ArchiveVolumeLayout.Single) node.Kind = ContainerNodeKind.VolumeGroup;
-        node.Format = plan.Format + (plan.Members.Count > 1 ? $" ({plan.Members.Count} 卷)" : "");
+        node.FormatText = plan.Format.ToString() + (plan.Members.Count > 1 ? MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.01", (plan.Members.Count)) : (MessageText)"");
         using ContainerGroupLease lease = await ContainerGroupLease.CaptureAsync(plan, context);
         node.VolumeGroupSha256 = lease.Identity;
         node.Volumes.Clear();
@@ -410,7 +435,7 @@ public sealed partial class ContentScanner
         if (_decodedGroups.TryGetValue(reuseKey, out ContainerScanNode? previous))
         {
             node.ReusedNodeId = previous.NodeId;
-            node.Details.Add($"本轮同身份卷组的解码已经完成，内容范围引用节点 {previous.NodeId}；未再次尝试密码或解码。");
+            node.AddDetail(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.02", (previous.NodeId)));
             node.DirectoryRead = previous.DirectoryRead; node.Decryption = previous.Decryption;
             node.Integrity = previous.Integrity; node.ContentCheck = previous.ContentCheck; node.Overall = previous.Overall;
             return;
@@ -508,8 +533,8 @@ public sealed partial class ContentScanner
                             _ => ContainerStageStatus.Corrupt
                         };
                         node.Integrity = status;
-                        ContainerGap(context, node, status, "归档未完整验证（" + attempt.Failure.GetType().Name + "）：" +
-                            (attempt.Failure is ArchiveVolumeException or ContainerEntryLimitException or ScanResourceLimitException ? attempt.Failure.Message : "可能损坏、读取受阻或格式未支持。"),
+                        ContainerGap(context, node, status, MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.03") + attempt.Failure.GetType().Name + "）：" +
+                            (attempt.Failure is ArchiveVolumeException or ContainerEntryLimitException or ScanResourceLimitException ? MessageExceptions.Describe(attempt.Failure) : MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.04")),
                             attempt.Failure is ContainerEntryLimitException entryLimit ? entryLimit.RuleId :
                                 attempt.Failure is ScanResourceLimitException ? "ARCHIVE-ATTEMPT-LIMIT" : "ARCHIVE-UNSUPPORTED");
                     }
@@ -517,8 +542,7 @@ public sealed partial class ContentScanner
                     // distinct later attempt after the user supplies missing input.
                     if (attempt.Complete && attempt.GroupHash is not null)
                     {
-                        node.Overall = ContainerCompletionStatus(node, context.Report.Containers!.Nodes
-                            .Where(child => child.ParentId == node.NodeId));
+                        node.Overall = ContainerCompletionStatus(node, ChildrenOf(node));
                         _decodedGroups.TryAdd(reuseKey, node);
                     }
                 }
@@ -535,12 +559,12 @@ public sealed partial class ContentScanner
             if (_passwords.IsDeferred(identity))
             {
                 ContainerGap(context, node, ContainerStageStatus.Skipped,
-                    "本轮已暂缓这份未解密内容；可补查原始内容后提供新密码。", "ARCHIVE-ENCRYPTED-DEFERRED"); return;
+                    MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.05"), "ARCHIVE-ENCRYPTED-DEFERRED"); return;
             }
             if (_passwords.SkipAllEncrypted)
             {
                 _passwords.Defer(identity); ContainerGap(context, node, ContainerStageStatus.Skipped,
-                    "本次已跳过这份未解密内容；可补查原始内容后提供新密码。", "ARCHIVE-ENCRYPTED-NOT-SCANNED"); return;
+                    MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.06"), "ARCHIVE-ENCRYPTED-NOT-SCANNED"); return;
             }
             bool repeated = false;
             while (true)
@@ -549,16 +573,16 @@ public sealed partial class ContentScanner
                 if (manualAttempts >= 3)
                 {
                     _passwords.Defer(identity); ContainerGap(context, node, ContainerStageStatus.PasswordFailed,
-                        "已达到本次密码输入次数上限；可补查原始内容后提供新密码。", "ARCHIVE-PASSWORD-FAILED"); return;
+                        MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.07"), "ARCHIVE-PASSWORD-FAILED"); return;
                 }
                 ArchivePasswordPromptKind kind = repeated ? ArchivePasswordPromptKind.RepeatedPassword : manualAttempts > 0 ?
                     ArchivePasswordPromptKind.EnteredPasswordFailed : cachedFailures > 0 ? ArchivePasswordPromptKind.CachedPasswordFailed : ArchivePasswordPromptKind.Needed;
-                string reason = kind switch
+                MessageText reason = kind switch
                 {
-                    ArchivePasswordPromptKind.CachedPasswordFailed => "已尝试本次暂存且适用的密码，仍未解开这一层。可能需要其他密码，也不能排除内容损坏或格式兼容问题。",
-                    ArchivePasswordPromptKind.EnteredPasswordFailed => "刚才输入的密码未能通过这一层的解密与完整性校验。请提供其他密码；也不能排除内容损坏或格式兼容问题。",
-                    ArchivePasswordPromptKind.RepeatedPassword => "这些密码在本轮已尝试且未通过这一层的校验，未重复解码。请提供其他密码，或暂缓这份内容。",
-                    _ => "这一层包含加密内容，需要密码才能继续解密与完整性校验。外层密码不一定适用于内层。"
+                    ArchivePasswordPromptKind.CachedPasswordFailed => MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.CachedPasswordFailed.01"),
+                    ArchivePasswordPromptKind.EnteredPasswordFailed => MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.EnteredPasswordFailed.01"),
+                    ArchivePasswordPromptKind.RepeatedPassword => MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.RepeatedPassword.01"),
+                    _ => MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.08")
                 };
                 ArchivePasswordResponse response = await AskPasswordAsync(node.DisplayPath, identity, plan.Format.ToString(), node.Depth,
                     context.WorkshopId, reason,
@@ -569,7 +593,7 @@ public sealed partial class ContentScanner
                 if (response.Cancelled || supplied.Count == 0)
                 {
                     _passwords.Defer(identity); ContainerGap(context, node, ContainerStageStatus.Skipped,
-                        "已跳过未解密内容，可补查原始内容后提供密码。", "ARCHIVE-ENCRYPTED-NOT-SCANNED"); return;
+                        MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.09"), "ARCHIVE-ENCRYPTED-NOT-SCANNED"); return;
                 }
                 manualAttempts++;
                 if (response.Passwords?.Any(value => !string.IsNullOrEmpty(value)) == true)
@@ -580,7 +604,7 @@ public sealed partial class ContentScanner
                 if (_passwords.SkipAllEncrypted)
                 {
                     _passwords.Defer(identity); ContainerGap(context, node, ContainerStageStatus.Skipped,
-                        "已按本次设置跳过未解密内容。", "ARCHIVE-ENCRYPTED-NOT-SCANNED"); return;
+                        MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.10"), "ARCHIVE-ENCRYPTED-NOT-SCANNED"); return;
                 }
                 repeated = true;
             }
@@ -599,7 +623,7 @@ public sealed partial class ContentScanner
         {
             if (context.Budget.Snapshot().PasswordAttempts < context.Budget.Limits.MaximumPasswordAttempts) return false;
             node.Decryption = ContainerStageStatus.LimitReached;
-            ContainerGap(context, node, ContainerStageStatus.LimitReached, "本轮密码解码尝试达到上限，未继续询问或解码。", "ARCHIVE-ATTEMPT-LIMIT");
+            ContainerGap(context, node, ContainerStageStatus.LimitReached, MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.11"), "ARCHIVE-ATTEMPT-LIMIT");
             return true;
         }
     }
@@ -626,12 +650,12 @@ public sealed partial class ContentScanner
             if (context.Report.Containers!.Nodes.Count >= context.Budget.Limits.MaximumNodes)
             {
                 ContainerGap(context, parent, ContainerStageStatus.LimitReached,
-                    $"容器节点达到容量上限；{members.Count} 个声明超限成员的逐项记录可能不完整。", member.RuleId);
+                    MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.PreserveSkippedContainerMembers.01", (members.Count)), member.RuleId);
                 break;
             }
             ContainerScanNode node = AddContainerNode(context, member.Display, parent.OriginalTarget, parent,
                 parent.Depth + 1, ContainerNodeKind.ArchiveMember, member.Length);
-            node.Format = "未打开归档成员（仅目录声明）";
+            node.FormatText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.PreserveSkippedContainerMembers.02");
             node.Recognition = ContainerStageStatus.Pending;
             node.Decryption = member.IsEncrypted ? ContainerStageStatus.Skipped : ContainerStageStatus.NotRequested;
             node.Integrity = node.ContentCheck = node.Overall = ContainerStageStatus.LimitReached;
@@ -640,7 +664,7 @@ public sealed partial class ContentScanner
                 Engine = "SHA-256",
                 Status = ContainerStageStatus.Skipped,
                 Length = member.Length,
-                Detail = "仅保留目录声明长度；未读取成员内容，没有可验证的内容 SHA-256。"
+                DetailText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.PreserveSkippedContainerMembers.03")
             });
             ContainerGap(context, node, ContainerStageStatus.LimitReached, member.Detail, member.RuleId);
             BindContainerFindings(context, node, firstFinding);
@@ -672,7 +696,7 @@ public sealed partial class ContentScanner
                 node = AddContainerNode(context, member.Display, parent.OriginalTarget, parent, parent.Depth + 1,
                     ContainerNodeKind.ArchiveMember, member.Length);
                 member.PublishedNodeId = node.NodeId;
-                node.Format = "已校验归档成员（格式待检查）";
+                node.FormatText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.PreserveVerifiedContainerMembers.01");
                 node.Recognition = ContainerStageStatus.Pending;
                 node.Integrity = ContainerStageStatus.Complete;
                 node.Decryption = member.IsEncrypted ? ContainerStageStatus.Complete : ContainerStageStatus.NotRequested;
@@ -689,13 +713,13 @@ public sealed partial class ContentScanner
                     Engine = "SHA-256",
                     Status = ContainerStageStatus.Complete,
                     Length = member.Length,
-                    Detail = "上层解码完成时已计算并核对归档完整性；中止后只保留元数据，未重读临时内容。"
+                    DetailText = MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.PreserveVerifiedContainerMembers.02")
                 });
-            if (node.Details.Count < 32) node.Details.Add("归档成员身份已验证；后续格式识别或内容引擎未全部完成。未将临时文件声明为已交付恢复副本。");
+            if (node.Details.Count < 32) node.AddDetail(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.PreserveVerifiedContainerMembers.03"));
             node.CompletedAtUtc = DateTimeOffset.UtcNow; node.Revision++;
         }
         if (omitted > 0 && parent.Details.Count < 32)
-            parent.Details.Add($"容器节点已达容量上限，另有 {omitted} 个已校验成员未能登记；该部分证据仍有缺口。");
+            parent.AddDetail(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.PreserveVerifiedContainerMembers.04", (omitted)));
         context.Report.Containers!.Resources = context.Budget.Snapshot();
         context.Report.Containers.Complete = false; context.Report.Coverage = ScanCoverage.Partial;
         Checkpoint?.Invoke(context.Report);

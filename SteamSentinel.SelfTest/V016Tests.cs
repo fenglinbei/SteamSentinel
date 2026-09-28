@@ -204,6 +204,8 @@ internal static partial class Program
                 TestV018Window();
                 TestV0115Window();
                 TestV0117Layout();
+                TestV030UiPresentation(null);
+                TestV030LanguageControls(null);
                 app.Shutdown();
             }
             catch (Exception ex) { failure = ex; }

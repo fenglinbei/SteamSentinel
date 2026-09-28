@@ -11,9 +11,11 @@ public static class WorkerMessageTypes
     public const string Failed = "failed";
     public const string Cancel = "cancel";
     public const string Checkpoint = "checkpoint";
+    public const string ResourceRequest = "resource-request";
+    public const string ResourceResponse = "resource-response";
 }
 
-public sealed class WorkerMessage
+public sealed partial class WorkerMessage
 {
     public string Type { get; init; } = string.Empty;
     public ScanOptions? Options { get; init; }
@@ -22,10 +24,13 @@ public sealed class WorkerMessage
     public ArchivePasswordResponse? PasswordResponse { get; init; }
     public ScanReport? Report { get; init; }
     public string? Error { get; init; }
+    public string? ReasonCode { get; init; }
     public string? Containment { get; init; }
     public ReportBatch? Batch { get; init; }
     public int? BatchCount { get; init; }
     public WorkerDiagnostics? Diagnostics { get; init; }
+    public ScanLimitRequest? ResourceRequest { get; init; }
+    public ScanLimitResponse? ResourceResponse { get; init; }
 }
 
 public static class ScanReportMerger
@@ -37,6 +42,8 @@ public static class ScanReportMerger
             ProductVersion = first.ProductVersion,
             BuildIdentity = first.BuildIdentity,
             Mode = first.Mode,
+            StatusSchemaVersion = Math.Max(first.StatusSchemaVersion, second.StatusSchemaVersion),
+            ExecutionState = ScanExecution.Combine(first.ExecutionState, second.ExecutionState),
             StartedAtUtc = first.StartedAtUtc < second.StartedAtUtc ? first.StartedAtUtc : second.StartedAtUtc,
             RuleSetVersion = first.RuleSetVersion,
             CompletedAtUtc = new[] { first.CompletedAtUtc, second.CompletedAtUtc }.Max(),
@@ -46,7 +53,12 @@ public static class ScanReportMerger
                     ? ScanCoverage.Skipped
                     : ScanCoverage.Complete
         };
+        merged.ExecutionReasonCode = merged.ExecutionState == first.ExecutionState ? first.ExecutionReasonCode : second.ExecutionReasonCode;
+        if (merged.ExecutionState is ScanExecutionState.Running or ScanExecutionState.NotStarted or ScanExecutionState.Unknown) merged.CompletedAtUtc = null;
+        merged.CoverageNotices.AddRange(first.CoverageNotices.Concat(second.CoverageNotices));
+        merged.LegacyExecutionStatus = first.LegacyExecutionStatus ?? second.LegacyExecutionStatus;
         merged.ContentScanSettings = second.ContentScanSettings ?? first.ContentScanSettings;
+        merged.ResourceAudit = ScanResourceAudit.Merge(first.ResourceAudit, second.ResourceAudit);
         merged.WorkerDiagnostics = second.WorkerDiagnostics ?? first.WorkerDiagnostics;
         merged.TrustProxyDiagnostics = second.TrustProxyDiagnostics ?? first.TrustProxyDiagnostics;
         merged.RelatedComponentDiagnostics = second.RelatedComponentDiagnostics ?? first.RelatedComponentDiagnostics;
@@ -54,9 +66,9 @@ public static class ScanReportMerger
         if (merged.Containers is { Complete: false }) merged.Coverage = ScanCoverage.Partial;
         merged.Roots.AddRange(first.Roots.Concat(second.Roots).Distinct(StringComparer.OrdinalIgnoreCase));
         merged.CandidateRoots.AddRange(first.CandidateRoots.Concat(second.CandidateRoots).Distinct(StringComparer.OrdinalIgnoreCase));
-        merged.ContentSources.AddRange(first.ContentSources.Concat(second.ContentSources).Distinct(StringComparer.OrdinalIgnoreCase));
-        merged.ScopeNotes.AddRange(first.ScopeNotes.Concat(second.ScopeNotes).Distinct(StringComparer.Ordinal));
-        merged.CoverageNotes.AddRange(first.CoverageNotes.Concat(second.CoverageNotes).Distinct(StringComparer.Ordinal));
+        foreach (var text in first.ContentSourceTexts.Concat(second.ContentSourceTexts).DistinctBy(text => text.OriginalText, StringComparer.OrdinalIgnoreCase)) merged.AddContentSource(text);
+        foreach (var text in first.ScopeTexts.Concat(second.ScopeTexts).DistinctBy(text => text.OriginalText, StringComparer.Ordinal)) merged.AddScopeNote(text);
+        foreach (var text in first.CoverageTexts.Concat(second.CoverageTexts).DistinctBy(text => text.OriginalText, StringComparer.Ordinal)) merged.AddCoverageNote(text);
         // Preserve independently scanned occurrences; immutable groups cannot be changed by merging.
         merged.CoverageAggregates.AddRange(first.CoverageAggregates.Concat(second.CoverageAggregates));
         merged.Findings.AddRange(first.Findings.Concat(second.Findings));

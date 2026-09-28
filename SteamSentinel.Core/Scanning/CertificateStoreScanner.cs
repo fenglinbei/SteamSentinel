@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -52,7 +53,7 @@ public sealed class CertificateStoreScanner
                     Provider = PhysicalProvider,
                     UserSid = scope == "CurrentUser" ? diagnostic.TargetUserSid : null,
                     Status = DiagnosticReadStatus.NotChecked,
-                    Detail = "仅物理注册表存储；不合并另一作用域或逻辑存储的继承证书。"
+                    DetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.01")
                 };
                 stores.Add(store);
                 diagnostic.CertificateStores.Add(store);
@@ -64,29 +65,29 @@ public sealed class CertificateStoreScanner
             if (limits.MaximumCertificatesPerStore < 0 || limits.MaximumCertificateBytes < 0 ||
                 limits.MaximumTotalCertificateBytes < 0 || limits.MaximumDuration < TimeSpan.Zero)
             {
-                FinishUnread(stores, DiagnosticReadStatus.Failed, "证书采集限额无效，未打开任何证书存储。");
-                diagnostic.Checks.Add(new() { Name = "证书采集限额", Status = DiagnosticReadStatus.Failed, Detail = "限额不得为负数。" });
+                FinishUnread(stores, DiagnosticReadStatus.Failed, MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.02"));
+                diagnostic.Checks.Add(new() { NameText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.03"), Status = DiagnosticReadStatus.Failed, DetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.04") });
                 return;
             }
-            string? identityFailure = ValidateIdentity(diagnostic.TargetUserSid);
+            MessageText? identityFailure = ValidateIdentity(diagnostic.TargetUserSid);
             if (identityFailure is not null)
             {
                 FinishUnread(stores, DiagnosticReadStatus.AccessDenied, identityFailure);
-                diagnostic.Checks.Add(new() { Name = "证书采集用户身份", Status = DiagnosticReadStatus.AccessDenied, Detail = identityFailure });
+                diagnostic.Checks.Add(new() { NameText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.05"), Status = DiagnosticReadStatus.AccessDenied, DetailText = identityFailure });
                 return;
             }
             diagnostic.Checks.Add(new()
             {
-                Name = "证书采集用户身份",
+                NameText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.06"),
                 Status = DiagnosticReadStatus.Complete,
-                Detail = "发起扫描的目标 SID 与当前有效 Windows 用户 SID 完整匹配。"
+                DetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.07")
             });
             diagnostic.Checks.Add(new()
             {
-                Name = "证书物理来源范围",
+                NameText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.08"),
                 Status = DiagnosticReadStatus.Complete,
                 Required = false,
-                Detail = "仅当前用户和本机的物理注册表 Root/CA；包含注册表中可枚举的归档证书及未按保护根缓存过滤的条目。未合并组策略、企业、AuthRoot、其他用户或其他物理提供程序。这是注册快照，不是 Windows 实际有效信任列表；未读取私钥，证书有效期不代表安装时间。"
+                DetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.09")
             });
 
             long totalBytes = 0;
@@ -95,15 +96,15 @@ public sealed class CertificateStoreScanner
             foreach (CertificateStoreObservation store in stores)
             {
                 token.ThrowIfCancellationRequested();
-                string? currentIdentityFailure = ValidateIdentity(diagnostic.TargetUserSid);
+                MessageText? currentIdentityFailure = ValidateIdentity(diagnostic.TargetUserSid);
                 if (currentIdentityFailure is not null)
                 {
                     FinishUnread(stores, DiagnosticReadStatus.AccessDenied, currentIdentityFailure);
                     diagnostic.Checks.Add(new()
                     {
-                        Name = "证书采集期间用户身份",
+                        NameText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.10"),
                         Status = DiagnosticReadStatus.AccessDenied,
-                        Detail = "打开下一物理存储前重新核验失败：" + currentIdentityFailure
+                        DetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.11") + currentIdentityFailure
                     });
                     break;
                 }
@@ -111,24 +112,24 @@ public sealed class CertificateStoreScanner
                     limits.MaximumCertificateBytes == 0 || limits.MaximumTotalCertificateBytes == 0)
                 {
                     store.Status = DiagnosticReadStatus.LimitReached;
-                    store.Detail += " 读取前已达到证书时间、数量或字节限额，未打开此存储。";
+                    store.DetailText += MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.12");
                     continue;
                 }
                 int visited = 0, malformed = 0;
-                string? localLimit = null;
+                MessageText? localLimit = null;
                 try
                 {
                     CertificateStoreReadResult read = _reader.Read(new(store.Scope, store.StoreName, store.UserSid),
                         encodedBytes =>
                         {
                             token.ThrowIfCancellationRequested();
-                            if (Expired()) localLimit = "证书采集时间预算已用尽。";
-                            else if (visited >= limits.MaximumCertificatesPerStore) localLimit = "单存储证书数量达到上限。";
-                            else if (encodedBytes > limits.MaximumCertificateBytes) localLimit = "证书 DER 超过单项字节上限，未复制该对象。";
+                            if (Expired()) localLimit = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.13");
+                            else if (visited >= limits.MaximumCertificatesPerStore) localLimit = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.14");
+                            else if (encodedBytes > limits.MaximumCertificateBytes) localLimit = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.15");
                             else if (encodedBytes > limits.MaximumTotalCertificateBytes - totalBytes)
-                            { totalLimitReached = true; localLimit = "证书 DER 总字节预算不足，未复制该对象。"; }
+                            { totalLimitReached = true; localLimit = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.16"); }
                             if (localLimit is not null) return false;
-                            if (encodedBytes <= 0) throw new InvalidDataException("证书上下文没有有效公开 DER。");
+                            if (encodedBytes <= 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.17"), sourceText => new InvalidDataException(sourceText));
                             visited++;
                             totalBytes += encodedBytes;
                             return true;
@@ -151,26 +152,26 @@ public sealed class CertificateStoreScanner
                             finally { certificate?.Dispose(); }
                         }, token);
                     store.Status = localLimit is not null ? DiagnosticReadStatus.LimitReached : malformed > 0 ? DiagnosticReadStatus.Failed : read.Status;
-                    store.Detail += " " + read.Detail;
-                    if (localLimit is not null) store.Detail += " " + localLimit;
-                    if (malformed > 0) store.Detail += $" {malformed} 个公开证书或扩展无法解析；未把这些对象视为已检查或恶意。";
+                    store.DetailText += " " + read.DetailText;
+                    if (localLimit is not null) store.DetailText += " " + localLimit;
+                    if (malformed > 0) store.DetailText += MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.18", (malformed));
                     if (Expired() && store.Status == DiagnosticReadStatus.Complete)
-                    { store.Status = DiagnosticReadStatus.LimitReached; store.Detail += " 本次读取结束时已超过时间预算。"; }
+                    { store.Status = DiagnosticReadStatus.LimitReached; store.DetailText += MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.19"); }
                 }
                 catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException)
-                { store.Status = DiagnosticReadStatus.AccessDenied; store.Detail += " 读取权限不足：" + ex.Message; }
+                { store.Status = DiagnosticReadStatus.AccessDenied; store.DetailText += MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.20") + MessageExceptions.Describe(ex); }
                 catch (Exception ex) when (ex is Win32Exception or CryptographicException or IOException or ArgumentException or NotSupportedException)
-                { store.Status = DiagnosticReadStatus.Failed; store.Detail += " 读取失败：" + ex.Message; }
+                { store.Status = DiagnosticReadStatus.Failed; store.DetailText += MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.21") + MessageExceptions.Describe(ex); }
             }
             VerifySnapshotChains(collected, limits, started, verificationTime, token);
         }
         catch (OperationCanceledException)
         {
-            FinishUnread(stores, DiagnosticReadStatus.Cancelled, "证书采集已取消，尚未完成此物理存储。");
+            FinishUnread(stores, DiagnosticReadStatus.Cancelled, MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.22"));
             foreach (CollectedCertificate item in collected.Where(c => c.Observation.ChainStatus == DiagnosticReadStatus.NotChecked))
             {
                 item.Observation.ChainStatus = DiagnosticReadStatus.Cancelled;
-                item.Observation.ChainDetail = "取消后未继续证书链检查。";
+                item.Observation.ChainDetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.Collect.23");
             }
             throw;
         }
@@ -180,19 +181,19 @@ public sealed class CertificateStoreScanner
         }
     }
 
-    private string? ValidateIdentity(string targetSid)
+    private MessageText? ValidateIdentity(string targetSid)
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(targetSid)) return "缺少目标用户 SID；未打开证书存储。";
+            if (string.IsNullOrWhiteSpace(targetSid)) return MessageText.Create("Backend.Core.CertificateStoreScanner.ValidateIdentity.01");
             SecurityIdentifier target = new(targetSid);
             string? effectiveValue = _currentUserSid();
-            if (string.IsNullOrWhiteSpace(effectiveValue)) return "无法取得当前有效用户 SID；未打开证书存储。";
+            if (string.IsNullOrWhiteSpace(effectiveValue)) return MessageText.Create("Backend.Core.CertificateStoreScanner.ValidateIdentity.02");
             SecurityIdentifier effective = new(effectiveValue);
-            return target.Equals(effective) ? null : "当前有效用户 SID 与目标 SID 不匹配；未改用其他管理员的证书视图。";
+            return target.Equals(effective) ? null : MessageText.Create("Backend.Core.CertificateStoreScanner.ValidateIdentity.03");
         }
         catch (Exception ex) when (ex is ArgumentException or UnauthorizedAccessException or System.Security.SecurityException or Win32Exception)
-        { return "用户 SID 无法核验，未打开证书存储：" + ex.Message; }
+        { return MessageText.Create("Backend.Core.CertificateStoreScanner.ValidateIdentity.04") + MessageExceptions.Describe(ex); }
     }
 
     private static string? CurrentUserSid()
@@ -237,7 +238,7 @@ public sealed class CertificateStoreScanner
             KeyUsage = usage?.KeyUsages.ToString(),
             EnhancedKeyUsages = ekus.Distinct(StringComparer.Ordinal).ToList(),
             ChainScope = SnapshotChainScope,
-            ChainDetail = "尚未进行离线快照链检查；主体与颁发者编码相同不等于自签名已验证。"
+            ChainDetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.Describe.01")
         };
     }
 
@@ -257,7 +258,7 @@ public sealed class CertificateStoreScanner
             if (_time.GetElapsedTime(started) >= limits.MaximumDuration)
             {
                 observation.ChainStatus = DiagnosticReadStatus.LimitReached;
-                observation.ChainDetail = "时间预算不足，未完成此证书的离线链检查；不能据此判定信任或恶意。";
+                observation.ChainDetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.01");
                 continue;
             }
             try
@@ -270,7 +271,7 @@ public sealed class CertificateStoreScanner
                 if (_time.GetElapsedTime(started) >= limits.MaximumDuration)
                 {
                     observation.ChainStatus = DiagnosticReadStatus.LimitReached;
-                    observation.ChainDetail = "链构建返回时已超过时间预算，未将该次结果作为完整检查。时间预算在每个本机 API 调用前后检查。";
+                    observation.ChainDetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.02");
                     continue;
                 }
                 // Windows may consider cached intermediates even with CustomRootTrust.
@@ -279,36 +280,57 @@ public sealed class CertificateStoreScanner
                 {
                     observation.ChainStatus = DiagnosticReadStatus.NotChecked;
                     observation.ChainFlags.Add("OutsideCapturedSnapshot");
-                    observation.ChainDetail = "本机链引擎返回了采集快照之外的证书，已丢弃该链结论；离线快照范围未知，不代表证书恶意。";
+                    observation.ChainDetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.03");
                     continue;
                 }
                 observation.ChainStatus = DiagnosticReadStatus.Complete;
                 observation.ChainFlags.AddRange(result.Flags);
                 observation.ChainCertificateSha256.AddRange(result.CertificateHashes);
-                observation.ChainDetail = (result.Valid ? "在已采集 Root 锚点和 CA 中间证书的范围内可构建链。" : "在已采集的证书范围内未通过链验证。") +
-                    " 未下载证书，未检查撤销，也未评估 Windows 全部实际信任策略、站点身份或安装来源；未通过不等于恶意。" +
-                    (roots.Count == 0 ? " 此快照没有 Root 信任锚点。" : "") +
-                    " 未单独验证自签名，SelfSignatureVerified 保持未知。";
+                observation.ChainDetailText = (result.Valid ? MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.04") : MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.05")) +
+                    MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.06") +
+                    (roots.Count == 0 ? MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.07") : (MessageText)"") +
+                    MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.08");
             }
             catch (Exception ex) when (ex is CryptographicException or ArgumentException or NotSupportedException)
             {
                 observation.ChainStatus = DiagnosticReadStatus.Failed;
-                observation.ChainDetail = "离线快照链检查失败，不能据此判恶：" + ex.Message;
+                observation.ChainDetailText = MessageText.Create("Backend.Core.CertificateStoreScanner.VerifySnapshotChains.09") + MessageExceptions.Describe(ex);
             }
         }
     }
 
-    private static void FinishUnread(IEnumerable<CertificateStoreObservation> stores, DiagnosticReadStatus status, string detail)
+    private static void FinishUnread(IEnumerable<CertificateStoreObservation> stores, DiagnosticReadStatus status, MessageText detail)
     {
         foreach (CertificateStoreObservation store in stores.Where(s => s.Status == DiagnosticReadStatus.NotChecked))
-        { store.Status = status; store.Detail += " " + detail; }
+        { store.Status = status; store.DetailText += " " + detail; }
     }
 
     private sealed record CollectedCertificate(X509Certificate2 Certificate, CertificateObservation Observation, string StoreName);
 }
 
 internal sealed record PhysicalCertificateStoreRequest(string Scope, string StoreName, string? UserSid);
-internal sealed record CertificateStoreReadResult(DiagnosticReadStatus Status, string Detail);
+[method: System.Text.Json.Serialization.JsonConstructor]
+internal sealed record CertificateStoreReadResult(DiagnosticReadStatus Status, string Detail)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public CertificateStoreReadResult(DiagnosticReadStatus Status, SteamSentinel.Core.Reporting.MessageText Detail) : this(Status, Detail.OriginalText)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
 internal interface IPhysicalCertificateStoreReader
 {
     CertificateStoreReadResult Read(PhysicalCertificateStoreRequest store, Func<int, bool> reserveBytes,
@@ -365,7 +387,7 @@ internal sealed class NativePhysicalCertificateStoreReader : IPhysicalCertificat
         Action<byte[]> acceptCertificate, CancellationToken token)
     {
         if (store.Scope is not ("CurrentUser" or "LocalMachine") || store.StoreName is not ("Root" or "CA"))
-            throw new ArgumentException("只允许本机的 CurrentUser/LocalMachine Root/CA 物理存储。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.CertificateStoreScanner.Read.01"), sourceText => new ArgumentException(sourceText));
         token.ThrowIfCancellationRequested();
         using SafeCertificateStoreHandle handle = CertOpenStore(new IntPtr(13), 0, IntPtr.Zero, FlagsFor(store), store.StoreName);
         if (handle.IsInvalid)
@@ -373,7 +395,7 @@ internal sealed class NativePhysicalCertificateStoreReader : IPhysicalCertificat
             int error = Marshal.GetLastWin32Error();
             DiagnosticReadStatus status = error is 5 or unchecked((int)0x80070005) ? DiagnosticReadStatus.AccessDenied :
                 error is 2 or 3 or unchecked((int)0x80092004) ? DiagnosticReadStatus.NotPresent : DiagnosticReadStatus.Failed;
-            return new(status, $"物理注册表存储未打开；Windows 错误 0x{error:X8}。未创建存储，也不从逻辑视图补读。");
+            return new(status, MessageText.Create("Backend.Core.CertificateStoreScanner.Read.02", (System.FormattableString.Invariant($"{error:X8}"))));
         }
         IntPtr context = IntPtr.Zero;
         try
@@ -388,14 +410,14 @@ internal sealed class NativePhysicalCertificateStoreReader : IPhysicalCertificat
                 if (context == IntPtr.Zero)
                 {
                     int error = Marshal.GetLastWin32Error();
-                    return error == unchecked((int)0x80092004) ? new(DiagnosticReadStatus.Complete, "物理注册表证书枚举完成。") :
-                        new(DiagnosticReadStatus.Failed, $"证书枚举未完整结束；Windows 错误 0x{error:X8}。");
+                    return error == unchecked((int)0x80092004) ? new(DiagnosticReadStatus.Complete, MessageText.Create("Backend.Core.CertificateStoreScanner.Read.03")) :
+                        new(DiagnosticReadStatus.Failed, MessageText.Create("Backend.Core.CertificateStoreScanner.Read.04", (System.FormattableString.Invariant($"{error:X8}"))));
                 }
                 NativeCertificateContext certificate = Marshal.PtrToStructure<NativeCertificateContext>(context);
-                if (certificate.EncodedBytes > int.MaxValue) throw new InvalidDataException("证书公开 DER 长度无效。");
+                if (certificate.EncodedBytes > int.MaxValue) throw MessageExceptions.Create(MessageText.Create("Backend.Core.CertificateStoreScanner.Read.05"), sourceText => new InvalidDataException(sourceText));
                 int size = checked((int)certificate.EncodedBytes);
-                if (!reserveBytes(size)) return new(DiagnosticReadStatus.LimitReached, "按调用方预算停止读取；未复制超限证书。");
-                if (certificate.Encoded == IntPtr.Zero) throw new InvalidDataException("证书公开 DER 指针为空。");
+                if (!reserveBytes(size)) return new(DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.CertificateStoreScanner.Read.06"));
+                if (certificate.Encoded == IntPtr.Zero) throw MessageExceptions.Create(MessageText.Create("Backend.Core.CertificateStoreScanner.Read.07"), sourceText => new InvalidDataException(sourceText));
                 byte[] der = new byte[size];
                 Marshal.Copy(certificate.Encoded, der, 0, size);
                 acceptCertificate(der);

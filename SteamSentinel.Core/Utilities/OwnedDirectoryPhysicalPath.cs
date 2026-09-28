@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -18,7 +19,7 @@ public static class OwnedDirectoryPhysicalPath
     {
         string requested = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         if (!Directory.Exists(requested) || !ContentDiscovery.IsLocalSafePath(requested))
-            throw new IOException("自有工作目录不是可验证的本地普通目录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveForCreation.01"), sourceText => new IOException(sourceText));
         using SafeFileHandle root = OpenDirectory(requested);
         _ = DirectoryIdentity(root);
         // A packaged process can read a pre-existing real AppData directory while new child
@@ -26,16 +27,16 @@ public static class OwnedDirectoryPhysicalPath
         // merged root's read view, to determine where this process actually creates content.
         string name = ".steamsentinel-physical-" + Guid.NewGuid().ToString("N");
         string probe = Path.Combine(requested, name);
-        if (!CreateDirectory(probe, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法确定自有工作目录的创建位置。");
+        if (!CreateDirectory(probe, IntPtr.Zero)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveForCreation.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
         string? physicalProbe = null;
         try
         {
             physicalProbe = ResolveExisting(probe);
             if (!Path.GetFileName(physicalProbe).Equals(name, StringComparison.Ordinal))
-                throw new IOException("自有目录探针身份发生变化。");
-            string physicalRoot = Path.GetDirectoryName(physicalProbe) ?? throw new IOException("自有目录探针缺少父目录。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveForCreation.03"), sourceText => new IOException(sourceText));
+            string physicalRoot = Path.GetDirectoryName(physicalProbe) ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveForCreation.04"), sourceText => new IOException(sourceText));
             if (!ResolveExisting(physicalRoot).Equals(physicalRoot, StringComparison.OrdinalIgnoreCase))
-                throw new IOException("自有物理根目录在复核时发生变化。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveForCreation.05"), sourceText => new IOException(sourceText));
             return physicalRoot;
         }
         finally
@@ -50,20 +51,20 @@ public static class OwnedDirectoryPhysicalPath
 
     public static string ResolveExisting(string directory)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("临时目录身份校验需要 Windows。");
+        if (!OperatingSystem.IsWindows()) throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveExisting.01"), sourceText => new PlatformNotSupportedException(sourceText));
         string requested = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         if (!Directory.Exists(requested) || !ContentDiscovery.IsLocalSafePath(requested))
-            throw new IOException("自有工作目录不是可验证的本地普通目录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveExisting.02"), sourceText => new IOException(sourceText));
         using SafeFileHandle original = OpenDirectory(requested);
         FileInformation originalIdentity = DirectoryIdentity(original);
         string physical = FinalPath(original);
-        if (!ContentDiscovery.IsLocalSafePath(physical)) throw new IOException("自有工作目录的最终路径不安全。");
+        if (!ContentDiscovery.IsLocalSafePath(physical)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveExisting.03"), sourceText => new IOException(sourceText));
         using SafeFileHandle verified = OpenDirectory(physical);
         FileInformation physicalIdentity = DirectoryIdentity(verified);
         if (!FinalPath(verified).Equals(physical, StringComparison.OrdinalIgnoreCase) ||
             originalIdentity.VolumeSerialNumber != physicalIdentity.VolumeSerialNumber ||
             originalIdentity.FileIndexHigh != physicalIdentity.FileIndexHigh || originalIdentity.FileIndexLow != physicalIdentity.FileIndexLow)
-            throw new IOException("自有工作目录在确认物理路径时发生变化。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.ResolveExisting.04"), sourceText => new IOException(sourceText));
         return physical;
     }
 
@@ -74,7 +75,7 @@ public static class OwnedDirectoryPhysicalPath
         SafeFileHandle handle = CreateFile(path, 0x80, 3, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastWin32Error(); handle.Dispose();
-        throw new Win32Exception(error, "无法验证自有工作目录身份。");
+        throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.OpenDirectory.01"), sourceText => new Win32Exception(error, sourceText));
     }
 
     private static FileInformation DirectoryIdentity(SafeFileHandle handle)
@@ -82,7 +83,7 @@ public static class OwnedDirectoryPhysicalPath
         if (!GetFileInformationByHandle(handle, out FileInformation information) ||
             (information.Attributes & (uint)FileAttributes.Directory) == 0 ||
             (information.Attributes & (uint)FileAttributes.ReparsePoint) != 0)
-            throw new IOException("自有工作目录句柄不是普通目录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.DirectoryIdentity.01"), sourceText => new IOException(sourceText));
         return information;
     }
 
@@ -90,7 +91,7 @@ public static class OwnedDirectoryPhysicalPath
     {
         StringBuilder buffer = new(32768);
         uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
-        if (length == 0 || length >= buffer.Capacity) throw new IOException("无法取得自有工作目录物理路径。");
+        if (length == 0 || length >= buffer.Capacity) throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.FinalPath.01"), sourceText => new IOException(sourceText));
         string path = buffer.ToString();
         if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) path = path[4..];
         return Path.TrimEndingDirectorySeparator(path);

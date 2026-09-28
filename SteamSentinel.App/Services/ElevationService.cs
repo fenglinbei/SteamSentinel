@@ -1,9 +1,11 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 using SteamSentinel.Core.Utilities;
+using SteamSentinel.App.Localization;
 
 namespace SteamSentinel.App.Services;
 
@@ -48,11 +50,11 @@ internal sealed class ElevationService
     public ElevationOutcome OpenAdministratorWindow()
     {
         InstallationSecurityStatus installation = _validate();
-        if (!installation.IsProtected) throw new UnauthorizedAccessException(installation.Message);
+        if (!installation.IsProtected) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
         ProcessStartInfo info = CreateStartInfo();
         try
         {
-            if (!_start(info)) throw new InvalidOperationException("Windows 没有返回新窗口进程，请重试。");
+            if (!_start(info)) throw new InvalidOperationException(DisplayText.Get("Ui.ElevationService.OpenAdministratorWindow.01"));
             return ElevationOutcome.Opened;
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
@@ -72,6 +74,8 @@ internal sealed class ElevationService
             WindowStyle = ProcessWindowStyle.Normal // An interactive window explicitly requested by the user.
         };
         info.ArgumentList.Add(WindowArgument);
+        info.ArgumentList.Add(LanguageSettings.LanguageArgument);
+        info.ArgumentList.Add(LanguageSettings.CultureCode(DisplayText.Culture));
         return info;
     }
 }

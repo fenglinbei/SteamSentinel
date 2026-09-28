@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text.Json;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Steam;
@@ -36,10 +37,10 @@ public static class ProtectionConfiguration
             "[pscustomobject]@{Name=$_.Name;DisplayName=$_.DisplayName;Program=$a.Program;Direction=[int]$_.Direction;Action=[int]$_.Action;Enabled=[int]$_.Enabled;Profile=[int]$_.Profile}})}catch{$fe=$_.Exception.Message};" +
             "[pscustomobject]@{ExclusionPath=@($p.ExclusionPath);AttackSurfaceReductionOnlyExclusions=@($p.AttackSurfaceReductionOnlyExclusions);Firewall=$f;DefenderError=$e;FirewallError=$fe}|ConvertTo-Json -Depth 5 -Compress";
         using JsonDocument? result = await PowerShellProbe.RunJsonAsync(script, TimeSpan.FromSeconds(25), token);
-        if (result is null) { Partial(report, "关联安全配置未能读取，未提供自动恢复动作。"); return; }
+        if (result is null) { Partial(report, MessageText.Create("Backend.Core.ProtectionConfiguration.CollectAsync.01")); return; }
         foreach (string field in new[] { "DefenderError", "FirewallError" })
             if (result.RootElement.TryGetProperty(field, out JsonElement error) && error.ValueKind == JsonValueKind.String)
-                Partial(report, "部分关联安全配置无法读取：" + field);
+                Partial(report, MessageText.Create("Backend.Core.ProtectionConfiguration.CollectAsync.02") + field);
         foreach (string kind in new[] { "ExclusionPath", "AttackSurfaceReductionOnlyExclusions" })
         {
             if (!result.RootElement.TryGetProperty(kind, out JsonElement entries) || entries.ValueKind != JsonValueKind.Array) continue;
@@ -53,14 +54,14 @@ public static class ProtectionConfiguration
                     Category = FindingCategory.SecurityControl,
                     Severity = FindingSeverity.High,
                     Score = 90,
-                    Title = "恶意插件落点存在安全排除项",
-                    Description = "排除项与本机已确认的恶意插件相关，不能单凭此项断定由谁创建。处置只移除此路径。",
+                    TitleText = MessageText.Create("Backend.Core.ProtectionConfiguration.CollectAsync.03"),
+                    DescriptionText = MessageText.Create("Backend.Core.ProtectionConfiguration.CollectAsync.04"),
                     Target = path,
                     ConfigurationKind = kind,
                     ConfigurationSnapshot = path,
                     RelatedFilePath = binding.Target,
                     RelatedFileSha256 = binding.Sha256,
-                    Evidence = kind + "：" + path,
+                    EvidenceText = kind + "：" + path,
                     CanRemediate = true,
                     SuggestedActions = [SuggestedActionKind.RemoveRelatedDefenderExclusion]
                 });
@@ -77,19 +78,19 @@ public static class ProtectionConfiguration
                     Category = FindingCategory.Network,
                     Severity = FindingSeverity.High,
                     Score = 90,
-                    Title = "发现与已知投递链一致的放行规则",
-                    Description = "同时发现本机恶意插件，处置只禁用此条规则并保留回滚信息，不重置防火墙。",
+                    TitleText = MessageText.Create("Backend.Core.ProtectionConfiguration.CollectAsync.05"),
+                    DescriptionText = MessageText.Create("Backend.Core.ProtectionConfiguration.CollectAsync.06"),
                     Target = item.Name,
                     ConfigurationKind = "Firewall",
                     ConfigurationSnapshot = JsonSerializer.Serialize(item),
                     RelatedFilePath = binding.Target,
                     RelatedFileSha256 = binding.Sha256,
-                    Evidence = item.DisplayName + "：" + item.Program,
+                    EvidenceText = item.DisplayName + "：" + item.Program,
                     CanRemediate = true,
                     SuggestedActions = [SuggestedActionKind.DisableRelatedFirewallRule]
                 });
             }
     }
 
-    private static void Partial(ScanReport report, string note) { report.Coverage = ScanCoverage.Partial; report.CoverageNotes.Add(note); }
+    private static void Partial(ScanReport report, MessageText note) { report.Coverage = ScanCoverage.Partial; report.AddCoverageNote(note); }
 }

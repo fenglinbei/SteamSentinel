@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text;
 
 namespace SteamSentinel.Core.Utilities;
@@ -20,7 +21,7 @@ public sealed class BoundedLineReader(TextReader reader, int maximumCharacters =
             }
             int end = Array.IndexOf(_buffer, '\n', _position, _count - _position);
             int length = (end < 0 ? _count : end) - _position;
-            if (line.Length + length > maximumCharacters) throw new InvalidDataException("扫描通信数据超过单批安全上限。");
+            if (line.Length + length > maximumCharacters) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundedLineReader.ReadLineAsync.01"), sourceText => new InvalidDataException(sourceText));
             line.Append(_buffer, _position, length);
             _position += length;
             if (end >= 0) { _position++; return line.ToString().TrimEnd('\r'); }

@@ -74,6 +74,12 @@ internal static partial class Program
             await TestV020ContainerReviewAsync(root);
             await TestV020OtherArchivesAsync(root);
             await TestV020StructuredBudgetAsync(root);
+            await TestV030Async(root);
+            await TestV030StatusAsync(root);
+            await TestV030ResourcesAsync(root);
+            await TestV030LanguageSettingsAsync(root);
+            await TestV030BackendMessagesAsync(root);
+            await TestV030AdaptiveScanAsync(root);
             TestTrustProxyProxy();
             TestTrustProxyCertificates();
             await TestTrustProxyDiagnosticsAsync(root);
@@ -98,6 +104,7 @@ internal static partial class Program
             await TestWorkerProtocolAsync(root);
             await TestRestrictedWorkerClientAsync(root);
             await TestPlanBuilderAsync(root, rules);
+            TestV030RemediationScope();
             await TestBoundBrokerPlanAsync();
             await TestSecureFileLeaseAsync(root);
             await TestReportExportAsync(root, rules);
@@ -542,6 +549,7 @@ internal static partial class Program
         }
         string copied = await Hashing.Sha256FileExclusiveAsync(destination);
         Check("句柄绑定隔离复制、复核与删除", !File.Exists(source) && copied == expected);
+        await TestReadOnlyFileLeaseAsync(directory);
     }
 
     private static async Task TestWorkerProtocolAsync(string root)
@@ -732,10 +740,59 @@ internal static partial class Program
     {
         switch (args[0])
         {
+            case "--secure-lease-tests" when args.Length == 2:
+                string leaseRoot = Path.GetFullPath(args[1]);
+                if (Directory.Exists(leaseRoot) || File.Exists(leaseRoot)) throw new IOException("A new inert test directory is required.");
+                Directory.CreateDirectory(leaseRoot);
+                await TestSecureFileLeaseAsync(leaseRoot);
+                await JsonFile.WriteNewAsync(Path.Combine(leaseRoot, "results.json"), new
+                { passed = _passed, failed = Failures.Count, skipped = _skipped, failures = Failures });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--v030-lab" when args.Length == 3:
+                try { return await V030LabDriver.RunAsync(args[1], args[2]); }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"LAB_VALIDATION_FAILED: {ex.GetType().Name}: {ex.Message}");
+                    return 1;
+                }
+            case "--status-model-tests" when args.Length == 2:
+                return await RunV030StatusAsync(Path.GetFullPath(args[1]));
+            case "--resource-tests" when args.Length == 2:
+                return await RunV030ResourcesAsync(Path.GetFullPath(args[1]));
+            case "--language-settings-tests" when args.Length == 2:
+                return await RunV030LanguageSettingsAsync(Path.GetFullPath(args[1]));
+            case "--backend-message-tests" when args.Length == 2:
+                return await RunV030BackendMessagesAsync(Path.GetFullPath(args[1]));
+            case "--language-startup-probe" when args.Length >= 4:
+                return RunLanguageStartupProbe(args[1], args[2], args[3], args.Skip(4).ToArray());
+            case "--v030" when args.Length == 2:
+                return await RunV030Async(Path.GetFullPath(args[1]));
+            case "--v030-step4" when args.Length == 2:
+                return await RunV030Step4Async(Path.GetFullPath(args[1]));
+            case "--v030-ui-corpus" when args.Length == 3:
+                return await RunV030UiCorpusAsync(args[1], args[2]);
+            case "--v030-amsi" when args.Length == 3:
+                return await RunV030AmsiProbeAsync(args[1], args[2]);
+            case "--v030-basic" when args.Length == 3:
+                return await RunV030BasicProbeAsync(args[1], args[2]);
+            case "--v030-amsi-parallel" when args.Length == 2:
+                return await RunV030AmsiParallelProbeAsync(args[1]);
             case "--scan-settings" when args.Length is 2 or 3:
                 await TestScanLimitSettingsAsync(Path.GetFullPath(args[1]), args.Length == 3 ? Path.GetFullPath(args[2]) : null);
                 Console.WriteLine($"SETTINGS_PASS={_passed};FAIL={Failures.Count}");
                 return Failures.Count == 0 ? 0 : 1;
+            case "--scan-performance" when args.Length == 2:
+                return await RunScanPerformanceAsync(args[1]);
+            case "--scan-performance-matrix" when args.Length == 2:
+                return await RunScanPerformanceAsync(args[1], matrix: true);
+            case "--scan-adaptive" when args.Length == 2:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                try { await TestV030AdaptiveScanAsync(Path.GetFullPath(args[1])); }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "adaptive-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--scan-resource-ui" when args.Length == 3 && int.TryParse(args[2], out int resourceDpi) && resourceDpi is >= 100 and <= 200:
+                return await RunV030ResourceUiAsync(args[1], resourceDpi);
             case "--v020-signature" when args.Length is 3 or 4:
                 return await RunV020SignatureAsync(args[1], args[2], args.Length == 4 ? Path.GetFullPath(args[3]) : null);
             case "--v020-worker-boundaries" when args.Length is 3 or 4:
@@ -837,6 +894,11 @@ internal static partial class Program
                 return UiPreview.Render(args[1]);
             case "--layout-ui" when args.Length == 2:
                 return RunV0117LayoutUi(args[1]);
+            case "--layout-ui" when args.Length == 3 && args[2] is "zh-Hans" or "en-US":
+                return RunV0117LayoutUi(args[1], args[2]);
+            case "--layout-ui" when args.Length == 4 && args[2] is "zh-Hans" or "en-US" &&
+                int.TryParse(args[3], out int dpiPercent) && dpiPercent is 100 or 125 or 150 or 175 or 200:
+                return RunV0117LayoutUi(args[1], args[2], dpiPercent);
             case "--ui-dispatcher-test" when args.Length == 1:
                 TestV016Dialog();
                 Console.WriteLine($"UI_DISPATCHER_PASS={_passed};FAIL={Failures.Count}");

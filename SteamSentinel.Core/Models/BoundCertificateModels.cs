@@ -23,5 +23,25 @@ public sealed class BoundCertificateBackup
 }
 
 public enum BoundCertificateProbeStatus { Present, Absent, Changed, Unsupported, Unknown }
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record BoundCertificateProbe(BoundCertificateProbeStatus Status, string Detail)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
 
-public sealed record BoundCertificateProbe(BoundCertificateProbeStatus Status, string Detail);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public BoundCertificateProbe(BoundCertificateProbeStatus Status, SteamSentinel.Core.Reporting.MessageText Detail) : this(Status, Detail.OriginalText)
+    {
+        DetailMessage = Detail.Message;
+    }
+}

@@ -1,5 +1,8 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers.Binary;
 using System.Text;
+using System.Text.Json.Serialization;
+using SteamSentinel.Core.Models;
 
 namespace SteamSentinel.Core.Inspection;
 
@@ -38,7 +41,15 @@ public sealed record FileTypeResult(
     bool ExtensionMismatch,
     string? ExpectedExtension,
     bool IsArchive,
-    bool IsExecutableOrScript);
+    bool IsExecutableOrScript)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? LabelMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Label); init => field = value; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? ExpectedExtensionMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, ExpectedExtension); init => field = value; }
+    [JsonIgnore] public MessageText LabelText => new(Label, LabelMessage);
+    [JsonIgnore] public MessageText? ExpectedExtensionText => ExpectedExtension is null ? null : new(ExpectedExtension, ExpectedExtensionMessage);
+}
 
 public static class FileTypeDetector
 {
@@ -51,7 +62,7 @@ public static class FileTypeDetector
 
     public static async Task<FileTypeResult> DetectAsync(Stream stream, string displayPath, CancellationToken cancellationToken = default)
     {
-        if (!stream.CanRead || !stream.CanSeek) throw new ArgumentException("格式识别需要可定位只读流。", nameof(stream));
+        if (!stream.CanRead || !stream.CanSeek) throw MessageExceptions.Create(MessageText.Create("Backend.Core.FileTypeDetector.DetectAsync.01"), sourceText => new ArgumentException(sourceText, nameof(stream)));
         stream.Position = 0;
         byte[] head = new byte[64 * 1024];
         int read;
@@ -100,14 +111,16 @@ public static class FileTypeDetector
     private static FileTypeResult CreateResult(DetectedFileType type, string? extension)
     {
         extension = extension?.ToLowerInvariant() ?? string.Empty;
-        string? expected = ExpectedExtension(type);
+        MessageText? expected = ExpectedExtension(type);
+        MessageText label = Label(type);
         bool mismatch = IsMeaningfulMismatch(type, extension);
         bool archive = type is DetectedFileType.Zip or DetectedFileType.Rar or
             DetectedFileType.SevenZip or DetectedFileType.GZip or DetectedFileType.BZip2 or
             DetectedFileType.Xz or DetectedFileType.Zstandard or DetectedFileType.Tar or DetectedFileType.Cabinet;
         bool executable = type is DetectedFileType.PortableExecutable or DetectedFileType.PowerShell or
             DetectedFileType.Batch or DetectedFileType.JavaScript or DetectedFileType.Shortcut;
-        return new FileTypeResult(type, Label(type), mismatch, expected, archive, executable);
+        return new FileTypeResult(type, label.OriginalText, mismatch, expected?.OriginalText, archive, executable)
+        { LabelMessage = label.Message, ExpectedExtensionMessage = expected?.Message };
     }
 
     private static DetectedFileType DetectCore(ReadOnlySpan<byte> data, string extension)
@@ -201,10 +214,10 @@ public static class FileTypeDetector
         };
     }
 
-    private static string? ExpectedExtension(DetectedFileType type) => type switch
+    private static MessageText? ExpectedExtension(DetectedFileType type) => type switch
     {
         DetectedFileType.PortableExecutable => ".exe/.dll",
-        DetectedFileType.CompoundDocument => ".msi/.msp/复合文档",
+        DetectedFileType.CompoundDocument => MessageText.Create("Backend.Core.FileTypeDetector.ExpectedExtension.CompoundDocument.01"),
         DetectedFileType.Zip => ".zip",
         DetectedFileType.Rar => ".rar",
         DetectedFileType.Cabinet => ".cab",
@@ -223,25 +236,25 @@ public static class FileTypeDetector
         _ => null
     };
 
-    private static string Label(DetectedFileType type) => type switch
+    private static MessageText Label(DetectedFileType type) => type switch
     {
-        DetectedFileType.PortableExecutable => "Windows PE 可执行文件",
-        DetectedFileType.CompoundDocument => "OLE 结构化安装包或复合文档",
-        DetectedFileType.Zip => "ZIP 压缩包",
-        DetectedFileType.Rar => "RAR 压缩包",
-        DetectedFileType.Cabinet => "CAB 安装归档",
-        DetectedFileType.SevenZip => "7z 压缩包",
-        DetectedFileType.GZip => "GZip 数据",
-        DetectedFileType.BZip2 => "BZip2 数据",
-        DetectedFileType.Xz => "XZ 数据",
-        DetectedFileType.Zstandard => "Zstandard 数据",
-        DetectedFileType.Tar => "TAR 归档",
-        DetectedFileType.Mp4 => "MP4/ISO BMFF 媒体",
-        DetectedFileType.Shortcut => "Windows 快捷方式",
-        DetectedFileType.PowerShell => "PowerShell 脚本",
-        DetectedFileType.Batch => "批处理脚本",
+        DetectedFileType.PortableExecutable => MessageText.Create("Backend.Core.FileTypeDetector.Label.PortableExecutable.01"),
+        DetectedFileType.CompoundDocument => MessageText.Create("Backend.Core.FileTypeDetector.Label.CompoundDocument.01"),
+        DetectedFileType.Zip => MessageText.Create("Backend.Core.FileTypeDetector.Label.Zip.01"),
+        DetectedFileType.Rar => MessageText.Create("Backend.Core.FileTypeDetector.Label.Rar.01"),
+        DetectedFileType.Cabinet => MessageText.Create("Backend.Core.FileTypeDetector.Label.Cabinet.01"),
+        DetectedFileType.SevenZip => MessageText.Create("Backend.Core.FileTypeDetector.Label.SevenZip.01"),
+        DetectedFileType.GZip => MessageText.Create("Backend.Core.FileTypeDetector.Label.GZip.01"),
+        DetectedFileType.BZip2 => MessageText.Create("Backend.Core.FileTypeDetector.Label.BZip2.01"),
+        DetectedFileType.Xz => MessageText.Create("Backend.Core.FileTypeDetector.Label.Xz.01"),
+        DetectedFileType.Zstandard => MessageText.Create("Backend.Core.FileTypeDetector.Label.Zstandard.01"),
+        DetectedFileType.Tar => MessageText.Create("Backend.Core.FileTypeDetector.Label.Tar.01"),
+        DetectedFileType.Mp4 => MessageText.Create("Backend.Core.FileTypeDetector.Label.Mp4.01"),
+        DetectedFileType.Shortcut => MessageText.Create("Backend.Core.FileTypeDetector.Label.Shortcut.01"),
+        DetectedFileType.PowerShell => MessageText.Create("Backend.Core.FileTypeDetector.Label.PowerShell.01"),
+        DetectedFileType.Batch => MessageText.Create("Backend.Core.FileTypeDetector.Label.Batch.01"),
         DetectedFileType.JavaScript => "JavaScript",
-        DetectedFileType.Empty => "空文件",
+        DetectedFileType.Empty => MessageText.Create("Backend.Core.FileTypeDetector.Label.Empty.01"),
         _ => type.ToString()
     };
 }

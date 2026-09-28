@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+using SteamSentinel.Core.Reporting;
 using System.Text;
 using System.Text.RegularExpressions;
 using SteamSentinel.Core.Models;
@@ -10,7 +12,11 @@ public sealed record RelatedCommandInput(string RawCommand, string? WorkingDirec
 
 public sealed record RelatedResolvedCommandTarget(string Path, string Kind, string OriginalToken, string ResolutionBasis);
 public sealed record RelatedCommandResolution(DiagnosticReadStatus Status,
-    IReadOnlyList<RelatedResolvedCommandTarget> Targets, IReadOnlyList<string> Notes);
+    IReadOnlyList<RelatedResolvedCommandTarget> Targets, IReadOnlyList<string> Notes)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<int, DisplayMessage>? NoteMessages { get => SteamSentinel.Core.Models.DisplayMessageMap.Bound(Notes, field); init => field = value; }
+    [JsonIgnore] public IEnumerable<MessageText> NoteTexts => DisplayMessageMap.Read(Notes, NoteMessages);
+}
 
 /// <summary>
 /// Bounded lexical parsing, never a shell, PATH search, file read, or command execution.
@@ -35,7 +41,7 @@ public static class RelatedCommandResolver
         if (input.RawCommand.Length > MaximumCommandCharacters || input.ExecutablePath?.Length > MaximumCommandCharacters ||
             input.Arguments?.Length > MaximumCommandCharacters || input.WorkingDirectory?.Length > MaximumCommandCharacters)
         {
-            state.Limit("命令或工作目录超过 32768 字符上限，未截取成可执行目标。");
+            state.Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Resolve.01"));
             return state.Result();
         }
         string command = input.ExecutablePath is null ? input.RawCommand :
@@ -52,12 +58,12 @@ public static class RelatedCommandResolver
         State state = new(new(scriptPath, EnvironmentVariables: environmentVariables));
         if (script.Length > 256 * 1024)
         {
-            state.Limit("脚本正文超过 256 KiB 字符上限，未解析正文。");
+            state.Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.ResolveScriptLiterals.01"));
             return state.Result();
         }
         if (!TryNormalizeLocalLiteral(scriptPath, null, out string? normalized, out _))
         {
-            state.Partial("脚本自身不是明确的本地绝对路径，未猜测脚本目录。");
+            state.Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.ResolveScriptLiterals.02"));
             return state.Result();
         }
         string directory = Path.GetDirectoryName(normalized)!;
@@ -67,11 +73,11 @@ public static class RelatedCommandResolver
             int occurrences = 0, offset = 0;
             while ((offset = expanded.IndexOf(token, offset, StringComparison.OrdinalIgnoreCase)) >= 0) { occurrences++; offset += token.Length; }
             if (expanded.Length + (long)occurrences * (replacement.Length - token.Length) > 256 * 1024)
-            { state.Limit("脚本目录字面替换后将超过 256 KiB 字符上限，未构造展开正文。"); return state.Result(); }
+            { state.Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.ResolveScriptLiterals.03")); return state.Result(); }
             expanded = expanded.Replace(token, replacement, StringComparison.OrdinalIgnoreCase);
         }
         state.ExtractLiterals(expanded, "ScriptLiteralReference");
-        state.Partial("只提取脚本字面路径；未执行脚本、还原计算表达式或证明这些分支实际运行。");
+        state.Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.ResolveScriptLiterals.04"));
         return state.Result();
     }
 
@@ -105,25 +111,25 @@ public static class RelatedCommandResolver
     private sealed class State(RelatedCommandInput input)
     {
         private readonly List<RelatedResolvedCommandTarget> _targets = [];
-        private readonly List<string> _notes = [];
+        private readonly MessageTextCollection _notes = [];
         private DiagnosticReadStatus _status = DiagnosticReadStatus.Complete;
         private readonly HashSet<string> _keys = new(StringComparer.OrdinalIgnoreCase);
 
         internal RelatedCommandResolution Result()
         {
             if (_targets.Count == 0 && _status == DiagnosticReadStatus.Complete)
-                Partial("未取得可静态定位的本地文件；未搜索 PATH 或猜测当前目录。");
-            return new(_status, _targets.ToArray(), _notes.ToArray());
+                Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Result.01"));
+            return new(_status, _targets.ToArray(), _notes.ToArray()) { NoteMessages = _notes.CopyMessages() };
         }
-        internal void Partial(string note)
+        internal void Partial(MessageText note)
         {
             if (_status == DiagnosticReadStatus.Complete) _status = DiagnosticReadStatus.NotChecked;
-            if (_notes.Count < 32 && !_notes.Contains(note, StringComparer.Ordinal)) _notes.Add(note);
+            if (_notes.Count < 32 && !_notes.Contains(note.OriginalText, StringComparer.Ordinal)) _notes.AddText(note);
         }
-        internal void Limit(string note)
+        internal void Limit(MessageText note)
         {
             _status = DiagnosticReadStatus.LimitReached;
-            if (_notes.Count < 32 && !_notes.Contains(note, StringComparer.Ordinal)) _notes.Add(note);
+            if (_notes.Count < 32 && !_notes.Contains(note.OriginalText, StringComparer.Ordinal)) _notes.AddText(note);
         }
         private string Expand(string value)
         {
@@ -138,29 +144,29 @@ public static class RelatedCommandResolver
                     if (pair is { } found && !string.IsNullOrEmpty(found.Key) && found.Value.Length <= MaximumCommandCharacters)
                     {
                         long nextLength = expandedLength + found.Value.Length - match.Length;
-                        if (nextLength > maximum) { Limit("环境变量替换后将超过字符预算，保留未展开变量。"); return match.Value; }
+                        if (nextLength > maximum) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Expand.01")); return match.Value; }
                         expandedLength = nextLength;
                         return found.Value;
                     }
-                    Partial("环境变量未在此来源身份下取得，未借用其他账户值：" + name);
+                    Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Expand.02") + name);
                     return match.Value;
                 });
             }
-            catch (RegexMatchTimeoutException) { Limit("环境变量字面替换达到时间上限。"); return value; }
+            catch (RegexMatchTimeoutException) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Expand.03")); return value; }
         }
         private void Add(string value, string kind)
         {
             string expanded = Expand(value);
-            if (expanded.Length > MaximumCommandCharacters) { Limit("单个展开路径超过字符上限，未纳入目标。"); return; }
+            if (expanded.Length > MaximumCommandCharacters) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Add.01")); return; }
             string? working = input.WorkingDirectory is null ? null : Expand(input.WorkingDirectory);
             if (!TryNormalizeLocalLiteral(expanded, working, out string? path, out string basis))
             {
-                Partial("目标不是明确本地绝对路径，或相对路径缺少可信工作目录：" + Short(value));
+                Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Add.02") + Short(value));
                 return;
             }
             string key = path + "\n" + kind;
             if (_keys.Contains(key)) return;
-            if (_targets.Count >= MaximumTargets) { Limit("单条命令达到 32 个字面目标上限。"); return; }
+            if (_targets.Count >= MaximumTargets) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Add.03")); return; }
             _keys.Add(key);
             _targets.Add(new(path!, kind, value, basis));
         }
@@ -172,20 +178,20 @@ public static class RelatedCommandResolver
                 foreach (Match match in AbsoluteLiteral.Matches(expanded))
                 {
                     Add(match.Groups["path"].Value, kind);
-                    if (_targets.Count >= MaximumTargets) { Limit("字面引用达到 32 项上限，其余内容未解析。"); break; }
+                    if (_targets.Count >= MaximumTargets) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.ExtractLiterals.01")); break; }
                 }
             }
-            catch (RegexMatchTimeoutException) { Limit("命令字面路径解析达到时间上限。"); }
+            catch (RegexMatchTimeoutException) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.ExtractLiterals.02")); }
         }
 
         internal void Parse(string command, int depth)
         {
-            if (depth > 4) { Limit("脚本包装器超过 4 层，未继续解析。"); return; }
-            if (command.Length > MaximumCommandCharacters) { Limit("展开后的命令超过字符上限。"); return; }
+            if (depth > 4) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.01")); return; }
+            if (command.Length > MaximumCommandCharacters) { Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.02")); return; }
             List<Token> tokens = Tokenize(command, out bool complete, out bool limited);
-            if (!complete) Partial("引号或转义不完整，保留可见字面路径但不确认调用语义。");
-            if (limited) Limit("命令参数超过 256 个词法单元上限。");
-            if (tokens.Count == 0) { Partial("命令为空。"); return; }
+            if (!complete) Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.03"));
+            if (limited) Limit(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.04"));
+            if (tokens.Count == 0) { Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.05")); return; }
             Token first = tokens[0];
             string executable = Expand(first.Value);
             string name = Path.GetFileNameWithoutExtension(executable.Replace('/', '\\')).ToLowerInvariant();
@@ -195,20 +201,20 @@ public static class RelatedCommandResolver
             if (qualified || !recognizedWrapper)
             {
                 if (Path.HasExtension(executable)) Add(executable, recognizedWrapper ? "WrapperExecutable" : "Executable");
-                else Partial("未加引号的程序路径或缺少扩展名，Windows 实际可执行文件选择尚未确认。");
+                else Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.06"));
             }
-            else Partial("包装器只有名称，未查询 PATH 或断言其实际映像位置：" + name);
+            else Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.07") + name);
 
             if (name == "cmd")
             {
                 int index = tokens.FindIndex(1, t => t.Value.Equals("/c", StringComparison.OrdinalIgnoreCase) || t.Value.Equals("/k", StringComparison.OrdinalIgnoreCase));
-                if (index < 0 || index + 1 >= tokens.Count) Partial("cmd 没有可静态解析的 /c 或 /k 子命令。");
+                if (index < 0 || index + 1 >= tokens.Count) Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.08"));
                 else
                 {
                     string nested = command[tokens[index + 1].Start..].Trim();
                     if (nested.StartsWith("\"\"", StringComparison.Ordinal) && nested.EndsWith('"')) nested = nested[1..^1];
                     if (nested.StartsWith("call ", StringComparison.OrdinalIgnoreCase)) nested = nested[5..].TrimStart();
-                    if (HasShellOperators(nested)) Partial("cmd 包含复合运算符或重定向，字面路径不证明实际执行顺序。");
+                    if (HasShellOperators(nested)) Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.09"));
                     else Parse(nested, depth + 1);
                 }
             }
@@ -216,32 +222,32 @@ public static class RelatedCommandResolver
             {
                 int file = tokens.FindIndex(1, t => t.Value.Equals("-file", StringComparison.OrdinalIgnoreCase) || t.Value.Equals("-f", StringComparison.OrdinalIgnoreCase));
                 if (file >= 0 && file + 1 < tokens.Count) Add(tokens[file + 1].Value, "ScriptArgument");
-                else Partial("PowerShell 未使用明确的 -File 参数；内联/编码命令只保留字面引用，未执行或解码。");
+                else Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.10"));
             }
             else if (name == "rundll32")
             {
                 if (tokens.Count > 1) Add(tokens[1].Value.Split(',', 2)[0], "ModuleArgument");
-                else Partial("rundll32 缺少 DLL 参数。");
+                else Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.11"));
             }
             else if (name is "regsvr32" or "dotnet")
             {
                 Token? module = tokens.Skip(1).FirstOrDefault(t => !t.Value.StartsWith('/') && !t.Value.StartsWith('-') && t.Value.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
                 if (module is not null) Add(module.Value, "ModuleArgument");
-                else Partial("包装器未提供明确的本地 DLL 参数。");
+                else Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.12"));
             }
             else if (name is "wscript" or "cscript" or "python" or "pythonw" or "py" or "mshta")
             {
                 Token? script = tokens.Skip(1).FirstOrDefault(t => !t.Value.StartsWith('/') && !t.Value.StartsWith('-') && ScriptExtensions.Contains(Path.GetExtension(t.Value)));
                 if (script is not null) Add(script.Value, "ScriptArgument");
-                else Partial("脚本包装器未提供可静态定位的脚本文件。");
+                else Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.13"));
             }
             else if (name is "java" or "javaw")
             {
                 int jar = tokens.FindIndex(1, t => t.Value.Equals("-jar", StringComparison.OrdinalIgnoreCase));
                 if (jar >= 0 && jar + 1 < tokens.Count) Add(tokens[jar + 1].Value, "ScriptArgument");
-                else Partial("Java 命令没有明确的 -jar 文件，未解析类路径。");
+                else Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.14"));
             }
-            if (HasShellOperators(command)) Partial("命令包含 shell 元字符，只记录字面路径，未求值。");
+            if (HasShellOperators(command)) Partial(MessageText.Create("Backend.Core.RelatedCommandResolver.Parse.15"));
             ExtractLiterals(command, "LiteralReference");
         }
         private static string Short(string value) => value.Length <= 180 ? value : value[..180] + "…";

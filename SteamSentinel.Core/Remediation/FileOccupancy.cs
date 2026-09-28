@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -19,7 +20,7 @@ public static class FileOccupancy
         {
             if (!OperatingSystem.IsWindows() || !Validation.IsSafeExactTarget(path) ||
                 !Path.IsPathFullyQualified(path) || Validation.ContainsReparsePoint(path))
-                return Unknown("占用查询不支持此路径或平台，没有关闭任何进程。");
+                return Unknown(MessageText.Create("Backend.Core.FileOccupancy.Inspect.01"));
             List<string> files = [];
             bool partial = false;
             if (directory)
@@ -44,7 +45,7 @@ public static class FileOccupancy
                 partial = true;
             }
             else files.Add(Path.GetFullPath(path));
-            if (files.Count == 0) return Unknown("目录没有可查询文件，目录句柄占用无法由 Restart Manager 确认。", true);
+            if (files.Count == 0) return Unknown(MessageText.Create("Backend.Core.FileOccupancy.Inspect.02"), true);
             uint error = RmStartSession(out uint session, 0, new StringBuilder(33));
             if (error != 0) return NativeError("RmStartSession", error);
             try
@@ -55,7 +56,7 @@ public static class FileOccupancy
                 error = RmGetList(session, out uint needed, ref count, null, out _);
                 for (int attempt = 0; attempt < 3 && error == 234; attempt++)
                 {
-                    if (needed > MaximumNativeProcesses) return Unknown("占用进程数量超过安全查询上限，结果未知。", true);
+                    if (needed > MaximumNativeProcesses) return Unknown(MessageText.Create("Backend.Core.FileOccupancy.Inspect.03"), true);
                     RmProcessInfo[] records = new RmProcessInfo[Math.Max(1, (int)needed)];
                     count = (uint)records.Length;
                     error = RmGetList(session, out needed, ref count, records, out _);
@@ -75,8 +76,8 @@ public static class FileOccupancy
                             Status = processes.Count > 0 ? FileOccupancyStatus.LocksReported : partial ? FileOccupancyStatus.Unknown : FileOccupancyStatus.NoLocksReported,
                             Processes = processes,
                             Truncated = partial || count > MaximumProcesses,
-                            Diagnostic = "Restart Manager 只读快照，未关闭进程或句柄。" +
-                                (partial ? "目录查询仅覆盖有限文件，不包含目录句柄。" : "未列出进程不等于文件可隔离。")
+                            DiagnosticText = MessageText.Create("Backend.Core.FileOccupancy.Inspect.04") +
+                                (partial ? MessageText.Create("Backend.Core.FileOccupancy.Inspect.05") : MessageText.Create("Backend.Core.FileOccupancy.Inspect.06"))
                         };
                     }
                 }
@@ -85,22 +86,23 @@ public static class FileOccupancy
                 {
                     Status = partial ? FileOccupancyStatus.Unknown : FileOccupancyStatus.NoLocksReported,
                     Truncated = partial,
-                    Diagnostic = "Restart Manager 未报告占用，不保证文件可隔离，目录句柄不在覆盖范围。"
+                    DiagnosticText = MessageText.Create("Backend.Core.FileOccupancy.Inspect.07")
                 };
             }
             finally { _ = RmEndSession(session); }
         }
-        catch (Exception ex) { return Unknown("占用状态未知：" + RemediationVerification.Limit(ex.Message, 240)); }
+        catch (Exception ex) { return Unknown(MessageText.Create("Backend.Core.FileOccupancy.Inspect.08") + MessageExceptions.Describe(ex).Limit(240)); }
     }
 
-    public static string Describe(FileOccupancyResult result) => RemediationVerification.Limit(
-        result.Diagnostic + (result.Processes.Count == 0 ? "" : " 占用：" + string.Join("，", result.Processes.Take(MaximumProcesses)
-            .Select(process => $"PID {process.ProcessId} {RemediationVerification.Limit(process.ProcessName, 80)}"))), 900);
+    public static string Describe(FileOccupancyResult result) => DescribeText(result).OriginalText;
+    public static MessageText DescribeText(FileOccupancyResult result) => (
+        result.DiagnosticText + (result.Processes.Count == 0 ? (MessageText)"" : MessageText.Create("Backend.Core.FileOccupancy.Describe.01") + string.Join("，", result.Processes.Take(MaximumProcesses)
+            .Select(process => $"PID {process.ProcessId} {RemediationVerification.Limit(process.ProcessName, 80)}")))).Limit(900);
 
-    private static FileOccupancyResult Unknown(string message, bool partial = false) =>
-        new() { Status = FileOccupancyStatus.Unknown, Diagnostic = message, Truncated = partial };
+    private static FileOccupancyResult Unknown(MessageText message, bool partial = false) =>
+        new() { Status = FileOccupancyStatus.Unknown, DiagnosticText = message, Truncated = partial };
     private static FileOccupancyResult NativeError(string operation, uint code) =>
-        Unknown($"{operation} Win32={code}：{RemediationVerification.Limit(new Win32Exception((int)code).Message, 180)}，占用状态未知。");
+        Unknown(MessageText.Create("Backend.Core.FileOccupancy.NativeError.01", (operation), (code), (RemediationVerification.Limit(new Win32Exception((int)code).Message, 180))));
     private static DateTimeOffset? StartTime(System.Runtime.InteropServices.ComTypes.FILETIME time)
     {
         long value = ((long)(uint)time.dwHighDateTime << 32) | (uint)time.dwLowDateTime;

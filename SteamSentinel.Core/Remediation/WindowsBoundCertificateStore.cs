@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -38,7 +39,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
         using SafeCertificateStoreHandle store = Open(target, writable: true);
         using StoreChangeWatch watch = new(store);
         using NativeSnapshot? current = FindUnique(store, target);
-        if (current is null) throw Failure(BoundCertificateProbeStatus.Absent, "删除前指定物理证书已不存在，未继续操作。");
+        if (current is null) throw Failure(BoundCertificateProbeStatus.Absent, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RemoveExact.01"));
         BoundCertificateRepair.RequireSameState(backup, current.Backup);
         ValidateIdentity(target, requireProperties: true);
         watch.RequireUnchanged();
@@ -46,9 +47,9 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
         // on failure. Detach that exact owned reference before calling the API.
         IntPtr context = current.Context.Detach();
         if (!CertDeleteCertificateFromStore(context))
-            throw NativeFailure("精确证书删除未获确认，备份须保留");
+            throw NativeFailure(MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RemoveExact.02"));
         if (ReadMatching(target).Count != 0)
-            throw Failure(BoundCertificateProbeStatus.Changed, "删除后该物理证书仍存在或重新出现；未重复删除，备份须保留。");
+            throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RemoveExact.03"));
     }
 
     public void RestoreNew(BoundCertificateBackup expected)
@@ -63,7 +64,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
         using StoreChangeWatch watch = new(store);
         using NativeSnapshot? occupied = FindUnique(store, target);
         if (occupied is not null)
-            throw Failure(BoundCertificateProbeStatus.Changed, "原物理存储已有该 DER，拒绝覆盖、继承或合并现有属性。");
+            throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RestoreNew.01"));
         ValidateIdentity(target, requireProperties: true);
         watch.RequireUnchanged();
         bool added = CertAddCertificateContextToStore(store, prepared, AddNew, out IntPtr addedContext);
@@ -71,10 +72,10 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
         if (addedContext != IntPtr.Zero) CertFreeCertificateContext(addedContext);
         if (!added)
             throw Failure(error == unchecked((int)0x80092005) ? BoundCertificateProbeStatus.Changed : BoundCertificateProbeStatus.Unknown,
-                $"证书 ADD_NEW 恢复未获确认（0x{error:X8}）；不替换现有证书、不补写属性，备份须保留并核对当前状态。");
+                MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RestoreNew.02", (System.FormattableString.Invariant($"{error:X8}"))));
         IReadOnlyList<BoundCertificateBackup> restored = ReadMatching(target);
         if (restored.Count != 1)
-            throw Failure(BoundCertificateProbeStatus.Changed, "恢复后的物理证书数量与预期不符；未进一步修改，备份须保留。");
+            throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RestoreNew.03"));
         BoundCertificateRepair.RequireSameState(backup, restored[0]);
     }
 
@@ -87,7 +88,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
         BoundCertificateTarget identity = BoundCertificateRepair.ValidateTarget(target, requireProperties);
         using WindowsIdentity current = WindowsIdentity.GetCurrent();
         if (!string.Equals(current.User?.Value, identity.TargetUserSid, StringComparison.Ordinal))
-            throw Failure(BoundCertificateProbeStatus.Changed, "证书操作的有效用户 SID 已变化，未打开其他账户的证书存储。");
+            throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.ValidateIdentity.01"));
         return identity;
     }
 
@@ -98,7 +99,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
         SafeCertificateStoreHandle store = CertOpenStore(new IntPtr(13), 0, IntPtr.Zero, FlagsFor(target, writable), target.StoreName);
         if (!store.IsInvalid) return store;
         int error = Marshal.GetLastWin32Error(); store.Dispose();
-        throw Failure(BoundCertificateProbeStatus.Unknown, $"既有物理证书存储未打开（0x{error:X8}）；未创建存储或改用其他来源。");
+        throw Failure(BoundCertificateProbeStatus.Unknown, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.Open.01", (System.FormattableString.Invariant($"{error:X8}"))));
     }
 
     private static NativeSnapshot? FindUnique(SafeCertificateStoreHandle store, BoundCertificateTarget target)
@@ -117,18 +118,18 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
                 if (cursor == IntPtr.Zero)
                 {
                     int error = Marshal.GetLastWin32Error();
-                    if (error != unchecked((int)0x80092004)) throw NativeFailure("物理证书枚举未完整结束", error);
+                    if (error != unchecked((int)0x80092004)) throw NativeFailure(MessageText.Create("Backend.Core.WindowsBoundCertificateStore.FindUnique.01"), error);
                     break;
                 }
                 if (++count > MaximumStoreCertificates)
-                    throw Failure(BoundCertificateProbeStatus.Unsupported, "物理存储枚举超过 4096 个上下文，未建立唯一目标身份。");
+                    throw Failure(BoundCertificateProbeStatus.Unsupported, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.FindUnique.02"));
                 byte[] der = ReadDer(cursor, MaximumStoreDerBytes - bytes);
                 bytes += der.Length;
                 if (!Convert.ToHexString(SHA256.HashData(der)).Equals(target.DerSha256, StringComparison.Ordinal)) continue;
                 if (match is not null)
-                    throw Failure(BoundCertificateProbeStatus.Changed, "同一物理存储含多个相同 DER 上下文，拒绝任意选择或批量删除。");
+                    throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.FindUnique.03"));
                 IntPtr duplicate = CertDuplicateCertificateContext(cursor);
-                if (duplicate == IntPtr.Zero) throw NativeFailure("无法保留精确证书上下文引用");
+                if (duplicate == IntPtr.Zero) throw NativeFailure(MessageText.Create("Backend.Core.WindowsBoundCertificateStore.FindUnique.04"));
                 match = new(duplicate);
             }
             RequireTime(elapsed);
@@ -152,7 +153,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
             (id, remaining) => ReadProperty(context, id, remaining));
         uint[] after = EnumeratePropertyIds(context);
         if (!before.Order().SequenceEqual(after.Order()))
-            throw Failure(BoundCertificateProbeStatus.Changed, "证书属性集合在读取期间变化，未形成完整备份。");
+            throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.Describe.01"));
         return BoundCertificateRepair.CreateBackup(target, ReadDer(context.DangerousGetHandle()), properties);
     }
 
@@ -165,7 +166,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
             uint id = CertEnumCertificateContextProperties(context, previous);
             if (id == 0) break;
             if (ids.Contains(id) || ids.Count >= BoundCertificateRepair.MaximumProperties)
-                throw Failure(BoundCertificateProbeStatus.Unsupported, "证书属性枚举重复或超过上限。");
+                throw Failure(BoundCertificateProbeStatus.Unsupported, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.EnumeratePropertyIds.01"));
             ids.Add(id); previous = id;
         }
         BoundCertificateRepair.ValidatePropertyIds(ids);
@@ -176,14 +177,14 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
     {
         uint size = 0;
         if (!CertGetCertificateContextProperty(context, id, null, ref size))
-            throw NativeFailure("证书公开属性长度无法读取");
+            throw NativeFailure(MessageText.Create("Backend.Core.WindowsBoundCertificateStore.ReadProperty.01"));
         if (size > remaining)
-            throw Failure(BoundCertificateProbeStatus.Unsupported, "证书公开属性总量超过 256 KiB，未读取超限属性值。");
+            throw Failure(BoundCertificateProbeStatus.Unsupported, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.ReadProperty.02"));
         if (size == 0) return [];
         byte[] bytes = new byte[checked((int)size)];
         uint actual = size;
         if (!CertGetCertificateContextProperty(context, id, bytes, ref actual) || actual != size)
-            throw Failure(BoundCertificateProbeStatus.Changed, "证书公开属性长度或内容在读取时发生变化。");
+            throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.ReadProperty.03"));
         return bytes;
     }
 
@@ -191,9 +192,9 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
     {
         NativeCertificateContext native = Marshal.PtrToStructure<NativeCertificateContext>(context);
         if (native.Encoded == IntPtr.Zero || native.EncodedBytes is 0 or > BoundCertificateRepair.MaximumCertificateBytes)
-            throw Failure(BoundCertificateProbeStatus.Unsupported, "证书公开 DER 为空或超过 128 KiB，未复制其内容。");
+            throw Failure(BoundCertificateProbeStatus.Unsupported, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.ReadDer.01"));
         if (native.EncodedBytes > remainingBytes)
-            throw Failure(BoundCertificateProbeStatus.Unsupported, "物理存储公开 DER 将超过 32 MiB 总读取预算，未复制超限上下文或建立唯一目标身份。");
+            throw Failure(BoundCertificateProbeStatus.Unsupported, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.ReadDer.02"));
         byte[] der = new byte[checked((int)native.EncodedBytes)];
         Marshal.Copy(native.Encoded, der, 0, der.Length);
         return der;
@@ -203,7 +204,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
     {
         byte[] der = Convert.FromBase64String(backup.DerBase64);
         IntPtr raw = CertCreateCertificateContext(1, der, checked((uint)der.Length));
-        if (raw == IntPtr.Zero) throw NativeFailure("备份公开 DER 不能创建独立内存证书上下文");
+        if (raw == IntPtr.Zero) throw NativeFailure(MessageText.Create("Backend.Core.WindowsBoundCertificateStore.CreatePublicContext.01"));
         SafeCertificateContextHandle context = new(raw);
         try
         {
@@ -222,7 +223,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
                     blobPointer = Marshal.AllocHGlobal(Marshal.SizeOf<NativeBlob>());
                     Marshal.StructureToPtr(new NativeBlob { Bytes = checked((uint)value.Length), Data = valuePointer }, blobPointer, false);
                     if (!CertSetCertificateContextProperty(context, property.Id, 0, blobPointer))
-                        throw NativeFailure("无法在独立内存上下文完整恢复公开属性");
+                        throw NativeFailure(MessageText.Create("Backend.Core.WindowsBoundCertificateStore.CreatePublicContext.02"));
                 }
                 finally
                 {
@@ -238,7 +239,7 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
     private static void RequireTime(Stopwatch elapsed)
     {
         if (elapsed.Elapsed > MaximumReadDuration)
-            throw Failure(BoundCertificateProbeStatus.Unknown, "精确物理证书枚举超过 10 秒，未沿用不完整状态。");
+            throw Failure(BoundCertificateProbeStatus.Unknown, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RequireTime.01"));
     }
 
     private sealed class NativeSnapshot(SafeCertificateContextHandle context, BoundCertificateBackup backup) : IDisposable
@@ -257,13 +258,13 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
             try
             {
                 if (!CertControlStore(store, 0, 2, ref signal) || !CertControlStore(store, 0, 1, ref signal))
-                    throw NativeFailure("无法监控并同步物理证书存储变化，拒绝使用缓存状态");
+                    throw NativeFailure(MessageText.Create("Backend.Core.WindowsBoundCertificateStore.Constructor.01"));
             }
             catch { _change.Dispose(); throw; }
         }
         public void RequireUnchanged()
         {
-            if (_change.WaitOne(0)) throw Failure(BoundCertificateProbeStatus.Changed, "物理证书存储在核对期间出现变化；未开始删除或恢复。");
+            if (_change.WaitOne(0)) throw Failure(BoundCertificateProbeStatus.Changed, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.RequireUnchanged.01"));
         }
         public void Dispose() => _change.Dispose();
     }
@@ -284,9 +285,9 @@ public sealed class WindowsBoundCertificateStore : IBoundCertificateStore
     { public uint Encoding; public IntPtr Encoded; public uint EncodedBytes; public IntPtr CertificateInfo; public IntPtr Store; }
     [StructLayout(LayoutKind.Sequential)] private struct NativeBlob { public uint Bytes; public IntPtr Data; }
 
-    private static BoundCertificateRepairException Failure(BoundCertificateProbeStatus status, string message) => BoundCertificateRepair.Failure(status, message);
-    private static BoundCertificateRepairException NativeFailure(string message, int? error = null) =>
-        Failure(BoundCertificateProbeStatus.Unknown, $"{message}（Windows 0x{(error ?? Marshal.GetLastWin32Error()):X8}）。");
+    private static BoundCertificateRepairException Failure(BoundCertificateProbeStatus status, MessageText message) => BoundCertificateRepair.Failure(status, message);
+    private static BoundCertificateRepairException NativeFailure(MessageText message, int? error = null) =>
+        Failure(BoundCertificateProbeStatus.Unknown, MessageText.Create("Backend.Core.WindowsBoundCertificateStore.NativeFailure", message, (error ?? Marshal.GetLastWin32Error()).ToString("X8", System.Globalization.CultureInfo.InvariantCulture)));
 
     [DllImport("crypt32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern SafeCertificateStoreHandle CertOpenStore(IntPtr provider, uint encoding, IntPtr cryptProvider, uint flags, string storeName);

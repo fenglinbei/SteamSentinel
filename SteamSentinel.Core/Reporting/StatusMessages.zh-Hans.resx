@@ -1,0 +1,210 @@
+<?xml version='1.0' encoding='utf-8'?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <data name="Message.Unknown" xml:space="preserve">
+    <value>未识别的显示代码：{0}</value>
+  </data>
+  <data name="Preparation.Context" xml:space="preserve">
+    <value>所属批次的核验补充记录（可能涉及同批其他目标）：</value>
+  </data>
+  <data name="Scan.Unknown" xml:space="preserve">
+    <value>未记录执行状态，请核对原始记录</value>
+  </data>
+  <data name="Scan.NotStarted" xml:space="preserve">
+    <value>尚未开始</value>
+  </data>
+  <data name="Scan.Running" xml:space="preserve">
+    <value>尚未结束</value>
+  </data>
+  <data name="Scan.Cancelled" xml:space="preserve">
+    <value>扫描已取消，已保留可用结果</value>
+  </data>
+  <data name="Scan.Failed" xml:space="preserve">
+    <value>检查失败，已保留可用结果</value>
+  </data>
+  <data name="Scan.Completed" xml:space="preserve">
+    <value>本次扫描已完成</value>
+  </data>
+  <data name="Scan.CompletedWithGaps" xml:space="preserve">
+    <value>本次扫描已结束，仍有未检查内容</value>
+  </data>
+  <data name="Target.Unknown" xml:space="preserve">
+    <value>待核验（未记录结构化状态）</value>
+  </data>
+  <data name="Target.NotIncluded" xml:space="preserve">
+    <value>未处理</value>
+  </data>
+  <data name="Target.PartiallyIncluded" xml:space="preserve">
+    <value>部分纳入</value>
+  </data>
+  <data name="Target.Ready" xml:space="preserve">
+    <value>待执行</value>
+  </data>
+  <data name="Target.NotExecuted" xml:space="preserve">
+    <value>尚未执行</value>
+  </data>
+  <data name="Target.Failed" xml:space="preserve">
+    <value>未完成</value>
+  </data>
+  <data name="Target.ReviewRequired" xml:space="preserve">
+    <value>需复核</value>
+  </data>
+  <data name="Target.Completed" xml:space="preserve">
+    <value>已完成</value>
+  </data>
+  <data name="Batch.Targets" xml:space="preserve">
+    <value>已选 {0} 个目标</value>
+  </data>
+  <data name="Batch.Associated" xml:space="preserve">
+    <value>，关联新增 {0} 个</value>
+  </data>
+  <data name="Batch.Preview" xml:space="preserve">
+    <value>，本次拟处理 {0} 个，{1} 个存在未纳入动作，共 {2} 批。</value>
+  </data>
+  <data name="Batch.Results" xml:space="preserve">
+    <value>，完成 {0} 个，需复核 {1} 个，失败 {2} 个，未全部处理 {3} 个。</value>
+  </data>
+  <data name="remediation.plan_ready" xml:space="preserve">
+    <value>已纳入方案，执行前还会独立核验身份。</value>
+  </data>
+  <data name="remediation.actions_not_included" xml:space="preserve">
+    <value>部分或全部必需动作未纳入方案，请查看核验记录。</value>
+  </data>
+  <data name="remediation.evidence_unavailable" xml:space="preserve">
+    <value>缺少可执行证据，或关联核验未完成，没有执行这些动作。请进一步检查。</value>
+  </data>
+  <data name="remediation.target_unavailable" xml:space="preserve">
+    <value>目标已不存在、无法读取或未能重新验证，没有执行这些动作。</value>
+  </data>
+  <data name="remediation.action_failed" xml:space="preserve">
+    <value>部分动作失败，请查看逐项结果。</value>
+  </data>
+  <data name="remediation.waiting_batches" xml:space="preserve">
+    <value>等待后续批次，不表示已完成。</value>
+  </data>
+  <data name="remediation.verification_incomplete" xml:space="preserve">
+    <value>处置后的验证尚未确认完成，请复核。</value>
+  </data>
+  <data name="remediation.actions_verified" xml:space="preserve">
+    <value>所选动作已执行并完成目标核验，不代表整台电脑安全。</value>
+  </data>
+  <data name="remediation.plan_expired" xml:space="preserve">
+    <value>后续方案已过期，已暂停，需重新扫描并确认，未自动更新身份。</value>
+  </data>
+  <data name="remediation.batch_incomplete" xml:space="preserve">
+    <value>本批存在失败、残留或尚未确认的结果，后续批次已暂停，请查看逐项结果后重新扫描。</value>
+  </data>
+  <data name="remediation.execution_interrupted" xml:space="preserve">
+    <value>处置中断，后续批次未执行。</value>
+  </data>
+  <data name="coverage.trust_proxy_incomplete.title" xml:space="preserve">
+    <value>证书与代理诊断未完成</value>
+  </data>
+  <data name="coverage.trust_proxy_incomplete.next" xml:space="preserve">
+    <value>查看具体来源和读取状态，可重新执行“检查代理与证书”或导出记录。完整内容扫描不能代替配置与证书检查。</value>
+  </data>
+  <data name="coverage.system_incomplete.title" xml:space="preserve">
+    <value>系统检查未完成</value>
+  </data>
+  <data name="coverage.system_incomplete.next" xml:space="preserve">
+    <value>已读取的记录仍可导出；请重新执行含系统检查的扫描。单独补查文件内容不能代替系统检查。</value>
+  </data>
+  <data name="coverage.quick_media_structure.title" xml:space="preserve">
+    <value>视频已做结构检查，未做完整比对</value>
+  </data>
+  <data name="coverage.quick_media_structure.next" xml:space="preserve">
+    <value>使用完整内容扫描补查所选内容，将对整个文件进行哈希比对。</value>
+  </data>
+  <data name="coverage.quick_content_not_hashed.title" xml:space="preserve">
+    <value>快速扫描未做完整内容比对</value>
+  </data>
+  <data name="coverage.quick_content_not_hashed.next" xml:space="preserve">
+    <value>使用完整内容扫描补查所选内容。</value>
+  </data>
+  <data name="coverage.read_budget.title" xml:space="preserve">
+    <value>达到本次读取上限</value>
+  </data>
+  <data name="coverage.read_budget.next" xml:space="preserve">
+    <value>可在“扫描限制设置”调整单文件与累计读取预算，再使用完整内容扫描补查所选内容。</value>
+  </data>
+  <data name="coverage.engine_size_limit.title" xml:space="preserve">
+    <value>正文检查达到大小设置</value>
+  </data>
+  <data name="coverage.engine_size_limit.next" xml:space="preserve">
+    <value>可在“扫描限制设置”调整字符串或 AMSI 单文件大小，再补查；调高 AMSI 大小会增加内存占用。</value>
+  </data>
+  <data name="coverage.archive_not_expanded.title" xml:space="preserve">
+    <value>压缩内容未展开</value>
+  </data>
+  <data name="coverage.archive_not_expanded.next" xml:space="preserve">
+    <value>使用完整内容扫描补查所选内容，需开启压缩内容检查，仍受格式与安全上限限制。</value>
+  </data>
+  <data name="coverage.archive_encrypted.title" xml:space="preserve">
+    <value>加密内容未解开</value>
+  </data>
+  <data name="coverage.archive_encrypted.next" xml:space="preserve">
+    <value>先准备正确的外层和内层密码，再使用完整内容扫描补查所选内容，也可点击“重试未解密内容”。</value>
+  </data>
+  <data name="coverage.resource_limit.title" xml:space="preserve">
+    <value>本轮内容检查达到安全上限</value>
+  </data>
+  <data name="coverage.resource_limit.next" xml:space="preserve">
+    <value>本次触发扫描预算或组件边界，不等于系统内存不足。请查看具体原因，在“扫描限制设置”调整对应预算，或用“扫描目录”分批检查。已完成部分的结果仍保留，无需关闭防护。</value>
+  </data>
+  <data name="execution.allocation_failed.title" xml:space="preserve">
+    <value>扫描组件内存分配失败</value>
+  </data>
+  <data name="execution.allocation_failed.next" xml:space="preserve">
+    <value>扫描组件发生内存分配失败，请导出报告中的诊断记录，再分批检查剩余内容。已完成部分的结果仍保留，无需关闭防护。</value>
+  </data>
+  <data name="coverage.content_not_started.title" xml:space="preserve">
+    <value>部分检查未执行</value>
+  </data>
+  <data name="coverage.content_not_started.next" xml:space="preserve">
+    <value>确认扫描组件可用后重新扫描，已完成部分的结果仍保留。</value>
+  </data>
+  <data name="coverage.workshop_selection.title" xml:space="preserve">
+    <value>工坊范围选择说明</value>
+  </data>
+  <data name="coverage.workshop_selection.next" xml:space="preserve">
+    <value>本次只检查所选游戏的工坊，要检查其他游戏，请将工坊范围改为“全部本地工坊”后重新扫描。</value>
+  </data>
+  <data name="coverage.amsi_unavailable.title" xml:space="preserve">
+    <value>安全软件辅助检查不可用</value>
+  </data>
+  <data name="coverage.amsi_unavailable.next" xml:space="preserve">
+    <value>检查本机安全软件是否正常开启，再重试。完整内容扫描不能代替不可用的安全软件接口。</value>
+  </data>
+  <data name="coverage.unsafe_path.title" xml:space="preserve">
+    <value>路径未通过安全读取检查</value>
+  </data>
+  <data name="coverage.unsafe_path.next" xml:space="preserve">
+    <value>检查是否为网络路径或重解析点；请使用可核验的本地路径重新扫描。</value>
+  </data>
+  <data name="coverage.access_denied.title" xml:space="preserve">
+    <value>访问被拒绝</value>
+  </data>
+  <data name="coverage.access_denied.next" xml:space="preserve">
+    <value>核对读取权限后重新扫描；不要仅凭访问失败认定目标安全或恶意。</value>
+  </data>
+  <data name="coverage.read_incomplete.title" xml:space="preserve">
+    <value>读取受限或其他检查范围说明</value>
+  </data>
+  <data name="coverage.read_incomplete.next" xml:space="preserve">
+    <value>请查看具体原因。访问受限、文件损坏或格式不支持时，完整内容扫描不一定能补齐，可导出报告进一步核对。</value>
+  </data>
+  <data name="Coverage.CurrentScan" xml:space="preserve">
+    <value>本次扫描</value>
+  </data>
+  <data name="Coverage.Aggregate" xml:space="preserve">
+    <value>此根路径内累计 {0} 次未完成检查记录（不是去重文件数）。补查须重新扫描整个根路径，示例不是完整清单，长示例可能截短。</value>
+  </data>
+  <data name="coverage.resource_limit" xml:space="preserve">
+    <value>达到核验安全上限，未完成的目标未纳入方案。</value>
+  </data>
+</root>

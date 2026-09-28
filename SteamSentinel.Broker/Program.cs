@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Security.Principal;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
@@ -12,7 +13,7 @@ internal static class Program
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
-        if (args.Length != 2) return 2;
+        if (!TryInitializeDisplayLanguage(args)) return 2;
         string planPath = args[0];
         string expectedPlanSha256 = args[1];
         string? resultPath = null;
@@ -24,9 +25,9 @@ internal static class Program
 
         try
         {
-            if (!IsAdministrator()) throw new UnauthorizedAccessException("处置 Broker 必须通过 UAC 以管理员身份运行。");
+            if (!IsAdministrator()) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.Program.Main.01"), sourceText => new UnauthorizedAccessException(sourceText));
             InstallationSecurityStatus installation = InstallationSecurity.Evaluate();
-            if (!installation.IsProtected) throw new UnauthorizedAccessException(installation.Message);
+            if (!installation.IsProtected) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
 
             RemediationPlan plan = await BrokerRequestReader.ReadAsync(planPath, expectedPlanSha256);
             boundPlanId = plan.PlanId;
@@ -57,9 +58,9 @@ internal static class Program
                     PlanIdentitySha256 = boundPlanIdentity,
                     Success = false,
                     Disposition = RemediationRunDisposition.NotStarted,
-                    CompletedAtUtc = DateTimeOffset.UtcNow,
-                    Errors = { "另一个 SteamSentinel 管理员处置仍在运行；本计划尚未执行任何动作，请等待其完成后重新扫描。" }
+                    CompletedAtUtc = DateTimeOffset.UtcNow
                 };
+                result.AddError(MessageText.Create("Backend.Broker.Program.Main.02"));
                 if (!await TryWriteResultAsync(resultChannel, result))
                     return ResultChannelUnavailableExitCode;
                 return 1;
@@ -72,9 +73,9 @@ internal static class Program
                     PlanIdentitySha256 = boundPlanIdentity,
                     Success = false,
                     Disposition = RemediationRunDisposition.NotStarted,
-                    CompletedAtUtc = DateTimeOffset.UtcNow,
-                    Errors = { "用户在管理员确认窗口取消了处置。" }
+                    CompletedAtUtc = DateTimeOffset.UtcNow
                 };
+                result.AddError(MessageText.Create("Backend.Broker.Program.Main.03"));
                 if (!await TryWriteResultAsync(resultChannel, result))
                     return ResultChannelUnavailableExitCode;
                 return 3;
@@ -94,9 +95,9 @@ internal static class Program
                 PlanIdentitySha256 = boundPlanIdentity,
                 Success = false,
                 Disposition = RemediationRunDisposition.ExecutionUnknown,
-                CompletedAtUtc = DateTimeOffset.UtcNow,
-                Errors = { $"{ex.GetType().Name}: {ex.Message}" }
+                CompletedAtUtc = DateTimeOffset.UtcNow
             };
+            result.AddError(MessageText.Create("Backend.Exception", ex.GetType().Name, MessageExceptions.Describe(ex)).Limit(1700));
             if (resultChannel is not null && resultChannel.CanWrite &&
                 !await TryWriteResultAsync(resultChannel, result))
                 return ResultChannelUnavailableExitCode;
@@ -107,6 +108,16 @@ internal static class Program
             mutationLease?.Dispose();
             if (resultChannel is not null) await resultChannel.DisposeAsync();
         }
+    }
+
+    internal static bool TryInitializeDisplayLanguage(string[] args)
+    {
+        if (args.Length is not (2 or 4)) return false;
+        if (args.Length == 4 && (args[2] != "--ui-language" || args[3] is not ("en" or "zh-Hans"))) return false;
+        DisplayText.InitializeApplicationCulture(args.Length == 4
+            ? args[3] == "en" ? DisplayText.English : DisplayText.Chinese
+            : DisplayText.Resolve(System.Globalization.CultureInfo.CurrentUICulture));
+        return true;
     }
 
     private static async Task<bool> TryWriteResultAsync(BrokerResultChannel channel, RemediationRunResult result)
@@ -132,7 +143,7 @@ internal static class Program
     {
         return System.Windows.Forms.MessageBox.Show(
             BuildConfirmationMessage(plan),
-            "SteamSentinel 管理员处置确认",
+            DisplayText.Get("Backend.Broker.Program.ConfirmPlan.01"),
             System.Windows.Forms.MessageBoxButtons.YesNo,
             System.Windows.Forms.MessageBoxIcon.Warning,
             System.Windows.Forms.MessageBoxDefaultButton.Button2) == System.Windows.Forms.DialogResult.Yes;
@@ -142,33 +153,33 @@ internal static class Program
     {
         if (plan.Actions.Count == 1 && plan.Actions[0].Type == RemediationActionType.DeleteIncident)
         {
-            return $"SteamSentinel 将永久删除隔离事件 {SanitizeForDialog(plan.Actions[0].Target)} 的事件记录与剩余备份。\n\n" +
-                   "此操作无法撤销。Broker 仅允许清理所有记录均已回滚、已无活动隔离内容的事件；" +
-                   "不要为了删除事件而回滚可疑样本。如有疑问，请选择“否”并保留隔离。\n\n是否继续？";
+            return DisplayText.Format("Backend.Broker.Program.BuildConfirmationMessage.01", (SanitizeForDialog(plan.Actions[0].Target))) +
+                   DisplayText.Get("Backend.Broker.Program.BuildConfirmationMessage.02") +
+                   DisplayText.Get("Backend.Broker.Program.BuildConfirmationMessage.03");
         }
 
         if (plan.Actions.Count == 1 && plan.Actions[0].Type == RemediationActionType.RollbackIncident)
         {
-            return $"SteamSentinel 将尝试回滚隔离事件 {SanitizeForDialog(plan.Actions[0].Target)}。\n\n" +
-                   "回滚可能重新启用曾被隔离的恶意文件、启动项、任务或网络配置。为防原目录父路径在管理员操作期间被替换，" +
-                   "当前版本不会自动恢复整目录记录；遇到此类记录会停止并保留隔离副本。\n\n确认要继续回滚其余受支持记录吗？";
+            return DisplayText.Format("Backend.Broker.Program.BuildConfirmationMessage.04", (SanitizeForDialog(plan.Actions[0].Target))) +
+                   DisplayText.Get("Backend.Broker.Program.BuildConfirmationMessage.05") +
+                   DisplayText.Get("Backend.Broker.Program.BuildConfirmationMessage.06");
         }
 
         int heuristicQuarantines = plan.Actions.Count(action =>
             action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory &&
             !action.IsKnownMalware);
         string heuristicText = heuristicQuarantines == 0
-            ? "其中没有启发式隔离项。"
-            : $"其中 {heuristicQuarantines} 项属于启发式判断，可能存在误报，请确认目标路径。";
+            ? DisplayText.Get("Backend.Broker.Program.BuildConfirmationMessage.07")
+            : DisplayText.Format("Backend.Broker.Program.BuildConfirmationMessage.08", (heuristicQuarantines));
         string[] visibleActions = plan.Actions.Take(12)
             .Select(action => $"• {action.Type}: {SanitizeForDialog(action.Target)}")
             .ToArray();
         string omitted = plan.Actions.Count > visibleActions.Length
-            ? $"\n• 另有 {plan.Actions.Count - visibleActions.Length} 项，请返回主窗口分批核对"
+            ? DisplayText.Format("Backend.Broker.Program.BuildConfirmationMessage.09", (plan.Actions.Count - visibleActions.Length))
             : string.Empty;
-        string message = $"SteamSentinel 将执行 {plan.Actions.Count} 项管理员操作。\n\n{heuristicText}\n\n" +
+        string message = DisplayText.Format("Backend.Broker.Program.BuildConfirmationMessage.10", (plan.Actions.Count), (heuristicText)) +
                          string.Join("\n", visibleActions) + omitted + "\n\n" +
-                         "文件与目录将先进入可回滚隔离区，不会立即永久删除。是否继续？";
+                         DisplayText.Get("Backend.Broker.Program.BuildConfirmationMessage.11");
         return message;
     }
 

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -14,8 +15,8 @@ public sealed partial class ContentScanner
     private async Task RecoverContainerLeafAsync(Stream stream, ContainerContext context, ContainerScanNode node)
     {
         if (context.Options.RecoveryOutputDirectory is not { } directory || node.Sha256 is null) return;
-        if (node.Length < 0 || node.Length > context.Budget.Limits.MaximumEntryBytes)
-            throw new ScanResourceLimitException("恢复叶子文件超过单项保存上限，已保留内容检查结果。");
+        if (node.Length < 0 || node.Length > context.Budget.Limits.MaximumEntryBytes && !ScanResourceSession.Allow("ContainerLimits.MaximumEntryBytes", node.Length))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.RecoverContainerLeafAsync.01"), sourceText => new ScanResourceLimitException(sourceText));
         using RecoveryDirectoryLease lease = RecoveryDirectoryLease.OpenExisting(directory);
         string root = lease.Path;
         string name = node.NodeId.ToString("N") + ".scan";
@@ -30,19 +31,19 @@ public sealed partial class ContentScanner
             while (true)
             {
                 int read = await stream.ReadAsync(buffer, context.Token); if (read == 0) break;
-                if (new DriveInfo(Path.GetPathRoot(root)!).AvailableFreeSpace < context.Budget.Limits.ReservedDiskBytes + read)
-                    throw new ScanResourceLimitException("恢复内容暂存空间不足，已停止保存。");
+                if (new DriveInfo(Path.GetPathRoot(root)!).AvailableFreeSpace - context.Budget.EffectiveDiskReserve < read)
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.RecoverContainerLeafAsync.02"), sourceText => new ScanResourceLimitException(sourceText));
                 context.Budget.ReserveTemporary(read); reserved = checked(reserved + read);
                 context.Budget.ChargeRangeCopy(read); hash.AppendData(buffer, 0, read);
                 await output.Stream.WriteAsync(buffer.AsMemory(0, read), context.Token);
             }
             if (reserved != node.Length || !Convert.ToHexString(hash.GetHashAndReset()).Equals(node.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new IOException("恢复副本与已检查内容身份不一致。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.RecoverContainerLeafAsync.03"), sourceText => new IOException(sourceText));
             await output.CommitAsync(context.Token);
             node.RecoveredContentAvailable = true; node.RecoveredContentName = name;
             context.Report.Containers!.RecoveryOutputDirectory = root;
-            if (!context.Report.Containers.Checks.Contains("恢复内容仅包含已校验的叶子文件，使用 .scan 名称；中间容器以每层身份与范围记录保留。"))
-                context.Report.Containers.Checks.Add("恢复内容仅包含已校验的叶子文件，使用 .scan 名称；中间容器以每层身份与范围记录保留。");
+            if (!context.Report.Containers.Checks.Contains(MessageText.Create("Backend.Core.ContentScanner.Recovery.RecoverContainerLeafAsync.04")))
+                context.Report.Containers.AddCheck(MessageText.Create("Backend.Core.ContentScanner.Recovery.RecoverContainerLeafAsync.05"));
         }
         finally
         {
@@ -68,7 +69,7 @@ public sealed class RecoveryDirectoryLease : IDisposable
 
     public static RecoveryDirectoryLease OpenExisting(string directory)
     {
-        if (!ContentDiscovery.IsLocalSafePath(directory)) throw new IOException("恢复目录不是安全的本地普通目录。");
+        if (!ContentDiscovery.IsLocalSafePath(directory)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.OpenExisting.01"), sourceText => new IOException(sourceText));
         string path = System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(directory));
         RecoveryDirectoryLease lease = new(path);
         try
@@ -84,7 +85,7 @@ public sealed class RecoveryDirectoryLease : IDisposable
                 if (handle.IsInvalid)
                 {
                     int error = Marshal.GetLastWin32Error(); handle.Dispose();
-                    throw new Win32Exception(error, "无法锁定恢复目录。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.OpenExisting.02"), sourceText => new Win32Exception(error, sourceText));
                 }
                 lease._handles.Add((handle, component));
                 ValidateDirectory(handle, component);
@@ -139,7 +140,7 @@ public sealed class RecoveryDirectoryLease : IDisposable
         Validate();
         if (string.IsNullOrWhiteSpace(name) || name.Length > 255 || name is "." or ".." || name.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0 ||
             name.EndsWith('.') || name.EndsWith(' ') || System.IO.Path.GetFileName(name) != name)
-            throw new InvalidDataException("恢复输出文件名无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.ChildPath.01"), sourceText => new InvalidDataException(sourceText));
         return System.IO.Path.Combine(Path, name);
     }
 
@@ -159,7 +160,7 @@ public sealed class RecoveryDirectoryLease : IDisposable
         if (status < 0)
         {
             handle.Dispose();
-            throw new Win32Exception(unchecked((int)RtlNtStatusToDosError(status)), "无法以独占身份新建恢复内容。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.CreateRelative.01"), sourceText => new Win32Exception(unchecked((int)RtlNtStatusToDosError(status)), sourceText));
         }
         return handle;
     }
@@ -168,7 +169,7 @@ public sealed class RecoveryDirectoryLease : IDisposable
     {
         RelatedArtifactReader.ValidatePath(handle, path);
         if (!GetFileInformationByHandleEx(handle, 9, out AttributeTag info, 8) || (info.Attributes & 0x10) == 0)
-            throw new IOException("恢复路径不是普通目录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.ValidateDirectory.01"), sourceText => new IOException(sourceText));
     }
 
     public void Dispose()
@@ -247,7 +248,7 @@ public sealed class RecoveryWriteFile : IAsyncDisposable
     {
         byte disposition = delete ? (byte)1 : (byte)0;
         if (!SetFileInformationByHandle(handle, 4, ref disposition, 1))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法设置恢复文件的句柄清理状态。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.Recovery.SetDelete.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
     }
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

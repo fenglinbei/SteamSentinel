@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 namespace SteamSentinel.Core.Utilities;
 
 public sealed class TemporaryDirectory : IDisposable
@@ -9,14 +10,14 @@ public sealed class TemporaryDirectory : IDisposable
     public TemporaryDirectory()
     {
         string root = GetRoot();
-        if (Validation.ContainsReparsePoint(root)) throw new IOException("扫描临时目录包含重解析点。");
+        if (Validation.ContainsReparsePoint(root)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.TemporaryDirectory.Constructor.01"), sourceText => new IOException(sourceText));
         Directory.CreateDirectory(root);
         root = _root = OwnedDirectoryPhysicalPath.ResolveForCreation(root);
         string candidate = System.IO.Path.Combine(root, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(candidate);
         Path = OwnedDirectoryPhysicalPath.ResolveExisting(candidate);
         if (!string.Equals(System.IO.Path.GetDirectoryName(Path), root, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("新建临时目录不在本轮自有物理根目录内。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.TemporaryDirectory.Constructor.02"), sourceText => new IOException(sourceText));
     }
 
     public string CreateFilePath(string? originalName = null)
@@ -58,10 +59,10 @@ public sealed class TemporaryDirectory : IDisposable
         string? parent = System.IO.Path.GetDirectoryName(session);
         if (!(string.Equals(parent, allowed, StringComparison.OrdinalIgnoreCase) || string.Equals(parent, configured, StringComparison.OrdinalIgnoreCase)) ||
             Validation.ContainsReparsePoint(session))
-            throw new IOException("受限扫描必须使用本轮独立临时目录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.TemporaryDirectory.GetRoot.01"), sourceText => new IOException(sourceText));
         session = OwnedDirectoryPhysicalPath.ResolveExisting(session);
         if (!string.Equals(System.IO.Path.GetDirectoryName(session), allowed, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("受限扫描会话不在自有物理根目录内。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.TemporaryDirectory.GetRoot.02"), sourceText => new IOException(sourceText));
         return session;
     }
 
@@ -69,8 +70,8 @@ public sealed class TemporaryDirectory : IDisposable
     {
         const long reserve = 256L * 1024 * 1024;
         string volume = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path))
-            ?? throw new IOException("无法确定扫描临时文件所在磁盘。");
+            ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.TemporaryDirectory.EnsureFreeSpace.01"), sourceText => new IOException(sourceText));
         if (nextWriteBytes < 0 || new DriveInfo(volume).AvailableFreeSpace - reserve < nextWriteBytes)
-            throw new Scanning.ScanResourceLimitException("临时磁盘空间不足：扫描需保留至少 256 MiB 空闲空间，未继续展开内容。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.TemporaryDirectory.EnsureFreeSpace.02"), sourceText => new Scanning.ScanResourceLimitException(sourceText));
     }
 }

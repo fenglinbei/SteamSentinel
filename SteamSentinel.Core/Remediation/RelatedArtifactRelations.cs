@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Steam;
@@ -37,14 +38,14 @@ public static class RelatedArtifactRelations
     public static IReadOnlyList<Finding> SelectForPlan(IEnumerable<Finding> selected, IEnumerable<Finding> allFindings, RuleSet rules)
     {
         Finding[] chosen = selected.Take(257).ToArray(), all = allFindings.Take(20001).ToArray();
-        if (chosen.Length > 256 || all.Length > 20000) throw new InvalidDataException("处置关联数量超过上限，请分批选择。");
+        if (chosen.Length > 256 || all.Length > 20000) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactRelations.SelectForPlan.01"), sourceText => new InvalidDataException(sourceText));
         HashSet<string> known = rules.KnownHashes.Where(r => r.Malware).Select(r => r.Sha256).ToHashSet(StringComparer.OrdinalIgnoreCase);
         List<Finding> result = [.. chosen];
         Dictionary<string, string> identities = new(StringComparer.OrdinalIgnoreCase);
         void AddIdentity(string path, string hash)
         {
             if (identities.TryGetValue(path, out string? prior) && !prior.Equals(hash, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("所选关联文件存在冲突身份，请重新扫描：" + path);
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactRelations.SelectForPlan.02") + path, sourceText => new InvalidDataException(sourceText));
             identities[path] = hash;
         }
         foreach (Finding finding in chosen)
@@ -67,7 +68,7 @@ public static class RelatedArtifactRelations
                 Category = FindingCategory.File,
                 Severity = FindingSeverity.Critical,
                 Score = 100,
-                Title = "隔离关联的已知恶意文件",
+                TitleText = MessageText.Create("Backend.Core.RelatedArtifactRelations.SelectForPlan.03"),
                 Target = path,
                 Sha256 = hash,
                 TargetSha256 = hash,

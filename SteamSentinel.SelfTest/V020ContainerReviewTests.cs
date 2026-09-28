@@ -342,15 +342,18 @@ internal static partial class Program
             await scanner.ScanRootAsync(duplicatesPath, duplicates, Options(), new NullPasswordProvider());
         Check("0.2容器审阅 完全重名同内容ZIP不绕过唯一完整性映射",
             duplicates.Containers!.Nodes.All(node => !node.ParentId.HasValue) && !duplicates.Containers.Complete &&
-            duplicates.Containers.Nodes.Single().Integrity == ContainerStageStatus.UnsupportedIntegrity);
+            duplicates.Containers.Nodes.Single().Integrity == ContainerStageStatus.Corrupt &&
+            duplicates.Metrics.ArchiveBytesExpanded == 0);
 
-        // These are distinct, valid ZIP names, but CR/LF sanitization gives them the same
+        // These are distinct, valid ZIP names, but display truncation gives them the same
         // displayed path. Their verified hashes are also equal: the old display/hash lookup
         // would merge the unpublished sibling into the already published current node.
+        // Control characters are rejected at metadata admission from 0.3 onward.
         string path = Path.Combine(directory, "same-display-members.zip");
-        await File.WriteAllBytesAsync(path, V020ReviewZip(("same\rname.txt", payload, CompressionLevel.NoCompression),
-            ("same\nname.txt", payload, CompressionLevel.NoCompression)));
-        string display = path + "!/same_name.txt";
+        string prefix = new('n', 500);
+        await File.WriteAllBytesAsync(path, V020ReviewZip((prefix + "-first.txt", payload, CompressionLevel.NoCompression),
+            (prefix + "-second.txt", payload, CompressionLevel.NoCompression)));
+        string display = path + "!/" + prefix + "…";
         FieldInfo progressClock = typeof(ContentScanner).GetField("_lastContainerProgress", BindingFlags.Instance | BindingFlags.NonPublic)!;
         ScanReport cancelled = new(); ReportBatchReader cancelledReader = new();
         ReportBatchWriter cancelledWriter = new(batch => cancelledReader.Apply(JsonSerializer.Deserialize<ReportBatch>(

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -60,7 +61,7 @@ internal sealed class TextDetailsWindow : Window
             BorderBrush = new SolidColorBrush(Color.FromRgb(208, 213, 221)),
             BorderThickness = new Thickness(1)
         };
-        System.Windows.Automation.AutomationProperties.SetName(details, title + "，只读完整内容");
+        System.Windows.Automation.AutomationProperties.SetName(details, title + DisplayText.Get("Ui.TextDetailsWindow.Constructor.01"));
         Grid.SetRow(details, 1);
         layout.Children.Add(details);
 
@@ -69,7 +70,7 @@ internal sealed class TextDetailsWindow : Window
         actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         TextBlock copyStatus = new()
         {
-            Text = "可选择文本并按 Ctrl+C 复制。",
+            Text = DisplayText.Get("Ui.TextDetailsWindow.Constructor.02"),
             Foreground = new SolidColorBrush(Color.FromRgb(102, 112, 133)),
             VerticalAlignment = VerticalAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
@@ -77,23 +78,23 @@ internal sealed class TextDetailsWindow : Window
         };
         actions.Children.Add(copyStatus);
         WrapPanel buttons = new() { HorizontalAlignment = HorizontalAlignment.Right };
-        Button copy = new() { Name = "CopyDetailsButton", Content = "复制全部", IsEnabled = text.Length > 0 };
+        Button copy = new() { Name = "CopyDetailsButton", Content = DisplayText.Get("Ui.TextDetailsWindow.Constructor.03"), IsEnabled = text.Length > 0 };
         copy.Click += (_, _) =>
         {
             try
             {
                 Clipboard.SetText(details.Text);
-                copyStatus.Text = "已复制完整内容。";
+                copyStatus.Text = DisplayText.Get("Ui.TextDetailsWindow.Constructor.04");
             }
             catch (ExternalException)
             {
-                copyStatus.Text = "剪贴板暂不可用，请选择文本后重试。";
+                copyStatus.Text = DisplayText.Get("Ui.TextDetailsWindow.Constructor.05");
             }
         };
         Button close = new()
         {
             Name = "CloseDetailsButton",
-            Content = "关闭",
+            Content = DisplayText.Get("Ui.TextDetailsWindow.Constructor.06"),
             IsCancel = true,
             IsDefault = true,
             Margin = new Thickness(0)

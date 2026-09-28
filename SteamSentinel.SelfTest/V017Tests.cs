@@ -81,7 +81,9 @@ internal static partial class Program
             starts++;
             Check("提权只启动固定应用且不传递路径或处置计划", info.FileName == Path.Combine(AppContext.BaseDirectory, "SteamSentinel.exe") &&
                 info.WorkingDirectory == AppContext.BaseDirectory && info.Verb == "runas" && info.UseShellExecute &&
-                info.WindowStyle == ProcessWindowStyle.Normal && info.ArgumentList.SequenceEqual([ElevationService.WindowArgument]));
+                info.WindowStyle == ProcessWindowStyle.Normal && info.ArgumentList.SequenceEqual([ElevationService.WindowArgument,
+                    SteamSentinel.App.Localization.LanguageSettings.LanguageArgument,
+                    SteamSentinel.App.Localization.LanguageSettings.CultureCode(SteamSentinel.Core.Reporting.DisplayText.Culture)]));
             return true;
         });
         Check("提权启动前重新检查安装", success.OpenAdministratorWindow() == ElevationOutcome.Opened && starts == 1 && validations == 1);

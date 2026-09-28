@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Globalization;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -65,7 +66,7 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
         if (manifest.IncidentId == Guid.Empty || manifest.PlanId == Guid.Empty || manifest.TrustId == Guid.Empty ||
             string.IsNullOrWhiteSpace(manifest.RequestedBySid))
         {
-            throw new InvalidDataException("隔离事件缺少可信索引身份字段。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.RegisterPending.01"), sourceText => new InvalidDataException(sourceText));
         }
 
         using RegistryKey root = OpenRoot(writable: true, create: true);
@@ -73,7 +74,7 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
         using (RegistryKey? existing = root.OpenSubKey(name, writable: false))
         {
             if (existing is not null)
-                throw new IOException("隔离事件可信索引已存在，拒绝复用事件 ID。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.RegisterPending.02"), sourceText => new IOException(sourceText));
         }
 
         using RegistryKey key = root.CreateSubKey(
@@ -93,13 +94,13 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
 
     public IncidentTrustRecord GetRequired(Guid incidentId)
     {
-        if (incidentId == Guid.Empty) throw new InvalidDataException("隔离事件 ID 为空。");
+        if (incidentId == Guid.Empty) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.GetRequired.01"), sourceText => new InvalidDataException(sourceText));
         using RegistryKey root = OpenRoot(writable: false, create: false);
         using RegistryKey? key = root.OpenSubKey(incidentId.ToString("D"), writable: false);
         if (key is null)
         {
-            throw new UnauthorizedAccessException(
-                "该隔离事件缺少 Broker 受保护可信索引，可能来自旧版本或不可信目录；已拒绝自动回滚或删除，请保留隔离并人工核对。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.GetRequired.02"), sourceText => new UnauthorizedAccessException(
+sourceText));
         }
         EnsureKeyProtected(key);
 
@@ -118,7 +119,7 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
             pendingHash.Length > 0 && !Validation.IsHexSha256(pendingHash) ||
             currentHash.Length == 0 && pendingHash.Length == 0)
         {
-            throw new InvalidDataException("隔离事件受保护可信索引格式无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.GetRequired.03"), sourceText => new InvalidDataException(sourceText));
         }
 
         return new IncidentTrustRecord(
@@ -148,7 +149,7 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
         if (!manifestSha256.Equals(current, StringComparison.OrdinalIgnoreCase) &&
             !manifestSha256.Equals(pending, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("隔离清单哈希不对应可信索引中的待提交版本。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.CommitManifestUpdate.01"), sourceText => new InvalidOperationException(sourceText));
         }
         key.SetValue(ManifestSha256Name, manifestSha256, RegistryValueKind.String);
         key.SetValue(PendingManifestSha256Name, string.Empty, RegistryValueKind.String);
@@ -167,7 +168,7 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
         using RegistryKey root = OpenRoot(writable, create: false);
         RegistryKey? key = root.OpenSubKey(incidentId.ToString("D"), writable);
         if (key is null)
-            throw new UnauthorizedAccessException("隔离事件缺少 Broker 受保护可信索引。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.OpenIncident.01"), sourceText => new UnauthorizedAccessException(sourceText));
         EnsureKeyProtected(key);
         if (writable) ProtectKey(key);
         return key;
@@ -179,7 +180,7 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
         try
         {
             using RegistryKey? software = machine.OpenSubKey("SOFTWARE", writable: true);
-            if (software is null) throw new UnauthorizedAccessException("无法验证 HKLM\\SOFTWARE 可信根。");
+            if (software is null) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.OpenRoot.01"), sourceText => new UnauthorizedAccessException(sourceText));
             EnsureKeyProtected(software, allowCreatorOwnerForTrustedOwner: true);
 
             using RegistryKey steamSentinel = OpenOrCreateProtectedChild(
@@ -218,8 +219,8 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
         }
         if (!create)
         {
-            throw new UnauthorizedAccessException(
-                "Broker 可信事件索引尚未初始化；旧版隔离事件不能自动回滚或删除，请保留隔离并人工核对。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.OpenOrCreateProtectedChild.01"), sourceText => new UnauthorizedAccessException(
+sourceText));
         }
 
         // The parent was already verified non-writable by untrusted identities. Creating and
@@ -273,7 +274,7 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
             key,
             AccessControlSections.Access | AccessControlSections.Owner);
         if (!IsRegistrySecurityDescriptorProtected(security, allowCreatorOwnerForTrustedOwner))
-            throw new UnauthorizedAccessException("Broker 可信事件索引或其注册表祖先允许非受信任账户写入。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.EnsureKeyProtected.01"), sourceText => new UnauthorizedAccessException(sourceText));
     }
 
     internal static bool IsRegistrySecurityDescriptorProtected(
@@ -316,13 +317,13 @@ internal sealed class RegistryIncidentTrustStore : IIncidentTrustStore
         if (key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string value ||
             value.Length > maximumLength || !allowEmpty && string.IsNullOrWhiteSpace(value))
         {
-            throw new InvalidDataException($"隔离事件可信索引字段无效：{name}");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.ReadBoundedString.01", (name)), sourceText => new InvalidDataException(sourceText));
         }
         return value;
     }
 
     private static void RequireHash(string sha256)
     {
-        if (!Validation.IsHexSha256(sha256)) throw new InvalidDataException("可信索引缺少有效的清单 SHA-256。");
+        if (!Validation.IsHexSha256(sha256)) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.IncidentTrustStore.RequireHash.01"), sourceText => new InvalidDataException(sourceText));
     }
 }

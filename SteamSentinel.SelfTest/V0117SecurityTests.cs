@@ -155,7 +155,7 @@ internal static partial class Program
         Check("0.1.17 回滚确认说明重启风险与目录安全拒绝",
             rollbackConfirmation.Contains("可能重新启用", StringComparison.Ordinal) &&
             rollbackConfirmation.Contains("不会自动恢复整目录", StringComparison.Ordinal) &&
-            BrokerEngine.DirectoryRollbackSafetyMessage.Contains("隔离副本保持不变", StringComparison.Ordinal));
+            BrokerEngine.DirectoryRollbackSafetyMessage.OriginalText.Contains("隔离副本保持不变", StringComparison.Ordinal));
 
         SecurityIdentifier fixtureSid = new("S-1-5-21-1-2-3-1001");
         DirectorySecurity incidentAcl = MachineStateSecurity.BuildProtectedDirectorySecurity(fixtureSid);
@@ -224,7 +224,40 @@ internal static partial class Program
         mutation?.Dispose();
         bool recoveredLock = BrokerMutationLease.TryAcquireForTesting(lockPath, out BrokerMutationLease? recoveredMutation);
         recoveredMutation?.Dispose();
-        Check("0.1.17 不同 PlanId 共用全局副作用锁且崩溃释放后可恢复", firstLock && !concurrentLock && recoveredLock);
+        Check("0.1.17 不同 PlanId 共用全局副作用锁且崩溃释放后可恢复",
+            firstLock && !concurrentLock && duplicateMutation is null && recoveredLock);
+
+        string missingLockParent = Path.Combine(directory, "missing-lock-parent");
+        BrokerMutationLease? missingParentLease = null;
+        IOException? missingParentError = null;
+        try { _ = BrokerMutationLease.TryAcquireForTesting(Path.Combine(missingLockParent, "mutation.lock"), out missingParentLease); }
+        catch (IOException ex) { missingParentError = ex; }
+        finally { missingParentLease?.Dispose(); }
+        Check("0.3.0 Broker 锁父目录缺失保留路径错误而不伪报忙",
+            missingParentError is DirectoryNotFoundException && missingParentError.HResult == unchecked((int)0x80070003) &&
+            missingParentLease is null && !Directory.Exists(missingLockParent));
+
+        string directoryLockPath = Path.Combine(directory, "directory-as-lock");
+        Directory.CreateDirectory(directoryLockPath);
+        bool directoryLockRejected = false;
+        BrokerMutationLease? directoryLease = null;
+        try { _ = BrokerMutationLease.TryAcquireForTesting(directoryLockPath, out directoryLease); }
+        catch (UnauthorizedAccessException) { directoryLockRejected = true; }
+        finally { directoryLease?.Dispose(); }
+        Check("0.3.0 Broker 锁目标为目录仍按不安全路径拒绝",
+            directoryLockRejected && directoryLease is null && Directory.Exists(directoryLockPath));
+
+        static IOException LeaseIo(int code) => new("inert lock error fixture", unchecked((int)0x80070000) | code);
+        Check("0.3.0 Broker 忙仅接受锁共享冲突与创建竞争",
+            new[] { 32, 33 }.All(code => BrokerMutationLease.IsContention(LeaseIo(code), creating: false) &&
+                BrokerMutationLease.IsContention(LeaseIo(code), creating: true)) &&
+            new[] { 80, 183 }.All(code => BrokerMutationLease.IsContention(LeaseIo(code), creating: true) &&
+                !BrokerMutationLease.IsContention(LeaseIo(code), creating: false)));
+        Check("0.3.0 Broker 磁盘路径权限和非 Win32 IO 错误不误报忙",
+            new[] { 2, 3, 5, 39, 112, 1117 }.All(code =>
+                !BrokerMutationLease.IsContention(LeaseIo(code), creating: true) &&
+                !BrokerMutationLease.IsContention(LeaseIo(code), creating: false)) &&
+            !BrokerMutationLease.IsContention(new IOException("inert non-Win32 fixture", unchecked((int)0x80130020)), creating: true));
 
         string emptyDirectory = Path.Combine(directory, "secure-delete-empty");
         Directory.CreateDirectory(emptyDirectory);

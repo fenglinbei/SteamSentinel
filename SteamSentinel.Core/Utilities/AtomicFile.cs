@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 namespace SteamSentinel.Core.Utilities;
 
 public static class AtomicFile
@@ -5,7 +6,7 @@ public static class AtomicFile
     public static async Task WriteAsync(string destination, Func<FileStream, Task> write, CancellationToken token = default)
     {
         string full = Path.GetFullPath(destination);
-        string directory = Path.GetDirectoryName(full) ?? throw new IOException("输出文件没有父目录。");
+        string directory = Path.GetDirectoryName(full) ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.AtomicFile.WriteAsync.01"), sourceText => new IOException(sourceText));
         Directory.CreateDirectory(directory);
         string temporary = Path.Combine(directory, $".{Path.GetFileName(full)}.{Guid.NewGuid():N}.tmp");
         try

@@ -17,7 +17,7 @@ public sealed class RuleSet
     public List<string> ArchiveExtensions { get; init; } = [];
 }
 
-public sealed class HashRule
+public sealed partial class HashRule
 {
     public string Id { get; init; } = string.Empty;
     public string Sha256 { get; init; } = string.Empty;
@@ -28,7 +28,7 @@ public sealed class HashRule
     public string? Evidence { get; init; }
 }
 
-public sealed class StringRule
+public sealed partial class StringRule
 {
     public string Id { get; init; } = string.Empty;
     public string Value { get; init; } = string.Empty;

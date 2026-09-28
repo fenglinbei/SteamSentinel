@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -39,7 +40,7 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
             {
                 Status = BoundProxyPolicyStatus.ReadFailed,
                 Fingerprint = lastGuard.Fingerprint,
-                Detail = "固定代理策略在读取 LAN 配置期间变化。"
+                DetailText = MessageText.Create("Backend.Core.WindowsBoundProxySettings.ReadCurrentUserLan.01")
             };
         return new()
         {
@@ -57,10 +58,10 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
         BoundProxyRepair.ValidateSnapshot(desired);
         if (changedFields is null || changedFields.Count is < 1 or > 4 ||
             changedFields.Any(field => !Enum.IsDefined(field)) || changedFields.Distinct().Count() != changedFields.Count)
-            throw new InvalidDataException("LAN 原生写入字段不在固定白名单或重复。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.WriteCurrentUserLan.01"), sourceText => new InvalidDataException(sourceText));
         BoundProxyPolicyGuard guard = ReadPolicyGuard();
         if (guard.Status != BoundProxyPolicyStatus.Unmanaged || guard.Fingerprint != desired.PolicyGuard.Fingerprint)
-            throw new NotSupportedException("临写代理策略守卫不一致，拒绝修改。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.WriteCurrentUserLan.02"), sourceText => new NotSupportedException(sourceText));
         List<IntPtr> strings = [];
         IntPtr options = IntPtr.Zero;
         try
@@ -75,7 +76,7 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
                     BoundProxyField.ProxyServer => StringOption(ProxyServerOption, desired.ProxyServer, strings),
                     BoundProxyField.ProxyBypass => StringOption(ProxyBypassOption, desired.ProxyBypass, strings),
                     BoundProxyField.AutoConfigUrl => StringOption(AutoConfigUrlOption, desired.AutoConfigUrl, strings),
-                    _ => throw new InvalidDataException("未知代理字段。")
+                    _ => throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.WriteCurrentUserLan.03"), sourceText => new InvalidDataException(sourceText))
                 };
                 Marshal.StructureToPtr(option, IntPtr.Add(options, index * optionSize), false);
             }
@@ -83,7 +84,7 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
             if (!InternetSetOptionW(IntPtr.Zero, PerConnectionOption, ref list, list.Size))
             {
                 int error = Marshal.GetLastPInvokeError();
-                throw new Win32Exception(error, "LAN 代理设置失败（选项索引 " + list.OptionError + "），可能发生部分写入。 ");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.WriteCurrentUserLan.04") + list.OptionError + MessageText.Create("Backend.Core.WindowsBoundProxySettings.WriteCurrentUserLan.05"), sourceText => new Win32Exception(error, sourceText));
             }
         }
         finally
@@ -117,7 +118,7 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
             if (!InternetQueryOptionW(IntPtr.Zero, PerConnectionOption, ref list, ref size))
             {
                 int error = Marshal.GetLastPInvokeError();
-                throw new Win32Exception(error, "无法读取当前用户默认/LAN 的精确代理配置。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.Query.01"), sourceText => new Win32Exception(error, sourceText));
             }
             return new()
             {
@@ -160,7 +161,7 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
         for (int length = 0; length <= BoundProxyRepair.MaximumStringCharacters; length++)
             if (Marshal.ReadInt16(pointer, checked(length * 2)) == 0)
                 return new() { Present = true, Value = Marshal.PtrToStringUni(pointer, length) };
-        throw new InvalidDataException("LAN 代理字符串超过精确修复预算，未保留截断值。");
+        throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.ReadString.01"), sourceText => new InvalidDataException(sourceText));
     }
 
     private static BoundProxyPolicyGuard ReadPolicyGuard() =>
@@ -170,7 +171,7 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
     {
         // Fixed known WinINet proxy-policy locations and both registry views. We never infer that
         // absence here describes a browser's custom policy, PAC result, or another proxy subsystem.
-        string sid = reader.ReadCurrentUserSid() ?? throw new UnauthorizedAccessException("当前代理用户 SID 不可读。");
+        string sid = reader.ReadCurrentUserSid() ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.ReadPolicyGuard.01"), sourceText => new UnauthorizedAccessException(sourceText));
         List<PolicyRow> rows = [];
         BoundProxyPolicyStatus status = BoundProxyPolicyStatus.Unmanaged;
         RegistryView[] views = is64BitOperatingSystem ? [RegistryView.Registry64, RegistryView.Registry32] : [RegistryView.Registry32];
@@ -189,12 +190,12 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
         {
             Status = status,
             Fingerprint = fingerprint,
-            Detail = status switch
+            DetailText = status switch
             {
-                BoundProxyPolicyStatus.Unmanaged => "固定 WinINet 代理策略和机器作用域选择项已完整读取；不覆盖其他应用或代理子系统。",
-                BoundProxyPolicyStatus.PolicyControlled => "固定 WinINet 代理策略项存在，拒绝自动修改。",
-                BoundProxyPolicyStatus.Unsupported => "代理被选择为机器作用域或作用域值无效，拒绝自动修改。",
-                _ => "固定 WinINet 代理策略守卫读取未完整完成。"
+                BoundProxyPolicyStatus.Unmanaged => MessageText.Create("Backend.Core.WindowsBoundProxySettings.ReadPolicyGuard.Unmanaged.01"),
+                BoundProxyPolicyStatus.PolicyControlled => MessageText.Create("Backend.Core.WindowsBoundProxySettings.ReadPolicyGuard.PolicyControlled.01"),
+                BoundProxyPolicyStatus.Unsupported => MessageText.Create("Backend.Core.WindowsBoundProxySettings.ReadPolicyGuard.Unsupported.01"),
+                _ => MessageText.Create("Backend.Core.WindowsBoundProxySettings.ReadPolicyGuard.02")
             }
         };
 
@@ -234,14 +235,14 @@ public sealed class WindowsBoundProxySettings : IBoundProxySettings
     {
         RequireWindows();
         if (!InternetSetOptionW(IntPtr.Zero, option, IntPtr.Zero, 0))
-            throw new Win32Exception(Marshal.GetLastPInvokeError(), "代理配置通知失败，WinINet 选项 " + option + "。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.Notify.01") + option + "。", sourceText => new Win32Exception(Marshal.GetLastPInvokeError(), sourceText));
     }
     private static void RequireWindows()
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("WinINet LAN 代理仅支持 Windows 桌面进程。");
+        if (!OperatingSystem.IsWindows()) throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.RequireWindows.01"), sourceText => new PlatformNotSupportedException(sourceText));
         using WindowsIdentity identity = WindowsIdentity.GetCurrent();
         if (!Environment.UserInteractive || identity.IsSystem || identity.User is null || identity.User.Value is "S-1-5-19" or "S-1-5-20")
-            throw new NotSupportedException("代理适配器不支持系统服务或缺少交互用户身份的上下文。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsBoundProxySettings.RequireWindows.02"), sourceText => new NotSupportedException(sourceText));
     }
 
     private sealed record PolicyRow(string Hive, string View, string Key, string Name, string Kind, string Status, bool Present, string? Value);

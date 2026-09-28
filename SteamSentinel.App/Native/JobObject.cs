@@ -13,7 +13,13 @@ internal sealed class JobObject : IDisposable
     {
         _handle = CreateJobObject(IntPtr.Zero, null);
         if (_handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try { SetMemoryLimit(processMemoryLimitBytes); }
+        catch { _handle.Dispose(); throw; }
+    }
 
+    internal void SetMemoryLimit(long processMemoryLimitBytes)
+    {
+        if (processMemoryLimitBytes <= 0) throw new ArgumentOutOfRangeException(nameof(processMemoryLimitBytes));
         JobObjectExtendedLimitInformation information = new();
         information.BasicLimitInformation.LimitFlags =
             JobObjectLimitKillOnJobClose |
@@ -69,6 +75,21 @@ internal sealed class JobObject : IDisposable
     }
 
     public void Dispose() => _handle.Dispose();
+
+    internal (ulong Memory, uint Processes, uint Flags, uint Ui) QueryLimits()
+    {
+        int size = Marshal.SizeOf<JobObjectExtendedLimitInformation>();
+        IntPtr data = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!QueryInformationJobObject(_handle, 9, data, (uint)size, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            JobObjectExtendedLimitInformation limits = Marshal.PtrToStructure<JobObjectExtendedLimitInformation>(data);
+            if (!QueryInformationJobObject(_handle, 4, data, (uint)Marshal.SizeOf<JobObjectBasicUiRestrictions>(), IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            return (limits.ProcessMemoryLimit.ToUInt64(), limits.BasicLimitInformation.ActiveProcessLimit,
+                limits.BasicLimitInformation.LimitFlags, Marshal.PtrToStructure<JobObjectBasicUiRestrictions>(data).UiRestrictionsClass);
+        }
+        finally { Marshal.FreeHGlobal(data); }
+    }
 
     private const uint JobObjectLimitActiveProcess = 0x00000008;
     private const uint JobObjectLimitProcessMemory = 0x00000100;
@@ -134,6 +155,9 @@ internal sealed class JobObject : IDisposable
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetInformationJobObject(SafeJobHandle job, int informationClass, IntPtr information, uint length);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(SafeJobHandle job, int informationClass, IntPtr information, uint length, IntPtr returnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AssignProcessToJobObject(SafeJobHandle job, IntPtr process);

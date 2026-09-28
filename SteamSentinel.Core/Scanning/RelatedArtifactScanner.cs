@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using System.ComponentModel;
 using System.Xml;
@@ -29,7 +30,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             if (Directory.Exists(path)) AddCandidate(path, report);
         }
         string programs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
-        List<string> notes = [];
+        MessageTextCollection notes = [];
         foreach (string directory in ContentDiscovery.Children(programs, true, notes, 1024))
         {
             token.ThrowIfCancellationRequested();
@@ -52,7 +53,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                     await using (FileStream stream = RelatedArtifactReader.Open(file))
                     {
                         if (stream.Length > 1024 * 1024 || stream.Length > MaximumVerificationBytes - _relatedBytesHashed)
-                        { Note(report, "启动快捷方式超过单项或关联读取预算：" + file); continue; }
+                        { Note(report, MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectCoreAsync.01") + file); continue; }
                         bytes = new byte[checked((int)stream.Length)];
                         await stream.ReadExactlyAsync(bytes, token);
                     }
@@ -70,23 +71,23 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                         Category = FindingCategory.Persistence,
                         Severity = FindingSeverity.Critical,
                         Score = 95,
-                        Title = "启动快捷方式指向已确认的恶意组件",
-                        Description = "只读解析启动目录快捷方式，未启动目标。",
+                        TitleText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectCoreAsync.02"),
+                        DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectCoreAsync.03"),
                         Target = file,
                         Sha256 = hash,
                         RelatedFilePath = bound.Value.Path,
                         RelatedFileSha256 = bound.Value.Hash,
-                        Evidence = ScriptSignals.Redact(command),
+                        EvidenceText = ScriptSignals.Redact(command),
                         CanRemediate = true,
                         SuggestedActions = [SuggestedActionKind.QuarantineFile]
                     });
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
-                { notes.Add("启动目录文件无法读取：" + file); }
+                { notes.AddText(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectCoreAsync.04") + file); }
             }
         await CollectProcessesAsync(layout, report, token);
         if (options.IncludeExecutionHistory) CollectHistory(report);
-        foreach (string note in notes) { report.CoverageNotes.Add(note); report.Coverage = ScanCoverage.Partial; }
+        foreach (MessageText note in notes.Texts) { report.AddCoverageNote(note); report.Coverage = ScanCoverage.Partial; }
     }
 
     private async Task<(string Path, string Hash)?> MatchCoreAsync(string command, ScanReport report, CancellationToken token)
@@ -129,8 +130,8 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                             Category = FindingCategory.Persistence,
                             Severity = FindingSeverity.Critical,
                             Score = ProofScore(match.Value.Path, match.Value.Hash),
-                            Title = "启动项关联已验证的风险文件",
-                            Description = "名称可能变化，按实际目标与文件哈希确认，未知哈希不标记为已知恶意。",
+                            TitleText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectRunAsync.01"),
+                            DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectRunAsync.02"),
                             Target = command,
                             RegistryHive = hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM",
                             RegistryView = view.ToString(),
@@ -139,7 +140,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                             RelatedFilePath = match.Value.Path,
                             RelatedFileSha256 = match.Value.Hash,
                             ConfigurationSnapshot = command,
-                            Evidence = ScriptSignals.Redact(command),
+                            EvidenceText = ScriptSignals.Redact(command),
                             IsKnownMalware = _known.ContainsKey(match.Value.Hash),
                             CanRemediate = allowed,
                             SuggestedActions = allowed ? [SuggestedActionKind.RemoveRegistryValue] : [SuggestedActionKind.ReviewOnly]
@@ -147,21 +148,21 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                     }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-                { report.CoverageNotes.Add("关联启动项未完整读取：" + ex.Message); report.Coverage = ScanCoverage.Partial; }
+                { report.AddCoverageNote(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectRunAsync.03") + MessageExceptions.Describe(ex)); report.Coverage = ScanCoverage.Partial; }
             }
     }
 
     private async Task CollectTasksAsync(ScanReport report, CancellationToken token)
     {
         string root = RelatedTaskSnapshotReader.TaskRoot;
-        List<string> notes = [];
+        MessageTextCollection notes = [];
         if (!Directory.Exists(root)) return;
         long xmlBytes = 0;
         foreach (string path in ContentDiscovery.Files(root, notes, 4096, 8, token))
         {
             try
             {
-                if (xmlBytes >= 64L * 1024 * 1024) { notes.Add("任务 XML 总读取达到 64 MiB 预算上限。"); break; }
+                if (xmlBytes >= 64L * 1024 * 1024) { notes.AddText(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.01")); break; }
                 string task = "\\" + Path.GetRelativePath(root, path);
                 RelatedTaskSnapshot snapshot = await RelatedTaskSnapshotReader.ReadUnderRootAsync(task, root, token,
                     count => xmlBytes += count, (int)Math.Min(RelatedTaskSnapshotReader.MaximumBytes, 64L * 1024 * 1024 - xmlBytes));
@@ -176,14 +177,14 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                         Category = FindingCategory.Persistence,
                         Severity = FindingSeverity.Critical,
                         Score = ProofScore(match.Value.Path, match.Value.Hash),
-                        Title = "计划任务关联已验证的风险文件",
-                        Description = "任务配置与目标文件分别核对哈希，仅支持管理员组件可独立复核的内容证据。",
+                        TitleText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.02"),
+                        DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.03"),
                         Target = task,
                         Sha256 = snapshot.Sha256,
                         RelatedFilePath = match.Value.Path,
                         RelatedFileSha256 = match.Value.Hash,
                         ConfigurationSnapshot = string.Join("\n", snapshot.Invocations),
-                        Evidence = ScriptSignals.Redact(command),
+                        EvidenceText = ScriptSignals.Redact(command),
                         IsKnownMalware = _known.ContainsKey(match.Value.Hash),
                         CanRemediate = allowed,
                         SuggestedActions = allowed ? [SuggestedActionKind.RemoveScheduledTask] : [SuggestedActionKind.ReviewOnly]
@@ -192,9 +193,9 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                 }
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or XmlException or Win32Exception)
-            { notes.Add($"任务未完整检查：{path}，{ex.Message}"); }
+            { notes.AddText(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.04", (path), (MessageExceptions.Describe(ex)))); }
         }
-        foreach (string note in notes) { report.CoverageNotes.Add(note); report.Coverage = ScanCoverage.Partial; }
+        foreach (MessageText note in notes.Texts) { report.AddCoverageNote(note); report.Coverage = ScanCoverage.Partial; }
     }
 
     private async Task CollectServicesAsync(ScanReport report, CancellationToken token)
@@ -221,14 +222,14 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                     Category = FindingCategory.Persistence,
                     Severity = FindingSeverity.Critical,
                     Score = ProofScore(match.Value.Path, match.Value.Hash),
-                    Title = "服务启动链关联已验证的风险文件",
-                    Description = "仅已知恶意文件允许禁用此服务启动，不删除服务，也不操作驱动，其他证据仅供核对。",
+                    TitleText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectServicesAsync.01"),
+                    DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectServicesAsync.02"),
                     Target = name,
                     ConfigurationSnapshot = command,
                     ConfigurationKind = start.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     RelatedFilePath = match.Value.Path,
                     RelatedFileSha256 = match.Value.Hash,
-                    Evidence = ScriptSignals.Redact(command),
+                    EvidenceText = ScriptSignals.Redact(command),
                     IsKnownMalware = _known.ContainsKey(match.Value.Hash),
                     CanRemediate = allowed,
                     SuggestedActions = allowed ? [SuggestedActionKind.DisableService] : [SuggestedActionKind.ReviewOnly]
@@ -236,7 +237,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        { report.CoverageNotes.Add("服务关联未完整读取：" + ex.Message); report.Coverage = ScanCoverage.Partial; }
+        { report.AddCoverageNote(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectServicesAsync.03") + MessageExceptions.Describe(ex)); report.Coverage = ScanCoverage.Partial; }
     }
 
     private static void CollectHistory(ScanReport report)
@@ -246,7 +247,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
         foreach (string name in key.GetValueNames().Where(name => name.Length == 1).Take(26))
         {
             string value = key.GetValue(name)?.ToString() ?? "";
-            IReadOnlyList<string> signals = ScriptSignals.Analyze(value);
+            IReadOnlyList<MessageText> signals = ScriptSignals.AnalyzeMessages(value);
             if (signals.Count == 0) continue;
             report.Findings.Add(new Finding
             {
@@ -254,10 +255,10 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                 Category = FindingCategory.Persistence,
                 Severity = FindingSeverity.High,
                 Score = 75,
-                Title = "运行历史中出现可疑验证执行链",
-                Description = "历史记录不是当前仍在运行的证明，其他启动方式可能不留此记录。",
+                TitleText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectHistory.01"),
+                DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectHistory.02"),
                 Target = "RunMRU/" + name,
-                Evidence = string.Join("，", signals),
+                EvidenceText = MessageText.Join("，", signals),
                 CanRemediate = false,
                 SuggestedActions = [SuggestedActionKind.ReviewOnly]
             });
@@ -279,19 +280,19 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             }
             if (_relatedFilesHashed >= 2048 || _relatedBytesHashed >= _verificationByteLimit)
             {
-                Note(report, (_verificationByteLimit == MaximumVerificationBytes ? "本批核验达到 4 GiB 或 2048 个文件上限，未核验：" :
-                $"本批核验达到字节上限（{_verificationByteLimit} 字节）或 2048 个文件上限，未核验：") + path); return null;
+                Note(report, (_verificationByteLimit == MaximumVerificationBytes ? MessageText.Create("Backend.Core.RelatedArtifactScanner.HashAsync.01") :
+                MessageText.Create("Backend.Core.RelatedArtifactScanner.HashAsync.02", (_verificationByteLimit))) + path); return null;
             }
             FileStream stream = RelatedArtifactReader.Open(path);
             bool retained = false;
             try
             {
                 if (stream.Length > 256L * 1024 * 1024)
-                { Note(report, "文件超过单文件 256 MiB 核验上限，未核验：" + path); return null; }
+                { Note(report, MessageText.Create("Backend.Core.RelatedArtifactScanner.HashAsync.03") + path); return null; }
                 if (stream.Length > _verificationByteLimit - _relatedBytesHashed)
                 {
-                    Note(report, (_verificationByteLimit == MaximumVerificationBytes ? "本批核验 4 GiB 额度不足，未核验：" :
-                    "本批核验额度不足（上限 " + _verificationByteLimit + " 字节），未核验：") + path); return null;
+                    Note(report, (_verificationByteLimit == MaximumVerificationBytes ? MessageText.Create("Backend.Core.RelatedArtifactScanner.HashAsync.04") :
+                    MessageText.Create("Backend.Core.RelatedArtifactScanner.HashAsync.05") + _verificationByteLimit + MessageText.Create("Backend.Core.RelatedArtifactScanner.HashAsync.06")) + path); return null;
                 }
                 _relatedFilesHashed++;
                 string hash = await Hashing.Sha256StreamAsync(stream, token, size => { _relatedBytesHashed += size; report.Metrics.BytesHashed += size; });
@@ -303,7 +304,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             finally { if (!retained) await stream.DisposeAsync(); }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
-        { Note(report, "关联文件无法验证：" + path); return null; }
+        { Note(report, MessageText.Create("Backend.Core.RelatedArtifactScanner.HashAsync.07") + path); return null; }
     }
 
     private static bool IsCandidate(string path) =>
@@ -321,7 +322,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
         if (report.CandidateRoots.Contains(path, StringComparer.OrdinalIgnoreCase)) return;
         if (report.CandidateRoots.Count >= 128)
         {
-            Note(report, "关联候选路径达到 128 项上限");
+            Note(report, MessageText.Create("Backend.Core.RelatedArtifactScanner.AddCandidate.01"));
             int directoryIndex = report.CandidateRoots.FindLastIndex(Directory.Exists);
             if (!File.Exists(path) || directoryIndex < 0) return;
             report.CandidateRoots.RemoveAt(directoryIndex);

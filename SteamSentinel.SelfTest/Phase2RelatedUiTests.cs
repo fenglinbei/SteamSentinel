@@ -62,12 +62,12 @@ internal static partial class Program
                     Check($"组件UI {viewport} 关联发现不误入代理页且不新增处置资格",
                         !item.IsTrustProxyFinding && RelatedComponentReportPresentation.IsRelatedFinding(item.Finding) &&
                         !item.CanSelect && !item.IsSelected && !TrustProxyUiButton(window, "RemediateButton").IsEnabled &&
-                        !TrustProxyUiButton(window, "SelectAllButton").IsEnabled && item.HandlingLabel == "需进一步确认");
+                        !TrustProxyUiButton(window, "SelectAllButton").IsEnabled && item.HandlingLabel == UiExpected("需进一步确认", "Further review needed"));
                     Check($"组件UI {viewport} 仅适用本地文件可进一步检查且展示观察原因",
-                        review.IsEnabled && review.Content?.ToString() == "进一步检查" &&
+                        review.IsEnabled && review.Content?.ToString() == UiExpected("进一步检查", "Inspect further") &&
                         TrustProxyUiButton(window, "OccupancyButton").Visibility == Visibility.Collapsed &&
                         TrustProxyUiText(window, "DetailDescriptionText").Text.Contains("无害测试：由宿主模块列表定位", StringComparison.Ordinal) &&
-                        TrustProxyUiText(window, "DetailDescriptionText").Text.Contains("证据层级：关联风险", StringComparison.Ordinal) &&
+                        TrustProxyUiText(window, "DetailDescriptionText").Text.Contains(UiExpected("证据层级：关联风险", "Evidence tier: Related risk"), StringComparison.Ordinal) &&
                         TrustProxyUiText(window, "DetailDescriptionText").Text.Contains("phase2-candidate", StringComparison.Ordinal));
                     if (output is not null) layout.Save("related-components-finding-" + viewport, output);
 
@@ -87,11 +87,11 @@ internal static partial class Program
                         UiLayoutHarness.Descendants<Button>((FrameworkElement)window.FindName("RelatedComponentsPage")).Count() == 0 &&
                         UiLayoutHarness.Descendants<ScrollViewer>(details).All(viewer => viewer.ScrollableWidth <= 1));
                     Check($"组件UI {viewport} 来源宿主候选哈希及真实预算可复制且凭据隐藏",
-                        details.Text.Contains("来源 → 宿主 → 候选组件", StringComparison.Ordinal) &&
-                        details.Text.Contains("宿主 PID 4242", StringComparison.Ordinal) && details.Text.Contains(file, StringComparison.Ordinal) &&
-                        details.Text.Contains(new string('A', 64), StringComparison.Ordinal) && details.Text.Contains("第 1 轮", StringComparison.Ordinal) &&
-                        details.Text.Contains("第 2 轮", StringComparison.Ordinal) && details.Text.Contains("本轮预算 512 字节", StringComparison.Ordinal) &&
-                        details.Text.Contains("本轮预算 256 字节", StringComparison.Ordinal) && details.Text.Contains("写入者仍未定位", StringComparison.Ordinal) &&
+                        details.Text.Contains(UiExpected("来源 → 宿主 → 候选组件", "Source → host → candidate component"), StringComparison.Ordinal) &&
+                        details.Text.Contains(UiExpected("宿主 PID 4242", "Host PID 4242"), StringComparison.Ordinal) && details.Text.Contains(file, StringComparison.Ordinal) &&
+                        details.Text.Contains(new string('A', 64), StringComparison.Ordinal) && details.Text.Contains(UiExpected("第 1 轮", "Round 1"), StringComparison.Ordinal) &&
+                        details.Text.Contains(UiExpected("第 2 轮", "Round 2"), StringComparison.Ordinal) && details.Text.Contains(UiExpected("本轮预算 512 字节", "round budget 512 bytes"), StringComparison.Ordinal) &&
+                        details.Text.Contains(UiExpected("本轮预算 256 字节", "round budget 256 bytes"), StringComparison.Ordinal) && details.Text.Contains(UiExpected("写入者仍未定位", "The writer remains unidentified"), StringComparison.Ordinal) &&
                         !details.Text.Contains(Phase2PresentationSecret, StringComparison.Ordinal));
                     if (output is not null) layout.Save("related-components-diagnostics-" + viewport, output);
 
@@ -123,9 +123,9 @@ internal static partial class Program
                     });
                     layout.Refresh();
                     Check($"组件UI {viewport} 无适用文件的关系记录不提供误导性进一步检查",
-                        !review.IsEnabled && review.Content?.ToString() == "进一步检查" &&
+                        !review.IsEnabled && review.Content?.ToString() == UiExpected("进一步检查", "Inspect further") &&
                         ToolTipService.GetShowOnDisabled(review) &&
-                        review.ToolTip?.ToString()?.Contains("尚未定位", StringComparison.Ordinal) == true &&
+                        review.ToolTip?.ToString()?.Contains(UiExpected("尚未定位", "No local file"), StringComparison.Ordinal) == true &&
                         TrustProxyUiButton(window, "OccupancyButton").Visibility == Visibility.Collapsed);
                     diagnostic.Rounds[1].Status = DiagnosticReadStatus.Cancelled;
                     SetTrustProxyUiReport(window, new()
@@ -135,11 +135,11 @@ internal static partial class Program
                         Findings = [noFile]
                     });
                     Check($"组件UI {viewport} 取消轮次明确为未完成而非关联检查已完成",
-                        status.Text.Contains("关联检查未完成", StringComparison.Ordinal) &&
-                        !status.Text.Contains("本轮关联检查已完成", StringComparison.Ordinal));
+                        status.Text.Contains(UiExpected("关联检查未完成", "Association inspection is incomplete"), StringComparison.Ordinal) &&
+                        !status.Text.Contains(UiExpected("本轮关联检查已完成", "Association inspection for this run is complete"), StringComparison.Ordinal));
                     SetTrustProxyUiReport(window, new() { CompletedAtUtc = DateTimeOffset.UtcNow });
                     Check($"组件UI {viewport} 新报告无组件诊断时清空旧显示",
-                        status.Text == "尚无组件关联记录" && !details.Text.Contains("phase2-candidate", StringComparison.Ordinal));
+                        status.Text == UiExpected("尚无组件关联记录", "No component association records yet") && !details.Text.Contains("phase2-candidate", StringComparison.Ordinal));
                 }
                 finally { CloseSummaryFixture(window); }
             }
@@ -172,7 +172,7 @@ internal static partial class Program
         ScanReport? bundledOriginal = JsonSerializer.Deserialize<ScanReport>(originalScanJson, JsonFile.Options);
         Check("组件报告 Markdown与JSON保留来源关系和各轮实际预算并与代理诊断分节",
             markdown.Contains("## 组件关联只读诊断", StringComparison.Ordinal) && markdown.Contains("## 证书与代理只读诊断", StringComparison.Ordinal) &&
-            markdown.Contains("本轮预算 512 字节", StringComparison.Ordinal) && markdown.Contains("本轮预算 256 字节", StringComparison.Ordinal) &&
+            markdown.Contains(UiExpected("本轮预算 512 字节", "round budget 512 bytes"), StringComparison.Ordinal) && markdown.Contains(UiExpected("本轮预算 256 字节", "round budget 256 bytes"), StringComparison.Ordinal) &&
             json.Contains("phase2-source", StringComparison.Ordinal) && json.Contains("phase2-host", StringComparison.Ordinal) &&
             json.Contains("phase2-candidate", StringComparison.Ordinal));
         Check("组件报告 完整包独立保存最新关联记录且不改写处置前scan",
@@ -196,7 +196,7 @@ internal static partial class Program
         string absentText = RelatedComponentReportPresentation.Describe(absentBudget);
         Check("组件报告 缺失预算不冒充默认配置且正常范围说明不算失败",
             absentText.Contains("预算上限未记录", StringComparison.Ordinal) && absentText.Contains("本轮预算 未记录", StringComparison.Ordinal) &&
-            RelatedComponentReportPresentation.Summary(diagnostic).Contains("本轮关联检查已完成", StringComparison.Ordinal));
+            RelatedComponentReportPresentation.Summary(diagnostic).Contains(UiExpected("本轮关联检查已完成", "Association inspection for this run is complete"), StringComparison.Ordinal));
         Check("组件报告 证据层级本身不增加处置资格",
             !new FindingItemViewModel(new()
             {

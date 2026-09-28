@@ -36,28 +36,28 @@ public partial class MainWindow
                 string casePath = Path.Combine(_caseStore.RootDirectory, summary.CaseId.ToString("N"), "case.json");
                 recoveryBytes = checked(recoveryBytes + new FileInfo(casePath).Length);
                 if (recoveryBytes > 128L * 1024 * 1024)
-                    throw new InvalidDataException("启动病例恢复超过 128 MiB 读取预算，未确认剩余执行状态；请先导出并管理已有病例。");
+                    throw new InvalidDataException(DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.01"));
                 RemediationCaseRecord? record = await _caseStore.LoadAsync(summary.CaseId);
-                if (record is null) throw new InvalidDataException("未决病例索引对应的记录缺失，不能确认上次执行状态。");
+                if (record is null) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.02"));
                 foreach (RemediationPlan plan in CasePlans(record).Where(p => record.PendingPlanIds.Contains(p.PlanId)))
                     _remediationClient.RestoreUnresolvedPlan(plan);
             }
         }
-        if (items.Length == 0) CaseDetailsText.Text = "尚无已保存病例。确认处置后会保存计划与会话基线，供重启或重新登录后只读复验。";
+        if (items.Length == 0) CaseDetailsText.Text = DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.03");
         if (_remediationClient.HasUnresolvedExecution)
-            CaseDetailsText.Text = "存在尚未返回确定结果的管理员操作。已暂停新的处置；读取病例可尝试恢复受保护结果。旧计划不会自动重提。";
+            CaseDetailsText.Text = DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.04");
         CaseRecheckButton.IsEnabled = !_busy && items.Length > 0;
     }
 
     private async Task BeginPersistentCaseAsync(RemediationBatchSession batch, ScanReport original)
     {
-        string sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new UnauthorizedAccessException("无法读取病例用户身份。");
+        string sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new UnauthorizedAccessException(DisplayText.Get("Ui.Cases.BeginPersistentCaseAsync.01"));
         CaseSessionObservation baseline;
         using (CancellationTokenSource timeout = new(TimeSpan.FromSeconds(6)))
         {
             try { baseline = await new WindowsCaseSessionReader().ReadAsync(timeout.Token).WaitAsync(timeout.Token); }
             catch (Exception ex) when (ex is not OutOfMemoryException)
-            { baseline = new() { UserSid = sid, Detail = "处置前会话身份未读完，后续不能据此宣称跨会话验收通过：" + ex.Message }; }
+            { baseline = new() { UserSid = sid, DetailText = MessageText.Create("Ui.Cases.BeginPersistentCaseAsync.02") + MessageExceptions.Describe(ex) }; }
         }
         RemediationCaseRecord record = new()
         {
@@ -74,7 +74,7 @@ public partial class MainWindow
 
     private async Task<RemediationRunResult> ExecuteRecordedPlanAsync(RemediationPlan plan)
     {
-        RemediationCaseRecord record = _persistedCase ?? throw new InvalidOperationException("病例未可靠保存，未启动管理员处置。");
+        RemediationCaseRecord record = _persistedCase ?? throw new InvalidOperationException(DisplayText.Get("Ui.Cases.ExecuteRecordedPlanAsync.01"));
         return await ExecuteRecordedPlanAsync(plan, record).ConfigureAwait(false);
     }
 
@@ -117,7 +117,7 @@ public partial class MainWindow
             try { result = await ProtectedRemediationResultReader.TryReadAsync(plan, token); }
             catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
             {
-                if (record.Notes.Count < 2048) record.Notes.Add(RemediationVerification.Limit("无法确认受保护结果 " + plan.PlanId + "：" + ex.Message, 2048));
+                if (record.Notes.Count < 2048) record.AddNote((MessageText.Create("Ui.Cases.RecoverCaseResultsAsync.01") + plan.PlanId + "：" + MessageExceptions.Describe(ex)).Limit(2048));
                 result = null;
             }
             if (result is not null) { trusted.Add(result); record.PendingPlanIds.Remove(plan.PlanId); }
@@ -145,7 +145,7 @@ public partial class MainWindow
         foreach (RemediationCaseSummary summary in summaries)
         {
             recoveryBytes = checked(recoveryBytes + new FileInfo(Path.Combine(_caseStore.RootDirectory, summary.CaseId.ToString("N"), "case.json")).Length);
-            if (recoveryBytes > 128L * 1024 * 1024) throw new InvalidDataException("病例结果恢复读取超过 128 MiB，未覆盖尚未核对的记录。");
+            if (recoveryBytes > 128L * 1024 * 1024) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RecordRecoveredResultAsync.01"));
             RemediationCaseRecord? record = _persistedCase?.CaseId == summary.CaseId ? _persistedCase :
                 _loadedCase?.CaseId == summary.CaseId ? _loadedCase : await _caseStore.LoadAsync(summary.CaseId);
             if (record is null) continue;
@@ -186,7 +186,7 @@ public partial class MainWindow
             }
             _caseRecoveryUnavailable = false;
         }
-        catch (Exception ex) { _caseRecoveryUnavailable = true; CaseDetailsText.Text = "病例读取未完成：" + ex.Message; }
+        catch (Exception ex) { _caseRecoveryUnavailable = true; CaseDetailsText.Text = DisplayText.Get("Ui.Cases.CaseRefresh_Click.01") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex); }
         finally { SetBusy(false); }
     }
 
@@ -194,11 +194,11 @@ public partial class MainWindow
     {
         if (_busy || CaseListComboBox.SelectedItem is not CaseListItem selected) return;
         SetBusy(true); _scanCancellation = new(TimeSpan.FromMinutes(2)); CancelScanButton.IsEnabled = true;
-        ShowActivity(ActivityPhase.FollowUp, "只读核对会话身份与原病例目标；不会重新处置或自动重启。");
+        ShowActivity(ActivityPhase.FollowUp, DisplayText.Get("Ui.Cases.CaseRecheck_Click.01"));
         try
         {
             RemediationCaseRecord record = await _caseStore.LoadAsync(selected.Summary.CaseId, _scanCancellation.Token)
-                ?? throw new FileNotFoundException("所选病例已不存在。");
+                ?? throw new FileNotFoundException(DisplayText.Get("Ui.Cases.CaseRecheck_Click.02"));
             _loadedCase = record;
             await RecoverCaseResultsAsync(record, _scanCancellation.Token);
             await new RemediationCaseReverification().RecheckAsync(record, RunCaseFollowUpAsync, _scanCancellation.Token);
@@ -206,7 +206,7 @@ public partial class MainWindow
             DisplayCaseRecord(record);
             await RefreshCaseRecordsAsync();
         }
-        catch (Exception ex) { AppErrorLog.Write("CaseRecheck", ex); CaseDetailsText.Text = "病例复验未完成：" + ex.Message; }
+        catch (Exception ex) { AppErrorLog.Write("CaseRecheck", ex); CaseDetailsText.Text = DisplayText.Get("Ui.Cases.CaseRecheck_Click.03") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex); }
         finally { _scanCancellation.Dispose(); _scanCancellation = null; SetBusy(false); }
     }
 
@@ -215,20 +215,22 @@ public partial class MainWindow
         if (_busy || CaseListComboBox.SelectedItem is not CaseListItem selected) return;
         Microsoft.Win32.SaveFileDialog dialog = new()
         {
-            Filter = "病例记录包 (*.zip)|*.zip",
+            Filter = DisplayText.Get("Ui.Cases.CaseExport_Click.01"),
             FileName = "SteamSentinel-case-" + selected.Summary.CaseId.ToString("N") + ".zip"
         };
         if (dialog.ShowDialog(this) != true) return;
+        System.Globalization.CultureInfo? exportCulture = ChooseExportLanguage();
+        if (exportCulture is null) return;
         SetBusy(true);
         try
         {
             RemediationCaseRecord record = await _caseStore.LoadAsync(selected.Summary.CaseId)
-                ?? throw new FileNotFoundException("所选病例已不存在。");
+                ?? throw new FileNotFoundException(DisplayText.Get("Ui.Cases.CaseExport_Click.02"));
             await CaseBundleExporter.ExportAsync(dialog.FileName, record.OriginalScan ?? new ScanReport { Coverage = ScanCoverage.Partial },
-                null, null, null, batches: record.BatchSession, persistedCase: record);
-            CaseDetailsText.Text = RemediationCasePresentation.Render(record) + "\n已导出病例记录；备份载荷不会加入此包。";
+                null, null, null, batches: record.BatchSession, persistedCase: record, culture: exportCulture);
+            CaseDetailsText.Text = RemediationCasePresentation.Render(record) + DisplayText.Get("Ui.Cases.CaseExport_Click.03");
         }
-        catch (Exception ex) { AppErrorLog.Write("CaseExport", ex); CaseDetailsText.Text = "病例导出失败：" + ex.Message; }
+        catch (Exception ex) { AppErrorLog.Write("CaseExport", ex); CaseDetailsText.Text = DisplayText.Get("Ui.Cases.CaseExport_Click.04") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex); }
         finally { SetBusy(false); }
     }
 
@@ -237,7 +239,7 @@ public partial class MainWindow
         if (!Dispatcher.CheckAccess())
             return await Dispatcher.InvokeAsync(() => RunCaseFollowUpAsync(record, token)).Task.Unwrap();
         using DispatcherProgress<ScanProgress> progress = CreateUiProgress(p =>
-        { ProgressStageText.Text = "病例复验 · " + p.Stage; ProgressItemText.Text = p.CurrentItem; });
+        { ProgressStageText.Text = DisplayText.Get("Ui.Cases.RunCaseFollowUpAsync.01") + p.DisplayStage; ProgressItemText.Text = p.DisplayCurrentItem; });
         ScanReport system = await Task.Run(() => _coordinator.RunAsync(new ScanOptions
         {
             Mode = ScanMode.Quick,
@@ -269,7 +271,7 @@ public partial class MainWindow
         {
             ContentReport = content,
             RelatedReport = related,
-            Detail = "已按当前入口与模块重新关联，并使用受限进程检查内容；旧 PID 消失不单独作为组件已排除的依据。"
+            DetailText = MessageText.Create("Ui.Cases.RunCaseFollowUpAsync.02")
         };
     }
 }

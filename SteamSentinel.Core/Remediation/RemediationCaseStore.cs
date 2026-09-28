@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -13,6 +14,18 @@ namespace SteamSentinel.Core.Remediation;
 /// <summary>Bounded user-owned case persistence. Loading a record never authorizes a mutation.</summary>
 public sealed class RemediationCaseStore
 {
+    private static readonly JsonSerializerOptions SnapshotComparison = CreateSnapshotComparison();
+    private static JsonSerializerOptions CreateSnapshotComparison()
+    {
+        var resolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
+        {
+            foreach (var property in info.Properties)
+                if (property.PropertyType == typeof(DisplayMessage) || property.PropertyType == typeof(List<DisplayMessage?>) ||
+                    property.PropertyType == typeof(Dictionary<int, DisplayMessage>)) property.ShouldSerialize = (_, _) => false;
+        });
+        return new(JsonFile.Options) { TypeInfoResolver = resolver };
+    }
     public const int MaximumCases = 128, MaximumPlans = 512, MaximumActions = 32768, MaximumEpisodes = 32;
     public const long MaximumCaseBytes = 64L * 1024 * 1024;
     private const int MaximumSummaryBytes = 32 * 1024;
@@ -23,7 +36,7 @@ public sealed class RemediationCaseStore
     {
         _root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory ?? Path.Combine(AppPaths.UserStateRoot, "Cases")));
         if (!ContentDiscovery.IsLocalSafePath(_root) || _root.Equals(Path.GetPathRoot(_root), StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("病例目录必须是明确的本地子目录。", nameof(rootDirectory));
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.Constructor.01"), sourceText => new ArgumentException(sourceText, nameof(rootDirectory)));
         _currentUserSid = currentUserSid ?? CurrentUserSid;
     }
 
@@ -39,7 +52,7 @@ public sealed class RemediationCaseStore
         Directory.CreateDirectory(_root);
         using SafeFileHandle rootLease = OpenDirectory(_root);
         if (!Directory.Exists(directory) && Directory.EnumerateDirectories(_root).Take(MaximumCases).Count() >= MaximumCases)
-            throw new InvalidDataException($"病例目录已达到 {MaximumCases} 个上限，请先导出并管理已有记录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.SaveAsync.01", (MaximumCases)), sourceText => new InvalidDataException(sourceText));
         Directory.CreateDirectory(directory);
         using SafeFileHandle directoryLease = OpenDirectory(directory);
         using FileStream writeLock = OpenWriteLock(Path.Combine(directory, "case.lock"));
@@ -51,9 +64,9 @@ public sealed class RemediationCaseStore
         {
             ValidateRecord(previous, sid);
             if (previous.CaseId != record.CaseId || previous.Revision != record.Revision)
-                throw new InvalidDataException("病例已由另一个窗口更新，请重新读取，未覆盖较新的记录。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.SaveAsync.02"), sourceText => new InvalidDataException(sourceText));
         }
-        else if (record.Revision != 0) throw new InvalidDataException("病例原文件缺失，不能用非初始版本覆盖创建。");
+        else if (record.Revision != 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.SaveAsync.03"), sourceText => new InvalidDataException(sourceText));
         long oldRevision = record.Revision;
         DateTimeOffset oldUpdated = record.UpdatedAtUtc;
         record.Revision = checked(oldRevision + 1);
@@ -104,7 +117,7 @@ public sealed class RemediationCaseStore
         ValidateDirectoryLeases(rootLease, directoryLease, directory);
         if (result is null) return null;
         ValidateRecord(result, sid);
-        if (result.CaseId != caseId) throw new InvalidDataException("病例内容 ID 与目录不一致。");
+        if (result.CaseId != caseId) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.LoadAsync.01"), sourceText => new InvalidDataException(sourceText));
         return result;
     }
 
@@ -117,7 +130,7 @@ public sealed class RemediationCaseStore
         if (!Directory.Exists(_root)) return [];
         using SafeFileHandle rootLease = OpenDirectory(_root);
         string[] directories = Directory.EnumerateDirectories(_root).Take(MaximumCases + 1).ToArray();
-        if (directories.Length > MaximumCases) throw new InvalidDataException("病例目录数量超过枚举限额，未返回可能遗漏的完整列表。");
+        if (directories.Length > MaximumCases) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.01"), sourceText => new InvalidDataException(sourceText));
         List<RemediationCaseSummary> summaries = [];
         foreach (string directory in directories.Where(IsCaseDirectory))
         {
@@ -128,11 +141,11 @@ public sealed class RemediationCaseStore
                 CheckPath(directory);
                 using SafeFileHandle directoryLease = OpenDirectory(directory);
                 await using FileStream stream = RelatedArtifactReader.Open(Path.Combine(directory, "summary.json"));
-                if (stream.Length > MaximumSummaryBytes) throw new InvalidDataException("病例索引超过读取限额。");
-                RemediationCaseSummary summary = await JsonFile.ReadAsync<RemediationCaseSummary>(stream, "病例索引", token).ConfigureAwait(false);
+                if (stream.Length > MaximumSummaryBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.02"), sourceText => new InvalidDataException(sourceText));
+                RemediationCaseSummary summary = await JsonFile.ReadAsync<RemediationCaseSummary>(stream, MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.03"), token).ConfigureAwait(false);
                 if (summary.CaseId != id || summary.UserSid != sid || summary.Revision <= 0 || summary.EpisodeCount is < 0 or > MaximumEpisodes ||
                     summary.PendingExecutionCount is < 0 or > MaximumPlans || !Enum.IsDefined(summary.State))
-                    throw new InvalidDataException("病例索引身份或结构无效。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.04"), sourceText => new InvalidDataException(sourceText));
                 summaries.Add(summary);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or JsonException or ArgumentException)
@@ -143,7 +156,7 @@ public sealed class RemediationCaseStore
                     UserSid = sid,
                     ReadStatus = DiagnosticReadStatus.NotChecked,
                     State = CaseReverificationState.Incomplete,
-                    Detail = "索引不可读或缺失；请读取病例原记录核对，不能据此确认完成。" + RemediationVerification.Limit(ex.Message)
+                    DetailText = MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.05") + MessageExceptions.Describe(ex).Limit(2048)
                 });
             }
         }
@@ -157,36 +170,36 @@ public sealed class RemediationCaseStore
         ValidateSid(sid);
         if (record.SchemaVersion != 1 || record.CaseId == Guid.Empty || record.UserSid != sid || record.Revision < 0 ||
             record.CreatedAtUtc == default || record.UpdatedAtUtc == default || !Enum.IsDefined(record.SessionRequirement))
-            throw new InvalidDataException("病例版本、ID、用户或时间字段无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.01"), sourceText => new InvalidDataException(sourceText));
         if (record.Plans is null || record.ExecutionResults is null || record.PendingPlanIds is null || record.Episodes is null || record.Notes is null ||
             record.Plans.Count > MaximumPlans || record.ExecutionResults.Count > MaximumPlans || record.PendingPlanIds.Count > MaximumPlans ||
             record.Episodes.Count > MaximumEpisodes || record.Notes.Count > 2048 || record.Notes.Any(n => n is null || n.Length > 8192))
-            throw new InvalidDataException("病例列表缺失或超过数量/文本上限。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.02"), sourceText => new InvalidDataException(sourceText));
         if (record.Plans.Any(p => p is null) || record.ExecutionResults.Any(r => r is null) || record.Episodes.Any(e => e is null) ||
             record.BatchSession is { } supplied && (supplied.Plans is null || supplied.Results is null || supplied.Targets is null ||
                 supplied.Plans.Any(p => p is null) || supplied.Results.Any(r => r is null) || supplied.Targets.Any(t => t is null || t.MissingActions is null || t.ActionIds is null)))
-            throw new InvalidDataException("病例包含空计划、结果或复验对象。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.03"), sourceText => new InvalidDataException(sourceText));
         RemediationPlan[] plans = AllPlans(record);
         if (plans.Length > MaximumPlans || plans.Sum(p => (long)(p.Actions?.Count ?? MaximumActions + 1)) > MaximumActions)
-            throw new InvalidDataException("病例计划或动作数量超过限额。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.04"), sourceText => new InvalidDataException(sourceText));
         HashSet<Guid> planIds = [], actionIds = [];
         foreach (RemediationPlan plan in plans)
         {
             if (plan.PlanId == Guid.Empty || !planIds.Add(plan.PlanId) || plan.RequestedBySid != sid || plan.Actions is null || plan.Actions.Count > 64)
-                throw new InvalidDataException("病例计划存在重复身份、其他用户或超过单批动作限额。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.05"), sourceText => new InvalidDataException(sourceText));
             foreach (RemediationAction action in plan.Actions)
                 if (action is null || action.ActionId == Guid.Empty || !actionIds.Add(action.ActionId) || !Enum.IsDefined(action.Type) ||
                     action.Target is null || action.Target.Length > 32768 || action.DisplayName is null || action.DisplayName.Length > 8192 ||
                     action.Domains is null || action.Domains.Count > 256 || action.Domains.Any(d => d is null || d.Length > 2048) ||
                     action.DependsOnActionIds is null || action.DependsOnActionIds.Count > 64)
-                    throw new InvalidDataException("病例动作身份或字段无效。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.06"), sourceText => new InvalidDataException(sourceText));
         }
         if (record.PendingPlanIds.Any(id => !planIds.Contains(id)) || record.PendingPlanIds.Distinct().Count() != record.PendingPlanIds.Count)
-            throw new InvalidDataException("待确定执行引用了不存在或重复的计划。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.07"), sourceText => new InvalidDataException(sourceText));
         RemediationRunResult[] results = AllResults(record);
         if (results.Length > MaximumPlans || results.Any(r => r.Actions is null || r.Actions.Count > 64 || r.Actions.Any(a => a is null) ||
             r.Errors is null || r.Errors.Count > 256 || r.Errors.Any(e => e is null) || !Enum.IsDefined(r.Disposition) || !Enum.IsDefined(r.VerificationStatus)))
-            throw new InvalidDataException("病例执行结果列表无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.08"), sourceText => new InvalidDataException(sourceText));
         foreach (RemediationRunResult result in results)
         {
             RemediationPlan? plan = plans.FirstOrDefault(p => p.PlanId == result.PlanId);
@@ -194,32 +207,34 @@ public sealed class RemediationCaseStore
                 result.Actions.Any(a => !Enum.IsDefined(a.ExecutionStatus) || !Enum.IsDefined(a.VerificationStatus) || a.Verifications is null ||
                     a.Verifications.Count > 256 || a.Verifications.Any(v => v is null || !Enum.IsDefined(v.Status)) ||
                     !plan.Actions.Any(p => p.ActionId == a.ActionId && p.Type == a.Type && p.Target == a.Target)))
-                throw new InvalidDataException("病例执行结果与所存计划不匹配。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.09"), sourceText => new InvalidDataException(sourceText));
         }
-        if (record.BaselineSession is { } baseline && baseline.UserSid != sid) throw new InvalidDataException("病例基线不是同一用户。");
-        if (record.Episodes.Select(e => e.EpisodeId).Distinct().Count() != record.Episodes.Count) throw new InvalidDataException("病例复验轮次 ID 重复。");
+        if (record.BaselineSession is { } baseline && baseline.UserSid != sid) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.10"), sourceText => new InvalidDataException(sourceText));
+        if (record.Episodes.Select(e => e.EpisodeId).Distinct().Count() != record.Episodes.Count) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.11"), sourceText => new InvalidDataException(sourceText));
         foreach (CaseVerificationEpisode episode in record.Episodes)
         {
             if (episode is null || episode.EpisodeId == Guid.Empty || episode.Targets is null || episode.Checks is null || episode.Targets.Count > 256 ||
                 episode.Checks.Count > 2048 || !Enum.IsDefined(episode.State) || !Enum.IsDefined(episode.Transition) ||
                 episode.Session is { } session && session.UserSid != sid && episode.State != CaseReverificationState.SessionUnknown)
-                throw new InvalidDataException("病例复验记录字段或数量无效。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.12"), sourceText => new InvalidDataException(sourceText));
             if (episode.Checks.Any(c => c is null || !Enum.IsDefined(c.Status)) ||
                 episode.Targets.Any(t => t is null || !Enum.IsDefined(t.Status) || !planIds.Contains(t.PlanId) || !actionIds.Contains(t.ActionId) ||
                 !plans.Any(p => p.PlanId == t.PlanId && p.Actions.Any(a => a.ActionId == t.ActionId && a.Type == t.Type && a.Target == t.Target))))
-                throw new InvalidDataException("复验记录引用不存在的动作或计划。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.13"), sourceText => new InvalidDataException(sourceText));
         }
+        CaseMessageValidation.Validate(record, record.Plans.Concat(record.BatchSession?.Plans ?? []),
+            record.ExecutionResults.Concat(record.BatchSession?.Results ?? []));
     }
 
     internal static RemediationPlan[] AllPlans(RemediationCaseRecord record)
     {
         if (record.BatchSession is { } batch && (batch.Plans is null || batch.Plans.Count > MaximumPlans || batch.Results is null || batch.Results.Count > MaximumPlans))
-            throw new InvalidDataException("病例批次数据缺失或过大。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.AllPlans.01"), sourceText => new InvalidDataException(sourceText));
         return record.Plans.Concat(record.BatchSession?.Plans ?? []).GroupBy(p => p.PlanId).Select(g =>
         {
             RemediationPlan first = g.First();
-            if (g.Skip(1).Any(p => JsonSerializer.Serialize(p, JsonFile.Options) != JsonSerializer.Serialize(first, JsonFile.Options)))
-                throw new InvalidDataException("同一计划 ID 存在冲突快照。");
+            if (g.Skip(1).Any(p => JsonSerializer.Serialize(p, SnapshotComparison) != JsonSerializer.Serialize(first, SnapshotComparison)))
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.AllPlans.02"), sourceText => new InvalidDataException(sourceText));
             return first;
         }).ToArray();
     }
@@ -228,8 +243,8 @@ public sealed class RemediationCaseStore
         record.ExecutionResults.Concat(record.BatchSession?.Results ?? []).GroupBy(r => r.PlanId).Select(g =>
         {
             RemediationRunResult first = g.First();
-            if (g.Skip(1).Any(r => JsonSerializer.Serialize(r, JsonFile.Options) != JsonSerializer.Serialize(first, JsonFile.Options)))
-                throw new InvalidDataException("同一计划存在冲突执行结果，必须先人工核对。");
+            if (g.Skip(1).Any(r => JsonSerializer.Serialize(r, SnapshotComparison) != JsonSerializer.Serialize(first, SnapshotComparison)))
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.AllResults.01"), sourceText => new InvalidDataException(sourceText));
             return first;
         }).ToArray();
 
@@ -241,8 +256,8 @@ public sealed class RemediationCaseStore
         catch (Win32Exception ex) when (ex.NativeErrorCode is 2 or 3) { return null; }
         await using (stream)
         {
-            if (stream.Length is <= 0 or > MaximumCaseBytes) throw new InvalidDataException("病例文件为空或超过 64 MiB 上限。");
-            return await JsonFile.ReadAsync<RemediationCaseRecord>(stream, "病例文件", token).ConfigureAwait(false);
+            if (stream.Length is <= 0 or > MaximumCaseBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ReadRecordAsync.01"), sourceText => new InvalidDataException(sourceText));
+            return await JsonFile.ReadAsync<RemediationCaseRecord>(stream, MessageText.Create("Backend.Core.RemediationCaseStore.ReadRecordAsync.02"), token).ConfigureAwait(false);
         }
     }
 
@@ -259,27 +274,27 @@ public sealed class RemediationCaseStore
                 r.CompletedAtUtc is null && r.Disposition != RemediationRunDisposition.NotStarted ||
                 r.Actions.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown))
             ? CaseReverificationState.ExecutionUncertain : record.Episodes.LastOrDefault()?.State ?? CaseReverificationState.NotChecked,
-        Detail = record.Episodes.LastOrDefault()?.Summary ?? "病例已保存，后续会话复验尚未完成；保存不授权重复执行计划。"
+        DetailText = record.Episodes.LastOrDefault()?.SummaryText ?? MessageText.Create("Backend.Core.RemediationCaseStore.Summary.01")
     };
 
-    private string CaseDirectory(Guid id) => id == Guid.Empty ? throw new ArgumentException("病例 ID 不能为空。", nameof(id)) : Path.Combine(_root, id.ToString("N"));
+    private string CaseDirectory(Guid id) => id == Guid.Empty ? throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.CaseDirectory.01"), sourceText => new ArgumentException(sourceText, nameof(id))) : Path.Combine(_root, id.ToString("N"));
     private static bool IsCaseDirectory(string path) => Guid.TryParseExact(Path.GetFileName(path), "N", out Guid id) && id != Guid.Empty;
-    private void RequireSameSid(string sid) { if (_currentUserSid() != sid) throw new UnauthorizedAccessException("病例操作期间用户 SID 已变化。"); }
+    private void RequireSameSid(string sid) { if (_currentUserSid() != sid) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.RequireSameSid.01"), sourceText => new UnauthorizedAccessException(sourceText)); }
     private static string CurrentUserSid() { using WindowsIdentity identity = WindowsIdentity.GetCurrent(); return identity.User?.Value ?? string.Empty; }
     private static void ValidateSid(string sid)
     {
-        if (string.IsNullOrWhiteSpace(sid) || sid.Length > 184) throw new InvalidDataException("病例用户 SID 无效。");
-        try { _ = new SecurityIdentifier(sid); } catch (ArgumentException ex) { throw new InvalidDataException("病例用户 SID 格式无效。", ex); }
+        if (string.IsNullOrWhiteSpace(sid) || sid.Length > 184) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateSid.01"), sourceText => new InvalidDataException(sourceText));
+        try { _ = new SecurityIdentifier(sid); } catch (ArgumentException ex) { throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateSid.02"), sourceText => new InvalidDataException(sourceText, ex)); }
     }
 
     private static void CheckPath(string path)
     {
-        if (!ContentDiscovery.IsLocalSafePath(path)) throw new UnauthorizedAccessException("病例路径不是安全本地路径。");
+        if (!ContentDiscovery.IsLocalSafePath(path)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.CheckPath.01"), sourceText => new UnauthorizedAccessException(sourceText));
         string full = Path.GetFullPath(path), current = Path.GetPathRoot(full)!;
         foreach (string part in full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
         {
             current = Path.Combine(current, part);
-            try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new UnauthorizedAccessException("病例路径含重解析点，未跟随。"); }
+            try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.CheckPath.02"), sourceText => new UnauthorizedAccessException(sourceText)); }
             catch (FileNotFoundException) { }
             catch (DirectoryNotFoundException) { }
         }
@@ -289,7 +304,7 @@ public sealed class RemediationCaseStore
     {
         CheckPath(directory);
         SafeFileHandle handle = CreateFile(directory, 0x80, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
-        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(error, "无法固定病例目录身份。"); }
+        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenDirectory.01"), sourceText => new Win32Exception(error, sourceText)); }
         try { RelatedArtifactReader.ValidatePath(handle, directory); return handle; }
         catch { handle.Dispose(); throw; }
     }
@@ -297,7 +312,7 @@ public sealed class RemediationCaseStore
     private static FileStream OpenWriteLock(string path)
     {
         SafeFileHandle handle = CreateFile(path, 0xC0000000, 0, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
-        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(error, "病例正由另一窗口写入或锁文件不可读取。"); }
+        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), sourceText => new Win32Exception(error, sourceText)); }
         try { RelatedArtifactReader.ValidatePath(handle, path); return new FileStream(handle, FileAccess.ReadWrite); }
         catch { handle.Dispose(); throw; }
     }
@@ -316,7 +331,7 @@ public sealed class RemediationCaseStore
         public override bool CanWrite => true;
         public override long Length => inner.Length;
         public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
-        private void Charge(int count) { if (count < 0 || count > maximum - _written) throw new InvalidDataException("病例序列化超过存储字节限额。"); _written += count; }
+        private void Charge(int count) { if (count < 0 || count > maximum - _written) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.Charge.01"), sourceText => new InvalidDataException(sourceText)); _written += count; }
         public override void Write(byte[] buffer, int offset, int count) { Charge(count); inner.Write(buffer, offset, count); }
         public override void Write(ReadOnlySpan<byte> buffer) { Charge(buffer.Length); inner.Write(buffer); }
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken token) { Charge(count); return inner.WriteAsync(buffer, offset, count, token); }

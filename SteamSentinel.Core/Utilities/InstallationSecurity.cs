@@ -1,13 +1,32 @@
+using SteamSentinel.Core.Reporting;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 
 namespace SteamSentinel.Core.Utilities;
 
+[method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record InstallationSecurityStatus(bool IsProtected, string Message)
 {
-    public static InstallationSecurityStatus Protected { get; } =
-        new(true, "受保护安装与组件完整性校验已通过");
+    public static InstallationSecurityStatus Protected { get; } = new(true, MessageText.Create("Backend.Core.InstallationSecurity.Protected.01"));
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? MessageMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Message); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText MessageText
+    {
+        get => new(Message ?? string.Empty, MessageMessage);
+        init
+        {
+            Message = value.OriginalText;
+            MessageMessage = value.Message;
+        }
+    }
+
+    public InstallationSecurityStatus(bool IsProtected, SteamSentinel.Core.Reporting.MessageText Message) : this(IsProtected, Message.OriginalText)
+    {
+        MessageMessage = Message.Message;
+    }
 }
 
 public static class InstallationSecurity
@@ -48,7 +67,8 @@ public static class InstallationSecurity
         "SteamSentinel.Broker.deps.json",
         "SteamSentinel.Broker.runtimeconfig.json",
         "SteamSentinel.ArchiveWorker.deps.json",
-        "SteamSentinel.ArchiveWorker.runtimeconfig.json"
+        "SteamSentinel.ArchiveWorker.runtimeconfig.json",
+        @"zh-Hans\SteamSentinel.Core.resources.dll"
     ];
 
     public static InstallationSecurityStatus Evaluate(string? baseDirectory = null)
@@ -57,29 +77,29 @@ public static class InstallationSecurity
         {
             string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseDirectory ?? AppContext.BaseDirectory));
             if (!IsUnderProgramFiles(root))
-                return new(false, "当前不是 Program Files 受保护安装，扫描可用，管理员处置已关闭");
+                return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.01"));
             if (Validation.ContainsReparsePoint(root))
-                return new(false, "安装路径包含重解析点，管理员处置已关闭");
+                return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.02"));
 
             InstallationSecurityStatus directoryAcl = CheckAcl(new DirectoryInfo(root));
             if (!directoryAcl.IsProtected) return directoryAcl;
 
             string sumsPath = Path.Combine(root, "SHA256SUMS.txt");
             if (!File.Exists(sumsPath) || (File.GetAttributes(sumsPath) & FileAttributes.ReparsePoint) != 0)
-                return new(false, "安装包完整性清单缺失或不安全，管理员处置已关闭");
+                return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.03"));
             InstallationSecurityStatus sumsAcl = CheckAcl(new FileInfo(sumsPath));
             if (!sumsAcl.IsProtected) return sumsAcl;
 
             Dictionary<string, string> expected = ReadChecksums(sumsPath);
             foreach (string component in RequiredComponents)
-                if (!expected.ContainsKey(component)) return new(false, $"完整性清单缺少组件：{component}");
+                if (!expected.ContainsKey(component)) return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.04", (component)));
 
             foreach (string file in EnumerateInstallFilesWithoutReparsePoints(root))
             {
                 string relative = Path.GetRelativePath(root, file);
                 if (!IsLoadablePayloadPath(relative) || expected.ContainsKey(relative)) continue;
                 if (!IsAllowedUnlistedInstallFile(relative))
-                    return new(false, $"安装目录包含未列入完整性清单的可加载文件：{relative}");
+                    return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.05", (relative)));
                 InstallationSecurityStatus uninstallerAcl = CheckAcl(new FileInfo(file));
                 if (!uninstallerAcl.IsProtected) return uninstallerAcl;
             }
@@ -91,7 +111,7 @@ public static class InstallationSecurity
             {
                 string path = Path.Combine(root, component);
                 if (!File.Exists(path) || Validation.ContainsReparsePoint(path))
-                    return new(false, $"受保护组件缺失或被重定向：{component}");
+                    return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.06", (component)));
                 for (DirectoryInfo? parent = Directory.GetParent(path); parent is not null && checkedDirectories.Add(parent.FullName); parent = parent.Parent)
                 {
                     InstallationSecurityStatus parentAcl = CheckAcl(parent);
@@ -101,14 +121,14 @@ public static class InstallationSecurity
                 if (!fileAcl.IsProtected) return fileAcl;
                 string actualHash = ComputeSha256Exclusive(path);
                 if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
-                    return new(false, $"组件完整性校验失败：{component}");
+                    return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.07", (component)));
             }
 
             return InstallationSecurityStatus.Protected;
         }
         catch (Exception ex)
         {
-            return new(false, $"无法验证安装安全性：{ex.Message}");
+            return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.08", (MessageExceptions.Describe(ex))));
         }
     }
 
@@ -141,11 +161,11 @@ public static class InstallationSecurity
         if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
             !TrustedOwners.Contains(owner.Value))
         {
-            return new(false, $"安装对象所有者不受信任：{name}");
+            return new(false, MessageText.Create("Backend.Core.InstallationSecurity.CheckSecurityDescriptor.01", (name)));
         }
 
         if (new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0).DiscretionaryAcl is null)
-            return new(false, $"安装对象没有访问限制：{name}");
+            return new(false, MessageText.Create("Backend.Core.InstallationSecurity.CheckSecurityDescriptor.02", (name)));
 
         foreach (FileSystemAccessRule rule in security.GetAccessRules(
                      includeExplicit: true,
@@ -164,7 +184,7 @@ public static class InstallationSecurity
             // Also cover custom users/groups, including a filtered administrator's direct SID.
             if (!TrustedOwners.Contains(identity.Value))
             {
-                return new(false, $"安装对象允许非受信任账户写入：{name}");
+                return new(false, MessageText.Create("Backend.Core.InstallationSecurity.CheckSecurityDescriptor.03", (name)));
             }
         }
 
@@ -178,13 +198,13 @@ public static class InstallationSecurity
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             if (line.Length < 67 || !Validation.IsHexSha256(line[..64]) || line[64] != ' ')
-                throw new InvalidDataException("安装包完整性清单格式无效。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.ReadChecksums.01"), sourceText => new InvalidDataException(sourceText));
             string relative = line[65..].TrimStart(' ', '*').Replace('/', Path.DirectorySeparatorChar);
             if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative) || relative.Contains(':') ||
                 relative.Split(Path.DirectorySeparatorChar).Any(part => part is "" or "." or ".." ||
                     part.EndsWith(' ') || part.EndsWith('.') || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) ||
                 !checksums.TryAdd(relative, line[..64]))
-                throw new InvalidDataException("安装包完整性清单包含重复或不安全的路径。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.ReadChecksums.02"), sourceText => new InvalidDataException(sourceText));
         }
         return checksums;
     }
@@ -221,7 +241,7 @@ public static class InstallationSecurity
             {
                 FileAttributes attributes = File.GetAttributes(entry);
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
-                    throw new UnauthorizedAccessException($"安装目录包含重解析对象：{Path.GetRelativePath(root, entry)}");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnumerateInstallFilesWithoutReparsePoints.01", (Path.GetRelativePath(root, entry))), sourceText => new UnauthorizedAccessException(sourceText));
                 if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
                 else yield return entry;
             }
@@ -251,14 +271,14 @@ public static class MachineStateSecurity
     {
         string machineRoot = Path.GetFullPath(AppPaths.MachineStateRoot);
         if (Validation.ContainsReparsePoint(machineRoot))
-            throw new UnauthorizedAccessException("机器状态目录包含重解析点，已拒绝管理员写入。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedRoots.01"), sourceText => new UnauthorizedAccessException(sourceText));
 
         EnsureExistingProtectedDirectory(machineRoot);
         ApplyProtectedDirectoryAcl(machineRoot, allowUsersBrowse: true);
         foreach (string child in new[] { AppPaths.QuarantineRoot, AppPaths.ResultsRoot, AppPaths.BrokerTemporaryRoot })
         {
             if (Validation.ContainsReparsePoint(child))
-                throw new UnauthorizedAccessException("隔离或结果目录包含重解析点，已拒绝管理员写入。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedRoots.02"), sourceText => new UnauthorizedAccessException(sourceText));
             EnsureExistingProtectedDirectory(child);
             ApplyProtectedDirectoryAcl(
                 child,
@@ -271,19 +291,19 @@ public static class MachineStateSecurity
     private static void EnsureExistingProtectedDirectory(string path)
     {
         if (File.Exists(path) || !Directory.Exists(path))
-            throw new UnauthorizedAccessException("受保护机器状态目录缺失；为防 ProgramData 预置目录被提权采信，请修复或重新安装 SteamSentinel。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureExistingProtectedDirectory.01"), sourceText => new UnauthorizedAccessException(sourceText));
         InstallationSecurityStatus status = InstallationSecurity.CheckAcl(new DirectoryInfo(path));
         if (!status.IsProtected)
-            throw new UnauthorizedAccessException($"机器状态目录在 ACL 收紧前不可信：{status.Message}");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureExistingProtectedDirectory.02", (status.MessageText)), sourceText => new UnauthorizedAccessException(sourceText));
     }
 
     public static void PrepareIncidentDirectory(string path, string requestedBySid)
     {
         string fullPath = RequireWithin(path, AppPaths.QuarantineRoot);
         if (File.Exists(fullPath) || Directory.Exists(fullPath))
-            throw new IOException("新的隔离事件目录已存在，已拒绝复用。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.PrepareIncidentDirectory.01"), sourceText => new IOException(sourceText));
         if (Validation.ContainsReparsePoint(Path.GetDirectoryName(fullPath)!))
-            throw new UnauthorizedAccessException("隔离事件父目录包含重解析点。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.PrepareIncidentDirectory.02"), sourceText => new UnauthorizedAccessException(sourceText));
 
         Directory.CreateDirectory(fullPath);
         SecurityIdentifier requester = ParseRequester(requestedBySid);
@@ -296,7 +316,7 @@ public static class MachineStateSecurity
     {
         string fullPath = RequireWithin(path, AppPaths.QuarantineRoot);
         if (Validation.ContainsReparsePoint(Path.GetDirectoryName(fullPath)!))
-            throw new UnauthorizedAccessException("隔离载荷父目录包含重解析点。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.PreparePayloadDirectory.01"), sourceText => new UnauthorizedAccessException(sourceText));
         List<string> missing = [];
         for (string? current = fullPath; current is not null && !Directory.Exists(current); current = Path.GetDirectoryName(current))
         {
@@ -304,7 +324,7 @@ public static class MachineStateSecurity
                     Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppPaths.QuarantineRoot)) + Path.DirectorySeparatorChar,
                     StringComparison.OrdinalIgnoreCase))
             {
-                throw new UnauthorizedAccessException("隔离载荷目录路径越界。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.PreparePayloadDirectory.02"), sourceText => new UnauthorizedAccessException(sourceText));
             }
             missing.Add(current);
         }
@@ -333,16 +353,16 @@ public static class MachineStateSecurity
     {
         string fullPath = Path.GetFullPath(path);
         if (Validation.ContainsReparsePoint(fullPath))
-            throw new UnauthorizedAccessException($"受保护状态路径包含重解析点：{fullPath}");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedPath.01", (fullPath)), sourceText => new UnauthorizedAccessException(sourceText));
 
         FileSystemInfo item = Directory.Exists(fullPath)
             ? new DirectoryInfo(fullPath)
             : File.Exists(fullPath)
                 ? new FileInfo(fullPath)
-                : throw new FileNotFoundException("受保护状态对象不存在。", fullPath);
+                : throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedPath.02"), sourceText => new FileNotFoundException(sourceText, fullPath));
         InstallationSecurityStatus status = InstallationSecurity.CheckAcl(item);
         if (!status.IsProtected)
-            throw new UnauthorizedAccessException($"机器状态 ACL 校验失败：{status.Message}");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedPath.03", (status.MessageText)), sourceText => new UnauthorizedAccessException(sourceText));
     }
 
     public static void EnsureProtectedSubtree(string path)
@@ -358,10 +378,10 @@ public static class MachineStateSecurity
             foreach (string entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
             {
                 if (++count > MaximumProtectedTreeEntries)
-                    throw new InvalidDataException("隔离事件对象数量异常，已拒绝管理员生命周期操作。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedSubtree.01"), sourceText => new InvalidDataException(sourceText));
                 FileAttributes attributes = File.GetAttributes(entry);
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
-                    throw new UnauthorizedAccessException($"隔离事件包含重解析点：{entry}");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedSubtree.02", (entry)), sourceText => new UnauthorizedAccessException(sourceText));
                 EnsureProtectedPath(entry);
                 if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
             }
@@ -426,7 +446,7 @@ public static class MachineStateSecurity
     private static void ApplyProtectedFileAcl(string path, SecurityIdentifier? reader)
     {
         if (!File.Exists(path) || Validation.ContainsReparsePoint(path))
-            throw new UnauthorizedAccessException("受保护状态文件不存在或包含重解析点。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.ApplyProtectedFileAcl.01"), sourceText => new UnauthorizedAccessException(sourceText));
         FileSystemAclExtensions.SetAccessControl(new FileInfo(path), BuildProtectedFileSecurity(reader));
         EnsureProtectedPath(path);
     }
@@ -449,9 +469,9 @@ public static class MachineStateSecurity
 
     private static SecurityIdentifier ParseRequester(string sid)
     {
-        if (string.IsNullOrWhiteSpace(sid)) throw new InvalidDataException("请求者 SID 为空。");
+        if (string.IsNullOrWhiteSpace(sid)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.ParseRequester.01"), sourceText => new InvalidDataException(sourceText));
         try { return new SecurityIdentifier(sid); }
-        catch (ArgumentException ex) { throw new InvalidDataException("请求者 SID 无效。", ex); }
+        catch (ArgumentException ex) { throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.ParseRequester.02"), sourceText => new InvalidDataException(sourceText, ex)); }
     }
 
     private static string RequireWithin(string path, string root)
@@ -459,7 +479,7 @@ public static class MachineStateSecurity
         string fullPath = Path.GetFullPath(path);
         string fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         if (!fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("机器状态对象路径越界。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.RequireWithin.01"), sourceText => new UnauthorizedAccessException(sourceText));
         return fullPath;
     }
 }

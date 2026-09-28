@@ -10,7 +10,7 @@ public partial class MainWindow
 {
     private ScanReport? _trustProxyBaseReport;
     private ScanReport? _trustProxyMergedReport;
-    private const string DiagnosticScopePrefix = "证书与代理诊断：";
+    private static string DiagnosticScopePrefix => DisplayText.Get("Ui.TrustProxy.DiagnosticScopePrefix.01");
     private const int MaximumDiagnosticDisplayCharacters = 256_000;
 
     private void PreserveSystemStageFailure(ScanReport? checkpoint, ScanMode mode, Exception failure, bool cancelled)
@@ -19,9 +19,9 @@ public partial class MainWindow
         _lastFullSystemAndContentScanId = null;
         PopulateFindings(_lastReport);
         UpdateSummary(_lastReport);
-        HeaderStatusText.Text = cancelled ? "系统检查已取消" : "系统检查未完成";
-        HeaderDetailText.Text = "已保留已读取的系统发现及代理与证书记录，后续内容检查尚未开始，可导出报告。";
-        ProgressStageText.Text = "系统检查未完成";
+        HeaderStatusText.Text = cancelled ? DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.01") : DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.02");
+        HeaderDetailText.Text = DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.03");
+        ProgressStageText.Text = DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.04");
         ScanProgressBar.Value = 0;
     }
 
@@ -30,20 +30,20 @@ public partial class MainWindow
         if (RemediateButton is null || SelectAllButton is null || Findings is null) return;
         FindingHandlingCounts counts = FindingHandlingPresentation.Count(Findings.Select(item => item.Finding));
         bool available = counts.Actionable > 0;
-        string unavailable = _busy ? "正在执行其他操作，请等待结束。"
-            : _recoveryRequired || _caseRecoveryUnavailable || _remediationClient.HasUnresolvedExecution ? "上次操作的结果尚未确认，暂不能再次处置。"
-            : _reportNeedsRefresh ? "请先重新扫描，再核对新的处置方案。"
+        string unavailable = _busy ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.01")
+            : _recoveryRequired || _caseRecoveryUnavailable || _remediationClient.HasUnresolvedExecution ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.02")
+            : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.03")
             : !available ? counts.AttentionCount > 0
-                ? "当前没有可处理项。仍有待确认、暂不支持或条件未满足的项目，请查看处理状态与原因。"
-                : "当前没有可处理项；普通信息提示无需选择处理。"
-            : !_installationSecurity.IsProtected ? _installationSecurity.Message + "。请先修复安装环境；只读诊断与导出仍可用。"
+                ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.04")
+                : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.05")
+            : !_installationSecurity.IsProtected ? _installationSecurity.MessageText.Display + DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.06")
             : string.Empty;
         RemediateButton.IsEnabled = unavailable.Length == 0;
-        RemediateButton.ToolTip = unavailable.Length > 0 ? unavailable : "先核对处理预览；执行时会请求 Windows 管理员授权。";
+        RemediateButton.ToolTip = unavailable.Length > 0 ? unavailable : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.07");
         SelectAllButton.IsEnabled = !_busy && !_reportNeedsRefresh && available;
-        SelectAllButton.ToolTip = !available ? "当前没有可选择处理的项目。" + (counts.AttentionCount > 0 ? "请查看每项未处理原因。" : "普通说明不需要处理。")
-            : _busy ? "正在执行其他操作，请等待结束。"
-            : _reportNeedsRefresh ? "请重新扫描后再选择处理。" : $"仅选择 {counts.Actionable} 项有处理资格的发现；待确认及暂不能处理的项目不会被勾选。";
+        SelectAllButton.ToolTip = !available ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.08") + (counts.AttentionCount > 0 ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.09") : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.10"))
+            : _busy ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.11")
+            : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.12") : DisplayText.Format("Ui.TrustProxy.UpdateRemediationEligibility.13", (counts.Actionable));
     }
 
     private void UpdateFindingActions()
@@ -54,11 +54,11 @@ public partial class MainWindow
         bool related = item is not null && RelatedComponentReportPresentation.IsRelatedFinding(item.Finding);
         bool relatedFileAvailable = !related || GetRelatedFindingReviewTargets(item!.Finding).Count > 0;
         bool visiblePage = ResultTabs.SelectedIndex == 0;
-        ReviewFindingButton.Content = diagnostic ? "检查代理与证书" : "进一步检查";
+        ReviewFindingButton.Content = diagnostic ? DisplayText.Get("Ui.TrustProxy.UpdateFindingActions.01") : DisplayText.Get("Ui.TrustProxy.UpdateFindingActions.02");
         ReviewFindingButton.ToolTip = diagnostic
-            ? "只读检查本机代理配置与证书，不连接外部地址、不修改配置，已有扫描发现会保留。"
-            : related && !relatedFileAvailable ? "当前关联记录尚未定位可补查的本地文件，请查看“组件关联”页的原因。"
-            : "检查当前选中项的实际文件和关联启动入口，不执行文件，也不会自动隔离。";
+            ? DisplayText.Get("Ui.TrustProxy.UpdateFindingActions.03")
+            : related && !relatedFileAvailable ? DisplayText.Get("Ui.TrustProxy.UpdateFindingActions.04")
+            : DisplayText.Get("Ui.TrustProxy.UpdateFindingActions.05");
         ReviewFindingButton.IsEnabled = !_busy && visiblePage && item is not null &&
             relatedFileAvailable && (!diagnostic || !_remediationClient.HasUnresolvedExecution);
         OccupancyButton.Visibility = diagnostic || related ? Visibility.Collapsed : Visibility.Visible;
@@ -76,16 +76,16 @@ public partial class MainWindow
         if (_busy || _remediationClient.HasUnresolvedExecution) return;
         DateTimeOffset started = DateTimeOffset.UtcNow;
         SetBusy(true);
-        ShowActivity(ActivityPhase.Inspecting, "正在只读采集本机代理与证书；不连接外部地址，不修改配置，可取消。已有扫描发现会保留。");
+        ShowActivity(ActivityPhase.Inspecting, DisplayText.Get("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.01"));
         ResultTabs.SelectedItem = TrustProxyTab;
-        TrustProxyStatusText.Text = "正在采集本机代理与证书";
+        TrustProxyStatusText.Text = DisplayText.Get("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.02");
         _scanCancellation = new CancellationTokenSource();
         CancellationToken cancellation = _scanCancellation.Token;
         CancelScanButton.IsEnabled = true;
         using var progress = CreateUiProgress(p =>
         {
-            TrustProxyStatusText.Text = p.Stage + " · " + p.CurrentItem;
-            ActivityDetailText.Text = p.Message;
+            TrustProxyStatusText.Text = p.DisplayStage + " · " + p.DisplayCurrentItem;
+            ActivityDetailText.Text = p.DisplayDetail;
         });
         try
         {
@@ -97,25 +97,28 @@ public partial class MainWindow
         {
             DiagnosticCheck failed = new()
             {
-                Name = "本地诊断采集",
+                NameText = MessageText.Create("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.03"),
                 Status = ex is OperationCanceledException ? DiagnosticReadStatus.Cancelled : DiagnosticReadStatus.Failed,
-                Detail = "本次诊断未完成：" + ex.Message
+                DetailText = MessageText.Create("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.04") + MessageExceptions.Describe(ex)
             };
             TrustProxyDiagnosticReport diagnostic = new() { StartedAtUtc = started, CompletedAtUtc = DateTimeOffset.UtcNow, Checks = [failed] };
             ApplyTrustProxyDiagnosticReport(new ScanReport
             {
                 StartedAtUtc = started,
+                StatusSchemaVersion = ScanExecution.SchemaVersion,
+                ExecutionState = ex is OperationCanceledException ? ScanExecutionState.Cancelled : ScanExecutionState.Failed,
+                ExecutionReasonCode = ReasonCodes.ForFailureType(ex.GetType().Name),
                 CompletedAtUtc = diagnostic.CompletedAtUtc,
                 Mode = ScanMode.Custom,
                 Coverage = ScanCoverage.Partial,
                 RuleSetVersion = _coordinator.Rules.Version,
                 TrustProxyDiagnostics = diagnostic,
-                ScopeNotes = [DiagnosticScopePrefix + "本次采集未完成，不能据此判断配置状态。"],
+                ScopeNotes = [DiagnosticScopePrefix + DisplayText.Get("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.05")],
                 Findings = [new Finding
                 {
                     RuleId = "TRUST-PROXY-DIAGNOSTIC-FAILED", Category = FindingCategory.Coverage,
                     SourceKind = "trust-proxy-diagnostics", DiagnosticObservationIds = [failed.Id],
-                    Title = "代理与证书诊断未完成", Target = "本地代理与证书", Description = failed.Detail,
+                    Title = DisplayText.Get("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.06"), Target = DisplayText.Get("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.07"), Description = failed.Detail,
                     HandlingReason = FindingHandlingReason.IncompleteInspection
                 }]
             });
@@ -139,17 +142,21 @@ public partial class MainWindow
         PopulateFindings(_lastReport);
         UpdateSummary(_lastReport);
         ResultTabs.SelectedItem = TrustProxyTab;
-        FooterText.Text = "代理与证书只读诊断已更新，原有扫描发现已保留。可导出当前报告；执行结果仍在“处置结果”。";
+        FooterText.Text = DisplayText.Get("Ui.TrustProxy.ApplyTrustProxyDiagnosticReport.01");
     }
 
     internal static ScanReport MergeTrustProxyDiagnosticReport(ScanReport? basis, ScanReport diagnostic)
     {
         if (diagnostic.TrustProxyDiagnostics is null)
-            throw new InvalidDataException("采集器没有返回代理与证书诊断快照，不能用空结果替换已有线索。");
+            throw new InvalidDataException(DisplayText.Get("Ui.TrustProxy.MergeTrustProxyDiagnosticReport.01"));
         if (basis is null) return diagnostic;
         return new ScanReport
         {
             ProductVersion = basis.ProductVersion,
+            StatusSchemaVersion = basis.StatusSchemaVersion,
+            ExecutionState = basis.ExecutionState,
+            ExecutionReasonCode = basis.ExecutionReasonCode,
+            LegacyExecutionStatus = basis.LegacyExecutionStatus,
             BuildIdentity = basis.BuildIdentity,
             RuleSetVersion = basis.RuleSetVersion,
             StartedAtUtc = basis.StartedAtUtc,
@@ -161,6 +168,7 @@ public partial class MainWindow
                 ? ScanCoverage.Complete : ScanCoverage.Partial,
             Roots = [.. basis.Roots],
             CoverageNotes = [.. basis.CoverageNotes],
+            CoverageNotices = [.. basis.CoverageNotices],
             CoverageAggregates = [.. basis.CoverageAggregates],
             Findings = [.. basis.Findings.Where(f => !FindingHandlingPresentation.IsTrustProxyFinding(f)), .. diagnostic.Findings],
             RootSummaries = [.. basis.RootSummaries],
@@ -171,8 +179,10 @@ public partial class MainWindow
             WorkerDiagnostics = basis.WorkerDiagnostics,
             TrustProxyDiagnostics = diagnostic.TrustProxyDiagnostics,
             RelatedComponentDiagnostics = basis.RelatedComponentDiagnostics,
-            ScopeNotes = [.. basis.ScopeNotes.Where(note => !note.StartsWith(DiagnosticScopePrefix, StringComparison.Ordinal)), .. diagnostic.ScopeNotes,
-                DiagnosticScopePrefix + $"本次仅刷新本地代理与证书。原扫描 ID 为 {basis.ScanId:N}，原扫描时间、范围、文件指标及未完成状态保留；局部诊断不替代全范围复扫。"]
+            // Retain original evidence regardless of its display language. The caller keeps
+            // the original base report, so repeated refreshes do not accumulate merged notes.
+            ScopeNotes = [.. basis.ScopeNotes, .. diagnostic.ScopeNotes,
+                DiagnosticScopePrefix + DisplayText.Format("Ui.TrustProxy.MergeTrustProxyDiagnosticReport.02", (basis.ScanId))]
         };
     }
 
@@ -184,18 +194,18 @@ public partial class MainWindow
         if (TrustProxyDetailsText is null) return;
         if (diagnostic is null)
         {
-            TrustProxyStatusText.Text = "尚未检查代理与证书";
-            TrustProxyDetailsText.Text = "点击“检查代理与证书”后，这里会列出每项采集状态、代理配置来源、证书存储区及证书摘要。已有扫描发现会保留。";
+            TrustProxyStatusText.Text = DisplayText.Get("Ui.TrustProxy.DisplayTrustProxyDiagnostics.01");
+            TrustProxyDetailsText.Text = DisplayText.Get("Ui.TrustProxy.DisplayTrustProxyDiagnostics.02");
             return;
         }
         int incomplete = IncompleteDiagnosticChecks(diagnostic);
-        string state = diagnostic.CompletedAtUtc is null ? "采集尚未结束" : incomplete > 0
-            ? $"本地采集未完成（{incomplete} 项）" : diagnostic.Checks.Any(check => check.Required) ? "本地采集已完成" : "采集状态待核对";
+        string state = diagnostic.CompletedAtUtc is null ? DisplayText.Get("Ui.TrustProxy.DisplayTrustProxyDiagnostics.03") : incomplete > 0
+            ? DisplayText.Format("Ui.TrustProxy.DisplayTrustProxyDiagnostics.04", (incomplete)) : diagnostic.Checks.Any(check => check.Required) ? DisplayText.Get("Ui.TrustProxy.DisplayTrustProxyDiagnostics.05") : DisplayText.Get("Ui.TrustProxy.DisplayTrustProxyDiagnostics.06");
         string time = (diagnostic.CompletedAtUtc ?? diagnostic.StartedAtUtc).ToLocalTime().ToString("MM-dd HH:mm:ss");
-        TrustProxyStatusText.Text = $"{state} · 代理 {diagnostic.Proxies.Count} 项 · 证书 {diagnostic.Certificates.Count} 张 · {time}";
+        TrustProxyStatusText.Text = DisplayText.Format("Ui.TrustProxy.DisplayTrustProxyDiagnostics.07", (state), (diagnostic.Proxies.Count), (diagnostic.Certificates.Count), (time));
         string details = TrustProxyReportPresentation.Describe(diagnostic);
         TrustProxyDetailsText.Text = details.Length <= MaximumDiagnosticDisplayCharacters ? details
-            : details[..MaximumDiagnosticDisplayCharacters] + "\n\n界面显示已达到长度上限。其余诊断记录仍保存在报告中，请导出查看完整内容。";
+            : details[..MaximumDiagnosticDisplayCharacters] + DisplayText.Get("Ui.TrustProxy.DisplayTrustProxyDiagnostics.08");
         TrustProxyDetailsText.ScrollToHome();
     }
 }

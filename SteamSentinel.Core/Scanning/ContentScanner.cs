@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers;
 using System.Text;
 using SharpCompress.Archives;
@@ -15,7 +16,8 @@ public sealed partial class ContentScanner : IDisposable
     private readonly RuleSet _rules;
     private readonly ArchivePasswordCache _passwords = new();
     private readonly Dictionary<Guid, int> _amsiUnavailableCounts = [];
-    private readonly AmsiScanner _amsi = new();
+    private readonly Func<AmsiScanner> _amsiFactory;
+    private readonly Lazy<AmsiScanner> _amsi;
     private readonly SemaphoreSlim _scanGate = new(1, 1);
     private bool _disposed;
     private readonly ScanResourceGuard _resources = new();
@@ -24,9 +26,13 @@ public sealed partial class ContentScanner : IDisposable
     private string? _coverageRoot;
     internal Action<ScanReport>? Checkpoint { get; set; }
 
-    public ContentScanner(RuleSet rules)
+    public ContentScanner(RuleSet rules) : this(rules, () => new AmsiScanner()) { }
+
+    internal ContentScanner(RuleSet rules, Func<AmsiScanner> amsiFactory)
     {
         _rules = rules;
+        _amsiFactory = amsiFactory;
+        _amsi = new(amsiFactory);
     }
 
     public async Task ScanRootAsync(
@@ -40,6 +46,7 @@ public sealed partial class ContentScanner : IDisposable
         string? projectType = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        report.ContentScanSettings = ScanEnhancements.ForExecution(options);
         try
         {
             await _scanGate.WaitAsync(cancellationToken);
@@ -58,17 +65,21 @@ public sealed partial class ContentScanner : IDisposable
             string? previousRoot = _coverageRoot;
             int amsiUnavailable = _amsiUnavailableCounts.GetValueOrDefault(report.ScanId);
             long files = report.Metrics.FilesVisited;
+            int firstNode = report.Containers?.Nodes.Count ?? 0;
             bool completed = false;
             try
             {
                 _coverageRoot = Path.GetFullPath(root);
                 await ScanRootCoreAsync(root, report, options, passwordProvider, progress, cancellationToken, workshopId, projectType);
+                if (report.Containers is { } graph)
+                    VPetComponentLinks.Link(graph.Nodes.Skip(firstNode).ToArray(), cancellationToken);
                 completed = true;
             }
             finally
             {
                 _coverageRoot = previousRoot;
                 if (!completed) report.Coverage = ScanCoverage.Partial;
+                report.ContentScanSettings = ScanEnhancements.ForExecution(options);
                 Finding[] added = report.Findings.Skip(first).ToArray();
                 report.RootSummaries.Add(new ScanRootSummary(root,
                     !completed || report.CoverageNotes.Count > notes ||
@@ -94,11 +105,11 @@ public sealed partial class ContentScanner : IDisposable
         string fullRoot = Path.GetFullPath(root);
         if (IsExcluded(fullRoot, options.ExcludedRoots))
         {
-            AddCoverage(report, $"所选根路径位于排除范围，未扫描：{fullRoot}", fullRoot, workshopId, "SCAN-EXCLUDED");
+            AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.01", (fullRoot)), fullRoot, workshopId, "SCAN-EXCLUDED");
             return;
         }
         if (!ContentDiscovery.IsLocalSafePath(fullRoot))
-        { AddCoverage(report, $"已跳过网络路径或重解析点：{fullRoot}", fullRoot, workshopId); return; }
+        { AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.02", (fullRoot)), fullRoot, workshopId); return; }
         ArchiveBudget archiveBudget = GetArchiveBudget(report);
         if (File.Exists(fullRoot))
         {
@@ -110,7 +121,7 @@ public sealed partial class ContentScanner : IDisposable
 
         if (!Directory.Exists(fullRoot))
         {
-            AddCoverage(report, $"路径不存在：{fullRoot}", fullRoot, workshopId);
+            AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.03", (fullRoot)), fullRoot, workshopId);
             return;
         }
 
@@ -128,36 +139,44 @@ public sealed partial class ContentScanner : IDisposable
                 FileAttributes attributes = File.GetAttributes(directory);
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                 {
-                    AddCoverage(report, $"为防止越界，已跳过重解析目录：{directory}", directory, workshopId);
+                    AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.04", (directory)), directory, workshopId);
                     continue;
                 }
 
-                int directoryLimit = (int)Math.Clamp((long)options.MaximumFiles - archiveBudget.DirectoryEntries + 1, 0, int.MaxValue);
-                foreach (string child in Directory.EnumerateDirectories(directory).Take(directoryLimit))
+                foreach (string child in Directory.EnumerateDirectories(directory))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (++archiveBudget.DirectoryEntries > options.MaximumFiles) { AddCoverage(report, "目录数量达到扫描上限", fullRoot, workshopId); return; }
+                    if ((archiveBudget.DirectoryEntries & 255) == 0) _resources.Check(report);
+                    if (++archiveBudget.DirectoryEntries > options.MaximumFiles &&
+                        !ScanResourceSession.Allow("MaximumFiles", archiveBudget.DirectoryEntries, archiveBudget.DirectoryEntries - 1, known: false))
+                    { AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.05"), fullRoot, workshopId, "SCAN-COUNT-LIMIT"); return; }
                     pending.Push(child);
                 }
-                foreach (string file in Directory.EnumerateFiles(directory).Take((int)Math.Clamp(
-                             (long)options.MaximumFiles - report.Metrics.FilesVisited + 1, 0, int.MaxValue))
-                    .Chunk(512).SelectMany(chunk => chunk.OrderBy(ContentPriority)))
+                int parallelism = FileParallelism(options);
+                foreach (string[] group in Directory.EnumerateFiles(directory)
+                    .Where(file => !IsExcluded(file, options.ExcludedRoots))
+                    .Chunk(512).SelectMany(chunk => chunk.OrderBy(ContentPriority)).Chunk(parallelism))
                 {
+                    if (await TryScanParallelLeavesAsync(group, report, options, passwordProvider, progress, cancellationToken, workshopId, projectType)) continue;
+                    foreach (string file in group)
+                    {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (IsExcluded(file, options.ExcludedRoots)) continue;
-                    if (report.Metrics.FilesVisited >= options.MaximumFiles)
+                    if (report.Metrics.FilesVisited >= options.MaximumFiles &&
+                        !ScanResourceSession.Allow("MaximumFiles", report.Metrics.FilesVisited + 1, report.Metrics.FilesVisited, known: false))
                     {
-                        AddCoverage(report, $"文件数量达到上限 {options.MaximumFiles}，剩余内容未扫描。", fullRoot, workshopId);
+                        AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.06", (options.MaximumFiles)), fullRoot, workshopId, "SCAN-COUNT-LIMIT");
                         return;
                     }
                     await ScanFileAsync(file, file, file, report, options, passwordProvider, progress,
                         cancellationToken, 0, workshopId, projectType, archiveBudget);
                     Checkpoint?.Invoke(report);
+                    }
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                AddCoverage(report, $"无法读取目录：{directory}，原因：{ex.Message}", directory, workshopId);
+                AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.07", (directory), (ex.Message)), directory, workshopId);
             }
         }
     }
@@ -199,7 +218,7 @@ public sealed partial class ContentScanner : IDisposable
             foreach (StructuredMember member in result.Members)
             {
                 token.ThrowIfCancellationRequested();
-                if (!File.Exists(member.Path)) { AddCoverage(report, "安装包成员展开失败：" + member.Name, target, workshopId); continue; }
+                if (!File.Exists(member.Path)) { AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.01") + member.Name, target, workshopId); continue; }
                 string virtualPath = displayPath + "!/" + SanitizeEntryDisplayName(member.Name);
                 if (IsUnsafeArchiveName(member.Name))
                 {
@@ -236,15 +255,15 @@ public sealed partial class ContentScanner : IDisposable
             if (metadataPublished) return;
             metadataPublished = true;
             if (report.Containers is { } containers)
-                foreach (string note in result.AccountingNotes.Where(note => !containers.Checks.Contains(note)).Take(Math.Max(0, 512 - containers.Checks.Count)))
-                    containers.Checks.Add(note);
-            foreach (string note in result.Notes.Distinct()) AddCoverage(report, ScriptSignals.Redact(note) + "：" + displayPath,
+                foreach (MessageText note in result.AccountingNoteTexts.Where(note => !containers.Checks.Contains(note.OriginalText)).Take(Math.Max(0, 512 - containers.Checks.Count)))
+                    containers.AddCheck(note);
+            foreach (MessageText note in result.NoteTexts.DistinctBy(note => note.OriginalText)) AddCoverage(report, note.RedactSecrets() + "：" + displayPath,
                 target, workshopId, "INSTALLER-PARTIAL");
             if (result.Recognized && type == DetectedFileType.CompoundDocument)
             {
                 MsiActionAnalysis? semantics = result.MsiAnalysis;
-                IReadOnlyList<string> signals = semantics?.ContentSignals ?? [];
-                IReadOnlyList<string> linkedSignals = semantics?.LinkedSignals ?? [];
+                IReadOnlyList<MessageText> signals = semantics?.ContentSignals.Texts.ToArray() ?? [];
+                IReadOnlyList<MessageText> linkedSignals = semantics?.LinkedSignals.Texts.ToArray() ?? [];
                 bool suspicious = signals.Count > 0 || linkedSignals.Count > 0;
                 report.Findings.Add(new Finding
                 {
@@ -252,15 +271,15 @@ public sealed partial class ContentScanner : IDisposable
                     Category = FindingCategory.Archive,
                     Severity = suspicious ? FindingSeverity.High : FindingSeverity.Information,
                     Score = signals.Count > 0 ? 85 : linkedSignals.Count > 0 ? 65 : 5,
-                    Title = suspicious ? "安装包自定义动作包含可疑内容或声明关联" : "已只读检查安装包结构",
-                    Description = $"读取 {result.Msi?.ReadRows ?? 0} 条安装表记录、{result.Members.Count} 个内嵌成员，未安装或执行自定义动作。" +
-                        (suspicious ? ScriptSignals.Redact(string.Join("，", signals.Concat(linkedSignals).Take(8))) : "存在自定义动作本身不代表恶意。") +
-                        "属性/文件关联为静态声明；证书或 PAC 未在表中出现，不能排除程序运行后设置。",
+                    TitleText = suspicious ? MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.02") : MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.03"),
+                    DescriptionText = MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.04", (result.Msi?.ReadRows ?? 0), (result.Members.Count)) +
+                        (suspicious ? MessageText.List(signals.Concat(linkedSignals).Take(8)).RedactSecrets() : MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.05")) +
+                        MessageText.Create("Backend.Core.ContentScanner.ScanStructuredAsync.06"),
                     Target = target,
                     Sha256 = sha256,
                     ContentPath = displayPath,
                     TargetSha256 = _structuredParent?.OriginalTargetSha256 ?? sha256,
-                    Evidence = ScriptSignals.Redact(string.Join("\n", (signals.Concat(linkedSignals)).Concat(semantics?.Evidence ?? result.Metadata))),
+                    EvidenceLines = signals.Concat(linkedSignals).Concat(semantics?.Evidence.Texts ?? result.Metadata.Select(value => (MessageText)value)).Select(value => value.RedactSecrets()),
                     AssociationEvidenceTier = suspicious ? RelatedEvidenceTier.RelatedRisk : RelatedEvidenceTier.Observation,
                     CanRemediate = signals.Count > 0,
                     SuggestedActions = signals.Count > 0 ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
@@ -297,14 +316,14 @@ public sealed partial class ContentScanner : IDisposable
             _rules.SuspiciousStrings.Select(rule => rule.Value), _rules.KnownDomains,
             maximumBytes, cancellationToken);
         {
-            List<string> matches = [];
+            List<MessageText> matches = [];
             bool Contains(string value) => signals.Raw.Contains(value);
             HeuristicMatch? combined = ContentHeuristics.Match(Contains, displayPath);
             if (combined is null && Path.GetExtension(displayPath).ToLowerInvariant() is not (".md" or ".log" or ".lo"))
             {
-                IReadOnlyList<string> scriptSignals = ScriptSignals.Analyze(signals.Script.Contains);
+                IReadOnlyList<MessageText> scriptSignals = ScriptSignals.AnalyzeMessages(signals.Script.Contains);
                 if (scriptSignals.Count > 0) combined = new HeuristicMatch("HEUR-STEAM-DEPLOYMENT-CHAIN",
-                    "发现 Steam 插件部署或凭据收集链", string.Join("，", scriptSignals), 90);
+                    MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.01"), MessageText.List(scriptSignals), 90);
             }
             if (combined is not null && !string.Equals(projectType, "trusted-default", StringComparison.OrdinalIgnoreCase))
                 report.Findings.Add(new Finding
@@ -313,11 +332,11 @@ public sealed partial class ContentScanner : IDisposable
                     Category = FindingCategory.File,
                     Severity = FindingSeverity.High,
                     Score = combined.Score,
-                    Title = combined.Title,
-                    Description = combined.Evidence,
+                    TitleText = combined.Title,
+                    DescriptionText = combined.Evidence,
                     Target = remediationTarget,
                     ContentPath = displayPath,
-                    Evidence = $"内容位置：{displayPath}",
+                    EvidenceText = MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.02", (displayPath)),
                     Sha256 = sha256,
                     WorkshopId = workshopId,
                     CanRemediate = true,
@@ -330,7 +349,7 @@ public sealed partial class ContentScanner : IDisposable
                 if (trustedDefaultProject) continue;
                 if (Contains(rule.Value))
                 {
-                    matches.Add($"{rule.Id}: {rule.Label}");
+                    matches.Add(MessageText.Create("Common.LabelValue", rule.Id, rule.LabelText));
                     score += rule.Score;
                 }
             }
@@ -339,7 +358,7 @@ public sealed partial class ContentScanner : IDisposable
             {
                 if (Contains(domain))
                 {
-                    matches.Add($"已知域名：{domain}");
+                    matches.Add(MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.03", (domain)));
                     score += 40;
                 }
             }
@@ -355,10 +374,10 @@ public sealed partial class ContentScanner : IDisposable
                 Category = FindingCategory.File,
                 Severity = severity,
                 Score = score,
-                Title = documentation ? "说明或日志中引用了风险特征" : "内容命中 Steam 假红信家族特征",
-                Description = string.Join("，", matches),
+                TitleText = documentation ? MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.04") : MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.05"),
+                DescriptionText = MessageText.List(matches),
                 Target = remediationTarget,
-                Evidence = $"内容位置：{displayPath}",
+                EvidenceText = MessageText.Create("Backend.Core.ContentScanner.ScanStringsStreamAsync.06", (displayPath)),
                 Sha256 = sha256,
                 WorkshopId = workshopId,
                 IsKnownMalware = false,
@@ -375,14 +394,15 @@ public sealed partial class ContentScanner : IDisposable
         string format,
         int depth,
         string? workshopId,
-        string reason,
+        MessageText reason,
         IArchivePasswordProvider provider,
         CancellationToken cancellationToken,
         ArchivePasswordReuseScope preferredScope,
         ArchivePasswordPromptKind kind)
     {
         ArchivePasswordRequest request = new(
-            Guid.NewGuid().ToString("N"), displayPath, sha256, format, depth, workshopId, reason, preferredScope, kind);
+            Guid.NewGuid().ToString("N"), displayPath, sha256, format, depth, workshopId, reason.OriginalText, preferredScope, kind)
+        { ReasonMessage = reason.Message };
         return provider.RequestPasswordAsync(request, cancellationToken);
     }
 
@@ -467,11 +487,11 @@ public sealed partial class ContentScanner : IDisposable
             Category = FindingCategory.Archive,
             Severity = FindingSeverity.High,
             Score = 80,
-            Title = "压缩包包含危险路径",
-            Description = "未按压缩包中的路径写入文件，可在复核后隔离外层文件。",
+            TitleText = MessageText.Create("Backend.Core.ContentScanner.AddUnsafeArchiveFinding.01"),
+            DescriptionText = MessageText.Create("Backend.Core.ContentScanner.AddUnsafeArchiveFinding.02"),
             Target = target,
             ContentPath = virtualPath,
-            Evidence = virtualPath,
+            EvidenceText = virtualPath,
             WorkshopId = workshopId,
             CanRemediate = true,
             SuggestedActions = [SuggestedActionKind.QuarantineFile]
@@ -479,47 +499,49 @@ public sealed partial class ContentScanner : IDisposable
 
     private static string SanitizeEntryDisplayName(string? value)
     {
-        if (string.IsNullOrEmpty(value)) return "<未命名条目>";
+        if (string.IsNullOrEmpty(value)) return MessageText.Create("Backend.Core.ContentScanner.SanitizeEntryDisplayName.01");
         string clean = value.Replace('\r', '_').Replace('\n', '_').Replace('\0', '_');
         return clean.Length <= 500 ? clean : clean[..500] + "…";
     }
 
     private static void AddCoverage(
         ScanReport report,
-        string message,
+        MessageText message,
         string target,
         string? workshopId,
         string ruleId = "SCAN-PARTIAL")
     {
         report.Coverage = ScanCoverage.Partial;
         // Keep append O(1) for large libraries. Presentation/export deduplicates notes.
-        report.CoverageNotes.Add(message);
+        report.AddCoverageNote(message);
         report.Findings.Add(new Finding
         {
             RuleId = ruleId,
+            ReasonCode = ReasonCodes.ForRule(ruleId),
             Category = FindingCategory.Coverage,
             Severity = FindingSeverity.Information,
             Score = 0,
-            Title = "未完整扫描",
-            Description = message,
+            TitleText = MessageText.Create("Backend.Core.ContentScanner.AddCoverage.01"),
+            DescriptionText = message,
             Target = target,
-            Evidence = workshopId is null ? string.Empty : $"工坊 {workshopId}",
+            EvidenceText = workshopId is null ? string.Empty : MessageText.Create("Backend.Core.ContentScanner.AddCoverage.02", (workshopId)),
             WorkshopId = workshopId,
             CanRemediate = false,
             SuggestedActions = [SuggestedActionKind.ReviewOnly]
         });
     }
 
-    private void AddAmsiCoverage(ScanReport report, string detail)
+    private void AddAmsiCoverage(ScanReport report, MessageText detail)
     {
         report.Coverage = ScanCoverage.Partial;
         int count = _amsiUnavailableCounts.GetValueOrDefault(report.ScanId) + 1;
         _amsiUnavailableCounts[report.ScanId] = count;
-        const string prefix = "AMSI/本机反恶意软件提供程序不可用：";
-        string message = $"{prefix}{count:N0} 个候选文件未获得杀毒引擎判定。原因示例：{detail}";
-        int existing = report.CoverageNotes.FindIndex(note => note.StartsWith(prefix, StringComparison.Ordinal));
-        if (existing >= 0) report.CoverageNotes[existing] = message;
-        else report.CoverageNotes.Add(message);
+        MessageText prefix = MessageText.Create("Backend.Core.ContentScanner.AddAmsiCoverage.01");
+        MessageText message = MessageText.Create("Backend.Core.ContentScanner.AddAmsiCoverage.02", (prefix), (System.FormattableString.Invariant($"{count:N0}")), (detail));
+        int existing = report.CoverageNotices.FindIndex(note => note.ReasonCode == ReasonCodes.AmsiUnavailable);
+        CoverageNotice notice = new(ReasonCodes.AmsiUnavailable, message);
+        if (existing >= 0) report.CoverageNotices[existing] = notice;
+        else report.CoverageNotices.Add(notice);
     }
 
     public void Dispose()
@@ -528,7 +550,8 @@ public sealed partial class ContentScanner : IDisposable
         _passwords.Clear();
         _archiveBudgetReport = null;
         _amsiUnavailableCounts.Clear();
-        _amsi.Dispose();
+        if (_amsi.IsValueCreated) _amsi.Value.Dispose();
+        foreach (var worker in _leafWorkers) worker.Scanner.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);
     }
@@ -537,6 +560,8 @@ public sealed partial class ContentScanner : IDisposable
     {
         if (ReferenceEquals(_archiveBudgetReport, report)) return _archiveBudget;
         _passwords.Clear();
+        foreach (Guid other in _amsiUnavailableCounts.Keys.Where(id => id != report.ScanId).ToArray())
+            _amsiUnavailableCounts.Remove(other);
         _archiveBudgetReport = report;
         _archiveBudget = new ArchiveBudget();
         return _archiveBudget;

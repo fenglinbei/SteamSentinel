@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text.Json;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Utilities;
@@ -11,9 +12,9 @@ internal static class ScanSettingsStore
     internal static ScanLimitSettings Load(string path)
     {
         if (!File.Exists(path)) return new();
-        if (new FileInfo(path).Length > 128 * 1024) throw new InvalidDataException("扫描设置文件过大。");
+        if (new FileInfo(path).Length > 128 * 1024) throw new InvalidDataException(DisplayText.Get("Ui.ScanSettingsStore.Load.01"));
         ScanLimitSettings value = JsonSerializer.Deserialize<ScanLimitSettings>(File.ReadAllText(path))
-            ?? throw new InvalidDataException("扫描设置为空。");
+            ?? throw new InvalidDataException(DisplayText.Get("Ui.ScanSettingsStore.Load.02"));
         value.Validate();
         return value;
     }

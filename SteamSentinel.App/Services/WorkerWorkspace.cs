@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.App.Services;
@@ -12,7 +13,7 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
     internal WorkerWorkspace()
     {
         string root = System.IO.Path.GetFullPath(AppPaths.WorkerTemporaryRoot);
-        if (Validation.ContainsReparsePoint(root)) throw new IOException("扫描临时根目录包含重解析点。");
+        if (Validation.ContainsReparsePoint(root)) throw MessageExceptions.Create(MessageText.Create("Backend.App.WorkerWorkspace.Constructor.01"), sourceText => new IOException(sourceText));
         Directory.CreateDirectory(root);
         root = _root = OwnedDirectoryPhysicalPath.ResolveForCreation(root);
         CleanStaleSessions(root);
@@ -20,7 +21,7 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
         Directory.CreateDirectory(candidate);
         Path = OwnedDirectoryPhysicalPath.ResolveExisting(candidate);
         if (!string.Equals(System.IO.Path.GetDirectoryName(Path), root, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("工作进程会话不在自有物理根目录内。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.WorkerWorkspace.Constructor.02"), sourceText => new IOException(sourceText));
         _lease = new FileStream(System.IO.Path.Combine(Path, Marker), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
         _lease.Write("SteamSentinel session v1"u8);
         _lease.Flush(true);
@@ -80,7 +81,7 @@ internal sealed class WorkerWorkspace : IDisposable, IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            if (logFailure) AppErrorLog.Write("WorkerTemporaryCleanup", new IOException("本轮扫描临时内容尚未完全清理：" + full, ex));
+            if (logFailure) AppErrorLog.Write("WorkerTemporaryCleanup", MessageExceptions.Create(MessageText.Create("Backend.App.WorkerWorkspace.TryClean.01") + full, sourceText => new IOException(sourceText, ex)));
             return false;
         }
     }

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
@@ -17,7 +18,7 @@ public sealed class ContainerTemporaryStore : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         _budget.Check();
         string path = System.IO.Path.Combine(Path, $"{_files.Count:D8}-{Guid.NewGuid():N}.scan");
-        if (Validation.ContainsReparsePoint(Path)) throw new IOException("临时工作目录发生变化。");
+        if (Validation.ContainsReparsePoint(Path)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerTemporaryStore.CreateFile.01"), sourceText => new IOException(sourceText));
         ContainerTemporaryFile file = new(path, _budget); _files.Add(file); return file;
     }
 
@@ -49,11 +50,11 @@ public sealed class ContainerTemporaryFile : IDisposable
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_stream is null) throw new InvalidOperationException("临时文件已经封闭，不再写入。");
+        if (_stream is null) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerTemporaryStore.WriteAsync.01"), sourceText => new InvalidOperationException(sourceText));
         _budget.Check(); token.ThrowIfCancellationRequested();
-        string root = System.IO.Path.GetPathRoot(Path) ?? throw new IOException("临时磁盘身份不可用。");
-        if (new DriveInfo(root).AvailableFreeSpace < _budget.Limits.ReservedDiskBytes + buffer.Length)
-            throw new ScanResourceLimitException("临时磁盘空间不足，已保留安全空间并停止展开。");
+        string root = System.IO.Path.GetPathRoot(Path) ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerTemporaryStore.WriteAsync.02"), sourceText => new IOException(sourceText));
+        if (new DriveInfo(root).AvailableFreeSpace - _budget.EffectiveDiskReserve < buffer.Length)
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerTemporaryStore.WriteAsync.03"), sourceText => new ScanResourceLimitException(sourceText));
         _budget.ReserveTemporary(buffer.Length);
         _charged = checked(_charged + buffer.Length);
         try { await _stream.WriteAsync(buffer, token).ConfigureAwait(false); }
@@ -63,7 +64,7 @@ public sealed class ContainerTemporaryFile : IDisposable
             long actual = _stream.Length;
             if (actual < _charged) { _budget.ReleaseTemporary(_charged - actual); _charged = actual; }
             if (ex is IOException && (ex.HResult & 0xffff) is 0x27 or 0x70)
-                throw new ScanResourceLimitException("临时磁盘写入空间耗尽，已停止展开并保留实际占用计量。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerTemporaryStore.WriteAsync.04"), sourceText => new ScanResourceLimitException(sourceText));
             throw;
         }
     }

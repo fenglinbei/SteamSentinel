@@ -15,10 +15,10 @@ namespace SteamSentinel.SelfTest;
 internal static partial class Program
 {
     private const BindingFlags SummaryPrivate = BindingFlags.Instance | BindingFlags.NonPublic;
-    private const string PartialSafeTitle = "已完成部分检查，未发现需处理的风险";
-    private const string CompleteSafeTitle = "本次检查已完成，未发现需处理的风险";
-    private const string SkippedScanTitle = "本次未执行检查，无法判断风险";
-    private const string QuickPartialGuidance = "仍有未检查内容，若要完整排查，请使用完整内容扫描，并按需勾选额外的检查内容。";
+    private static string PartialSafeTitle => UiExpected("已完成部分检查，未发现需处理的风险", "Checks incomplete; no actionable risk found");
+    private static string CompleteSafeTitle => UiExpected("本次检查已完成，未发现需处理的风险", "Checks complete; no actionable risk found");
+    private static string SkippedScanTitle => UiExpected("本次未执行检查，无法判断风险", "No checks ran; risk cannot be assessed");
+    private static string QuickPartialGuidance => UiExpected("仍有未检查内容，若要完整排查，请使用完整内容扫描，并按需勾选额外的检查内容。", "Some content remains unchecked. For broader coverage, use a full content scan and select additional scope options as needed.");
 
     private enum SummaryFindings { None, Information, Suspicious, Known, KnownWithHostEvidence }
 
@@ -30,8 +30,8 @@ internal static partial class Program
             Findings = [new() { RuleId = "STEAM-UI-SEMANTIC-TAMPERING", Category = FindingCategory.Steam, Severity = FindingSeverity.High, CanRemediate = true }]
         };
         Check("UI 系统复查不把非已知恶意的篡改发现概括为无篡改证据",
-            MainWindow.SystemFollowUpSummary(semanticTampering).Contains("未发现已知活动威胁", StringComparison.Ordinal) &&
-            !MainWindow.SystemFollowUpSummary(semanticTampering).Contains("未发现已知威胁活动或篡改证据", StringComparison.Ordinal));
+            MainWindow.SystemFollowUpSummary(semanticTampering).Contains(UiExpected("未发现已知活动威胁", "No known active threats were found"), StringComparison.Ordinal) &&
+            !MainWindow.SystemFollowUpSummary(semanticTampering).Contains(UiExpected("未发现已知威胁活动或篡改证据", "No known threat activity or tampering evidence was found"), StringComparison.Ordinal));
         MainWindow matrixWindow = new();
         try
         {
@@ -50,8 +50,8 @@ internal static partial class Program
                             SummaryDetailIsAccurate(mode, coverage, findings, detail.Text) &&
                             SummaryStageIsAccurate(coverage, stage.Text) &&
                             ((TabItem)matrixWindow.FindName("CoverageTab")).Header?.ToString() ==
-                                (CoveragePresentation.Groups(report).Count > 0 ? $"未检查内容（{CoveragePresentation.Groups(report).Count} 类）" :
-                                    coverage == ScanCoverage.Complete ? "检查范围" : "未检查内容"));
+                                (CoveragePresentation.Groups(report).Count > 0 ? (IsEnglishUi ? $"Unchecked ({CoveragePresentation.Groups(report).Count})" : $"未检查内容（{CoveragePresentation.Groups(report).Count} 类）") :
+                                    coverage == ScanCoverage.Complete ? UiExpected("检查范围", "Coverage") : UiExpected("未检查内容", "Unchecked")));
                     }
 
             foreach (bool cancelled in new[] { false, true })
@@ -70,12 +70,12 @@ internal static partial class Program
                     string stage = SummaryText(matrixWindow, "ProgressStageText").Text;
                     string expectedTitle = findings is SummaryFindings.Suspicious or SummaryFindings.Known
                         ? ExpectedSummaryTitle(ScanCoverage.Partial, findings)
-                        : cancelled ? "扫描已取消" : "扫描不完整";
+                        : cancelled ? UiExpected("扫描已取消", "Scan cancelled") : UiExpected("扫描不完整", "Scan incomplete");
                     ScanReport retained = (ScanReport)typeof(MainWindow).GetField("_lastReport", SummaryPrivate)!.GetValue(matrixWindow)!;
-                    Check($"UI 摘要 {(cancelled ? "取消" : "失败")}/{findings} 保留结果且覆盖安全结论",
-                        title == expectedTitle && !title.Contains("未发现", StringComparison.Ordinal) &&
-                        detail.Contains("已保留", StringComparison.Ordinal) && detail.Contains("检查未完成", StringComparison.Ordinal) &&
-                        stage == (cancelled ? "扫描已取消" : "内容检查未完成") &&
+                    Check($"UI 摘要 {(cancelled ? "取消" : UiExpected("失败", "failed"))}/{findings} 保留结果且覆盖安全结论",
+                        title == expectedTitle && !title.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal) &&
+                        detail.Contains(UiExpected("已保留", "retained"), StringComparison.Ordinal) && detail.Contains(UiExpected("检查未完成", "checks are incomplete"), StringComparison.Ordinal) &&
+                        stage == (cancelled ? UiExpected("扫描已取消", "Scan cancelled") : UiExpected("内容检查未完成", "Content checks incomplete")) &&
                         retained.Coverage == ScanCoverage.Partial &&
                         retained.Findings.Any(f => f.RuleId == (cancelled ? "CONTENT-SCAN-CANCELLED" : "CONTENT-SCAN-FAILED")) &&
                         ((Button)matrixWindow.FindName("ExportButton")).IsEnabled);
@@ -153,9 +153,9 @@ internal static partial class Program
 
     private static string ExpectedSummaryTitle(ScanCoverage coverage, SummaryFindings findings) => findings switch
     {
-        SummaryFindings.KnownWithHostEvidence => "发现威胁与本机异常",
-        SummaryFindings.Known => "扫描内容包含已知威胁",
-        SummaryFindings.Suspicious => "发现可疑项",
+        SummaryFindings.KnownWithHostEvidence => UiExpected("发现威胁与本机异常", "Threats and local anomalies found"),
+        SummaryFindings.Known => UiExpected("扫描内容包含已知威胁", "Known threats in scanned content"),
+        SummaryFindings.Suspicious => UiExpected("发现可疑项", "Suspicious items found"),
         _ => coverage switch
         {
             ScanCoverage.Partial => PartialSafeTitle,
@@ -167,27 +167,27 @@ internal static partial class Program
     private static bool SummaryDetailIsAccurate(ScanMode mode, ScanCoverage coverage, SummaryFindings findings, string text)
     {
         if (findings is SummaryFindings.Known or SummaryFindings.KnownWithHostEvidence)
-            return text.Contains("文件检出不等于本机已感染", StringComparison.Ordinal) && !text.Contains("未发现", StringComparison.Ordinal);
+            return text.Contains(UiExpected("文件检出不等于本机已感染", "A file detection does not establish an active infection on this computer"), StringComparison.Ordinal) && !text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal);
         if (findings == SummaryFindings.Suspicious)
-            return text.Contains("人工复核", StringComparison.Ordinal) && text.Contains("未自动判定为病毒", StringComparison.Ordinal) &&
-                !text.Contains("未发现", StringComparison.Ordinal);
+            return text.Contains(UiExpected("人工复核", "Manual review required"), StringComparison.Ordinal) && text.Contains(UiExpected("未自动判定为病毒", "have not automatically been classified as malware"), StringComparison.Ordinal) &&
+                !text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal);
         return coverage switch
         {
             ScanCoverage.Partial when mode == ScanMode.Quick => text == QuickPartialGuidance,
-            ScanCoverage.Partial => text.Contains("未检查内容", StringComparison.Ordinal) &&
-                text.Contains("原因", StringComparison.Ordinal) && text.Contains("选项", StringComparison.Ordinal) &&
+            ScanCoverage.Partial => text.Contains(UiExpected("未检查内容", "Unchecked"), StringComparison.Ordinal) &&
+                text.Contains(UiExpected("原因", "reasons"), StringComparison.Ordinal) && text.Contains(UiExpected("选项", "options"), StringComparison.Ordinal) &&
                 text != QuickPartialGuidance,
-            ScanCoverage.Complete => text.Contains("本次", StringComparison.Ordinal) && text.Contains("范围", StringComparison.Ordinal) &&
-                text.Contains("不代表", StringComparison.Ordinal) && text.Contains("绝对安全", StringComparison.Ordinal),
-            _ => !string.IsNullOrWhiteSpace(text) && !text.Contains("已完成支持范围内", StringComparison.Ordinal)
+            ScanCoverage.Complete => text.Contains(UiExpected("本次", "selected"), StringComparison.Ordinal) && text.Contains(UiExpected("范围", "scope"), StringComparison.Ordinal) &&
+                text.Contains(UiExpected("不代表", "does not establish"), StringComparison.Ordinal) && text.Contains(UiExpected("绝对安全", "entire computer is safe"), StringComparison.Ordinal),
+            _ => !string.IsNullOrWhiteSpace(text) && !text.Contains(UiExpected("已完成支持范围内", "All supported checks complete"), StringComparison.Ordinal)
         };
     }
 
     private static bool SummaryStageIsAccurate(ScanCoverage coverage, string stage) => coverage switch
     {
-        ScanCoverage.Partial => stage.Contains("扫描已结束", StringComparison.Ordinal) && !stage.Contains("已完成", StringComparison.Ordinal),
-        ScanCoverage.Complete => stage.Contains("已完成", StringComparison.Ordinal),
-        _ => !stage.Contains("已完成", StringComparison.Ordinal)
+        ScanCoverage.Partial => stage.Contains(UiExpected("扫描已结束", "scan ended"), StringComparison.OrdinalIgnoreCase) && !stage.Contains(UiExpected("已完成", " complete"), StringComparison.Ordinal),
+        ScanCoverage.Complete => stage.Contains(UiExpected("已完成", " complete"), StringComparison.Ordinal),
+        _ => !stage.Contains(UiExpected("已完成", " complete"), StringComparison.Ordinal)
     };
 
     private static ScanReport CreateSummaryReport(ScanMode mode, ScanCoverage coverage, SummaryFindings findings)

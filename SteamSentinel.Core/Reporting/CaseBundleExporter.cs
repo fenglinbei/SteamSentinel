@@ -13,8 +13,10 @@ public static class CaseBundleExporter
         RemediationBatchSession? batches = null, ScanReport? contentFollowUp = null,
         TrustProxyDiagnosticReport? latestDiagnostics = null,
         RelatedComponentDiagnosticReport? latestRelatedDiagnostics = null,
-        RemediationCaseRecord? persistedCase = null)
+        RemediationCaseRecord? persistedCase = null,
+        System.Globalization.CultureInfo? culture = null)
     {
+        using IDisposable scope = DisplayText.UseCulture(culture);
         await Utilities.AtomicFile.WriteAsync(destination, async output =>
         {
             using ZipArchive zip = new(output, ZipArchiveMode.Create, leaveOpen: true);
@@ -39,17 +41,8 @@ public static class CaseBundleExporter
             if (persistedCase is not null) await WriteAsync(zip, "remediation-case.json", persistedCase, token);
             await using Stream stream = zip.CreateEntry("说明.txt").Open();
             await using StreamWriter writer = new(stream, new UTF8Encoding(false));
-            await writer.WriteAsync(("SteamSentinel " + ProductInfo.Version + "\n" +
-                "此包只包含记录，不包含被扫描文件、隔离样本或压缩包密码，也不会自动上传。\n" +
-                "scan.json 为处置前扫描，plan.json 为用户确认的动作，result.json 为实际执行及复查结果。\n" +
-                "follow-up.json 如存在，是后续定向复查，不代表全盘扫描。\n" +
-                "batches.json 如存在，包含原始选择、未纳入目标和所有批次结果，batches/ 下保留每批独立计划及执行记录。\n" +
-                "content-follow-up.json 是原扫描范围复查，follow-up.json 是单独的系统与 Steam 复查，两者不能互相替代。\n" +
-                "trust-proxy-diagnostics.json 如存在，是最新一次本机证书与代理只读采集；以其时间为准，不改写处置前扫描，也不是完整复扫或处理成功证明。\n" +
-                "related-components.json 如存在，是当前组件关联检查的来源、宿主、候选和各轮只读补查记录；以其时间为准，不代表已定位写入者或已完成处置。它与证书代理诊断分开保存。\n" +
-                "缺少某个文件表示没有相应记录，不表示检查通过。动作成功不等于所有威胁已清除。\n" +
-                "remediation-case.json 如存在，包含处置前会话与跨启动/登录复验；属于用户记录，不能作为管理员授权，也不能重放其中计划。未决执行须先核对受保护结果。\n" +
-                "记录已过滤已识别的凭据字段，但仍可能包含用户名、路径和命令参数，转发前请核对。\n").AsMemory(), token);
+            await writer.WriteAsync(DisplayText.Format("CaseBundle.Readme", ProductInfo.Version).AsMemory(), token);
+            await writer.WriteAsync(("\n\n" + DisplayText.Get("Report.OriginalTextNotice")).AsMemory(), token);
         }, token);
     }
 

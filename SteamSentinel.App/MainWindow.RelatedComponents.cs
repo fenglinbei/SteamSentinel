@@ -13,8 +13,8 @@ public partial class MainWindow
         if (RelatedComponentsDetailsText is null) return;
         if (diagnostic is null)
         {
-            RelatedComponentsStatusText.Text = "尚无组件关联记录";
-            RelatedComponentsDetailsText.Text = "正常扫描完成关联检查后，这里显示来源、宿主身份、候选原因、受限内容检查与各轮预算。关联记录不会自行生成处理权限。";
+            RelatedComponentsStatusText.Text = DisplayText.Get("Ui.RelatedComponents.DisplayRelatedComponentDiagnostics.01");
+            RelatedComponentsDetailsText.Text = DisplayText.Get("Ui.RelatedComponents.DisplayRelatedComponentDiagnostics.02");
             return;
         }
         RelatedComponentsStatusText.Text = RelatedComponentReportPresentation.Summary(diagnostic);

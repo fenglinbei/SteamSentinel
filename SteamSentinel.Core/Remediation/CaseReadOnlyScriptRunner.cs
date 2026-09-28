@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using System.Text;
 
@@ -38,7 +39,7 @@ public static class CaseReadOnlyScriptRunner
             {
                 int count = await reader.ReadAsync(buffer.AsMemory(), timeout.Token).ConfigureAwait(false);
                 if (count == 0) break;
-                if (output.Length + count > 16 * 1024) throw new InvalidDataException("只读状态输出超过上限。");
+                if (output.Length + count > 16 * 1024) throw MessageExceptions.Create(MessageText.Create("Backend.Core.CaseReadOnlyScriptRunner.RunAsync.01"), sourceText => new InvalidDataException(sourceText));
                 output.Append(buffer, 0, count);
             }
             return output.ToString();

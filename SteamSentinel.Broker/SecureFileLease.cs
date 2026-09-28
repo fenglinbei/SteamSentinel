@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -8,12 +9,14 @@ namespace SteamSentinel.Broker;
 internal sealed class SecureFileLease : IAsyncDisposable
 {
     private readonly FileStream _stream;
+    private readonly bool _canIgnoreReadOnly;
     private bool _deleteRequested;
 
-    private SecureFileLease(FileStream stream, string finalPath)
+    private SecureFileLease(FileStream stream, string finalPath, bool canIgnoreReadOnly)
     {
         _stream = stream;
         FinalPath = finalPath;
+        _canIgnoreReadOnly = canIgnoreReadOnly;
     }
 
     public string FinalPath { get; }
@@ -24,17 +27,27 @@ internal sealed class SecureFileLease : IAsyncDisposable
         string requested = Path.GetFullPath(path);
         SafeFileHandle handle = CreateFile(
             requested,
-            GenericRead | Delete | FileReadAttributes,
+            GenericRead | Delete | FileReadAttributes | FileWriteAttributes,
             FileShareRead,
             IntPtr.Zero,
             OpenExisting,
             FileFlagOpenReparsePoint | FileFlagSequentialScan | FileFlagOverlapped,
             IntPtr.Zero);
+        bool canIgnoreReadOnly = !handle.IsInvalid;
+        // Read-only disposition requires FILE_WRITE_ATTRIBUTES. Keep ordinary files
+        // usable when their ACL grants DELETE but intentionally denies that extra right.
+        if (handle.IsInvalid && Marshal.GetLastWin32Error() == ErrorAccessDenied)
+        {
+            handle.Dispose();
+            handle = CreateFile(requested, GenericRead | Delete | FileReadAttributes,
+                FileShareRead, IntPtr.Zero, OpenExisting,
+                FileFlagOpenReparsePoint | FileFlagSequentialScan | FileFlagOverlapped, IntPtr.Zero);
+        }
         if (handle.IsInvalid)
         {
             int error = Marshal.GetLastWin32Error();
             handle.Dispose();
-            throw new Win32Exception(error, $"无法锁定目标文件：{requested}");
+            throw MessageExceptions.Win32(error, MessageText.Create("Backend.Broker.SecureFileLease.Open.01", (requested)));
         }
 
         try
@@ -45,18 +58,18 @@ internal sealed class SecureFileLease : IAsyncDisposable
                     out FileAttributeTagInfo attributes,
                     (uint)Marshal.SizeOf<FileAttributeTagInfo>()))
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取目标文件属性。");
+                throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Backend.Broker.SecureFileLease.Open.02"));
             }
             if ((attributes.FileAttributes & FileAttributeReparsePoint) != 0)
-                throw new UnauthorizedAccessException("目标文件是重解析点，已拒绝操作。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.Open.03"), sourceText => new UnauthorizedAccessException(sourceText));
 
             string finalPath = GetFinalPath(handle);
             if (!PathsEquivalent(requested, finalPath) &&
                 !(allowPackagedLocalAppDataRedirection && IsPackagedLocalAppDataRedirection(requested, finalPath)))
-                throw new UnauthorizedAccessException($"目标文件解析后的路径与请求路径不一致：请求 {requested}，实际 {finalPath}");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.Open.04", (requested), (finalPath)), sourceText => new UnauthorizedAccessException(sourceText));
 
             FileStream stream = new(handle, FileAccess.Read, 128 * 1024, isAsync: true);
-            return new SecureFileLease(stream, finalPath);
+            return new SecureFileLease(stream, finalPath, canIgnoreReadOnly);
         }
         catch
         {
@@ -85,11 +98,11 @@ internal sealed class SecureFileLease : IAsyncDisposable
     {
         string fullDestination = Path.GetFullPath(destination);
         string parent = Path.GetDirectoryName(fullDestination)
-            ?? throw new InvalidOperationException("隔离目标没有父目录。");
+            ?? throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.CopyToAsync.01"), sourceText => new InvalidOperationException(sourceText));
         if (!Directory.Exists(parent))
-            throw new DirectoryNotFoundException("目标父目录不存在，管理员组件不会自动创建不受保护的父路径。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.CopyToAsync.02"), sourceText => new DirectoryNotFoundException(sourceText));
         if (Validation.ContainsReparsePoint(parent))
-            throw new UnauthorizedAccessException("隔离目标目录包含重解析点。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.CopyToAsync.03"), sourceText => new UnauthorizedAccessException(sourceText));
 
         bool completed = false;
         SafeFileHandle destinationHandle = CreateFile(
@@ -105,7 +118,7 @@ internal sealed class SecureFileLease : IAsyncDisposable
         {
             int error = Marshal.GetLastWin32Error();
             destinationHandle.Dispose();
-            throw new Win32Exception(error, $"无法以新文件方式创建目标：{fullDestination}");
+            throw MessageExceptions.Win32(error, MessageText.Create("Backend.Broker.SecureFileLease.CopyToAsync.04", (fullDestination)));
         }
         try
         {
@@ -118,7 +131,7 @@ internal sealed class SecureFileLease : IAsyncDisposable
                 !PathsEquivalent(GetFinalPath(destinationHandle), fullDestination))
             {
                 TryMarkDelete(destinationHandle);
-                throw new UnauthorizedAccessException("目标文件解析后的路径不一致或属于重解析点。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.CopyToAsync.05"), sourceText => new UnauthorizedAccessException(sourceText));
             }
 
             await using FileStream output = new(destinationHandle, FileAccess.ReadWrite, 128 * 1024, isAsync: true);
@@ -131,7 +144,7 @@ internal sealed class SecureFileLease : IAsyncDisposable
                 output.Position = 0;
                 string copiedHash = await Hashing.Sha256StreamAsync(output, cancellationToken).ConfigureAwait(false);
                 if (!copiedHash.Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new IOException("隔离副本哈希校验失败。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.CopyToAsync.06"), sourceText => new IOException(sourceText));
                 completed = true;
             }
             catch
@@ -149,34 +162,62 @@ internal sealed class SecureFileLease : IAsyncDisposable
 
     public void DeleteOnClose()
     {
-        if (!TryMarkDelete(_stream.SafeFileHandle))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "隔离副本已建立，但无法按句柄移除原文件。");
+        if (!TryMarkDelete(_stream.SafeFileHandle, _canIgnoreReadOnly, out int error))
+            throw MessageExceptions.Win32(error, MessageText.Create("Backend.Broker.SecureFileLease.DeleteOnClose.01", (error)));
         _deleteRequested = true;
     }
 
-    private static bool TryMarkDelete(SafeFileHandle handle)
+    private static bool TryMarkDelete(SafeFileHandle handle) => TryMarkDelete(handle, false, out _);
+
+    private static bool TryMarkDelete(SafeFileHandle handle, bool canIgnoreReadOnly, out int error)
     {
         FileDispositionInfo disposition = new() { DeleteFile = true };
-        return SetFileInformationByHandle(
+        if (SetFileInformationByHandle(
             handle,
             FileDispositionInfoClass,
             ref disposition,
-            (uint)Marshal.SizeOf<FileDispositionInfo>());
+            (uint)Marshal.SizeOf<FileDispositionInfo>()))
+        {
+            error = 0;
+            return true;
+        }
+        error = Marshal.GetLastWin32Error();
+        // Enforce this right ourselves as well: native behavior differs across Windows
+        // environments. A fallback handle must never bypass denied attribute writes.
+        if (error != ErrorAccessDenied || !canIgnoreReadOnly) return false;
+        if (!GetFileInformationByHandleEx(handle, FileAttributeTagInfoClass,
+                out FileAttributeTagInfo attributes, (uint)Marshal.SizeOf<FileAttributeTagInfo>()))
+        {
+            error = Marshal.GetLastWin32Error();
+            return false;
+        }
+        if ((attributes.FileAttributes & FileAttributeReadOnly) == 0) return false;
+
+        // Keep the verified handle, source attributes, sharing rules and image-section
+        // check. Do not reopen by path, relax ACLs, or use POSIX deletion semantics.
+        FileDispositionInfoEx extended = new()
+        {
+            Flags = FileDispositionDelete | FileDispositionForceImageSectionCheck | FileDispositionIgnoreReadOnly
+        };
+        bool deleted = SetFileInformationByHandle(handle, FileDispositionInfoExClass,
+            ref extended, (uint)Marshal.SizeOf<FileDispositionInfoEx>());
+        error = deleted ? 0 : Marshal.GetLastWin32Error();
+        return deleted;
     }
 
     public async ValueTask DisposeAsync()
     {
         await _stream.DisposeAsync().ConfigureAwait(false);
         if (_deleteRequested && File.Exists(FinalPath))
-            throw new IOException("文件删除标记未在句柄关闭后生效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.DisposeAsync.01"), sourceText => new IOException(sourceText));
     }
 
     private static string GetFinalPath(SafeFileHandle handle)
     {
         char[] buffer = new char[32_768];
         uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, FileNameNormalized | VolumeNameDos);
-        if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法解析目标文件最终路径。");
-        if (length >= buffer.Length) throw new PathTooLongException("目标文件最终路径过长。");
+        if (length == 0) throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Backend.Broker.SecureFileLease.GetFinalPath.01"));
+        if (length >= buffer.Length) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.GetFinalPath.02"), sourceText => new PathTooLongException(sourceText));
         string value = new(buffer, 0, (int)length);
         if (value.StartsWith("\\\\?\\UNC\\", StringComparison.OrdinalIgnoreCase))
             return "\\\\" + value[8..];
@@ -219,10 +260,12 @@ internal sealed class SecureFileLease : IAsyncDisposable
     private const uint GenericWrite = 0x40000000;
     private const uint Delete = 0x00010000;
     private const uint FileReadAttributes = 0x00000080;
+    private const uint FileWriteAttributes = 0x00000100;
     private const uint FileShareRead = 0x00000001;
     private const uint OpenExisting = 3;
     private const uint CreateNew = 1;
     private const uint FileAttributeNormal = 0x00000080;
+    private const uint FileAttributeReadOnly = 0x00000001;
     private const uint FileFlagOverlapped = 0x40000000;
     private const uint FileFlagWriteThrough = 0x80000000;
     private const uint FileFlagOpenReparsePoint = 0x00200000;
@@ -230,6 +273,11 @@ internal sealed class SecureFileLease : IAsyncDisposable
     private const uint FileAttributeReparsePoint = 0x00000400;
     private const int FileAttributeTagInfoClass = 9;
     private const int FileDispositionInfoClass = 4;
+    private const int FileDispositionInfoExClass = 21;
+    private const int ErrorAccessDenied = 5;
+    private const uint FileDispositionDelete = 0x00000001;
+    private const uint FileDispositionForceImageSectionCheck = 0x00000004;
+    private const uint FileDispositionIgnoreReadOnly = 0x00000010;
     private const uint FileNameNormalized = 0;
     private const uint VolumeNameDos = 0;
 
@@ -243,8 +291,14 @@ internal sealed class SecureFileLease : IAsyncDisposable
     [StructLayout(LayoutKind.Sequential)]
     private struct FileDispositionInfo
     {
-        [MarshalAs(UnmanagedType.Bool)]
+        [MarshalAs(UnmanagedType.U1)]
         public bool DeleteFile;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileDispositionInfoEx
+    {
+        public uint Flags;
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -278,6 +332,14 @@ internal sealed class SecureFileLease : IAsyncDisposable
         SafeFileHandle file,
         int fileInformationClass,
         ref FileDispositionInfo fileInformation,
+        uint bufferSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(
+        SafeFileHandle file,
+        int fileInformationClass,
+        ref FileDispositionInfoEx fileInformation,
         uint bufferSize);
 
 }

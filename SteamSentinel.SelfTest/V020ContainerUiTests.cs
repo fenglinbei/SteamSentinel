@@ -70,15 +70,15 @@ internal static partial class Program
                     TextBox details = (TextBox)window.FindName("ContainerDetailsText");
                     Check($"0.2容器UI {width}x{height} 完整长路径阶段链只读可复制且纵向滚动", details.IsReadOnly && details.TextWrapping == TextWrapping.Wrap &&
                         details.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled && details.VerticalScrollBarVisibility == ScrollBarVisibility.Auto &&
-                        details.Text.Contains(containers.Nodes[1].DisplayPath, StringComparison.Ordinal) && details.Text.Contains("五阶段", StringComparison.Ordinal) &&
-                        details.Text.Contains("完整性算法暂不支持", StringComparison.Ordinal) && details.Text.Contains("本轮预算", StringComparison.Ordinal) &&
+                        details.Text.Contains(containers.Nodes[1].DisplayPath, StringComparison.Ordinal) && details.Text.Contains(UiExpected("五阶段", "Five stages"), StringComparison.Ordinal) &&
+                        details.Text.Contains(UiExpected("完整性算法暂不支持", "Integrity algorithm not supported"), StringComparison.Ordinal) && details.Text.Contains(UiExpected("本轮预算", "Budget and work performed in this run"), StringComparison.Ordinal) &&
                         details.ActualHeight >= 70 && layout.IsFullyVisible(details));
                     string[] actions = ["ContainerRecheckButton", "ContainerSupplementButton", "ContainerRecoveryButton", "ContainerFullDetailsButton", "ContainerExportButton"];
                     Check($"0.2容器UI {width}x{height} 三类补查和元数据导出入口完整可见", actions.All(name =>
                         ((Button)window.FindName(name)).IsEnabled && layout.IsFullyVisible((Button)window.FindName(name))));
                     Check($"0.2容器UI {width}x{height} 页面不产生处置资格且未知状态不显示安全", !TrustProxyUiButton(window, "RemediateButton").IsEnabled &&
-                        TrustProxyUiText(window, "ContainerStatusText").Text.Contains("未完成", StringComparison.Ordinal) &&
-                        !details.Text.Contains(V020ContainerUiSecret, StringComparison.Ordinal) && details.Text.Contains("未签名不等于恶意", StringComparison.Ordinal));
+                        TrustProxyUiText(window, "ContainerStatusText").Text.Contains(UiExpected("未完成", "incomplete"), StringComparison.Ordinal) &&
+                        !details.Text.Contains(V020ContainerUiSecret, StringComparison.Ordinal) && details.Text.Contains(UiExpected("未签名不等于恶意", "Unsigned does not mean malicious"), StringComparison.Ordinal));
                     if (output is not null) layout.Save($"v020-container-{width}x{height}", output);
                 }
                 finally { window.Close(); }

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 namespace SteamSentinel.Core.Inspection;
 
 /// <summary>A non-owning seekable read view. Neither seeking nor decoding can escape its verified range.</summary>
@@ -36,7 +37,7 @@ internal sealed class ArchiveVolumeSliceStream(Stream source, long offset, long 
             SeekOrigin.End => length,
             _ => throw new ArgumentOutOfRangeException(nameof(origin))
         }) + value);
-        if (next < 0 || next > length) throw new IOException("分卷读取尝试越过受限范围。");
+        if (next < 0 || next > length) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeStreams.Seek.01"), sourceText => new IOException(sourceText));
         return _position = next;
     }
     public override void Flush() { }
@@ -58,7 +59,7 @@ internal sealed class ArchiveVolumeJoinedStream : Stream
     public long DiskOffset(int disk, long offset)
     {
         if (disk < 0 || disk >= _parts.Count || offset < 0 || offset > _parts[disk].Length)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "ZIP 分卷编号或卷内偏移无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeStreams.DiskOffset.01"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, sourceText));
         return checked(_starts[disk] + offset);
     }
     public override bool CanRead => true;
@@ -76,9 +77,9 @@ internal sealed class ArchiveVolumeJoinedStream : Stream
             if (index < 0) index = ~index - 1;
             Stream part = _parts[index]; part.Position = _position - _starts[index];
             int count = (int)Math.Min(buffer.Length, part.Length - part.Position);
-            if (count == 0) throw new EndOfStreamException("归档存在空分卷或不连续范围。");
+            if (count == 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeStreams.Read.01"), sourceText => new EndOfStreamException(sourceText));
             int read = part.Read(buffer[..count]);
-            if (read == 0) throw new EndOfStreamException("归档分卷在声明长度前结束。");
+            if (read == 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeStreams.Read.02"), sourceText => new EndOfStreamException(sourceText));
             _position += read; total += read; buffer = buffer[read..];
         }
         return total;
@@ -92,7 +93,7 @@ internal sealed class ArchiveVolumeJoinedStream : Stream
             SeekOrigin.End => _length,
             _ => throw new ArgumentOutOfRangeException(nameof(origin))
         }) + value);
-        if (next < 0 || next > _length) throw new IOException("归档读取越过受限卷组。");
+        if (next < 0 || next > _length) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeStreams.Seek.02"), sourceText => new IOException(sourceText));
         return _position = next;
     }
     public override void Flush() { }

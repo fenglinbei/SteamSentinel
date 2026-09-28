@@ -42,7 +42,7 @@ public sealed class RemediationPlan
     public List<RemediationAction> Actions { get; init; } = [];
 }
 
-public sealed class RemediationAction
+public sealed partial class RemediationAction
 {
     public Guid ActionId { get; init; } = Guid.NewGuid();
     public RemediationActionType Type { get; init; }
@@ -72,7 +72,7 @@ public sealed class RemediationAction
     public BoundProxyTarget? BoundProxy { get; init; }
 }
 
-public sealed class RemediationRunResult
+public sealed partial class RemediationRunResult
 {
     public Guid PlanId { get; init; }
     public string PlanIdentitySha256 { get; init; } = string.Empty;
@@ -90,7 +90,7 @@ public sealed class RemediationRunResult
     public DateTimeOffset? VerificationCompletedAtUtc { get; set; }
 }
 
-public sealed class RemediationActionResult
+public sealed partial class RemediationActionResult
 {
     public Guid ActionId { get; init; }
     public RemediationActionType Type { get; init; }
@@ -113,7 +113,7 @@ public enum RemediationVerificationStatus
     NotChecked, Verified, NoResidual, PendingReboot, Unknown, ResidualDetected, Reappeared
 }
 
-public sealed class RemediationVerificationObservation
+public sealed partial class RemediationVerificationObservation
 {
     public int Pass { get; init; }
     public DateTimeOffset CheckedAtUtc { get; init; } = DateTimeOffset.UtcNow;
@@ -123,7 +123,7 @@ public sealed class RemediationVerificationObservation
 
 public enum FileOccupancyStatus { Unknown, NoLocksReported, LocksReported }
 
-public sealed class FileOccupancyResult
+public sealed partial class FileOccupancyResult
 {
     public FileOccupancyStatus Status { get; init; }
     public List<FileOccupancyProcess> Processes { get; init; } = [];

@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.ExceptionServices;
@@ -17,7 +20,13 @@ public sealed class StructuredInspection : IDisposable
     public StructuredInspection(ContainerResourceBudget? budget = null) => _budget = budget;
     public bool Recognized { get; set; }
     public List<string> Notes { get; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<int, DisplayMessage>? NoteMessages { get => SteamSentinel.Core.Models.DisplayMessageMap.Bound(Notes, field); set => field = value; }
+    [JsonIgnore] public IEnumerable<MessageText> NoteTexts => DisplayMessageMap.Read(Notes, NoteMessages);
+    public void AddNote(MessageText text) => NoteMessages = DisplayMessageMap.Add(Notes, NoteMessages, text);
     public List<string> AccountingNotes { get; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<int, DisplayMessage>? AccountingNoteMessages { get; set; }
+    [JsonIgnore] public IEnumerable<MessageText> AccountingNoteTexts => DisplayMessageMap.Read(AccountingNotes, AccountingNoteMessages);
+    public void AddAccountingNote(MessageText text) => AccountingNoteMessages = DisplayMessageMap.Add(AccountingNotes, AccountingNoteMessages, text);
     public List<string> Metadata { get; } = [];
     public List<StructuredMember> Members { get; } = [];
     public long ExpandedBytes { get; set; }
@@ -28,7 +37,7 @@ public sealed class StructuredInspection : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!ReferenceEquals(_budget, budget) || _temporary.Count != 0 || Members.Count != 0 || Msi is not null)
-            throw new ArgumentException("结构化检查结果必须属于同一预算且未被其他容器使用。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.BindBudget.01"), sourceText => new ArgumentException(sourceText));
     }
 
     internal void TrackTemporary(string path) => _temporary.TryAdd(path, 0);
@@ -75,14 +84,16 @@ public static class StructuredContainerInspector
         StructuredInspection? providedResult = null)
     {
         StructuredInspection result = providedResult ?? new(budget);
+        long expansionBase = budget?.AcceptedExpandedBytes ?? 0;
+        int entryBase = Math.Max(0, (budget?.Limits.MaximumEntries ?? maximumEntries) - maximumEntries);
         result.BindBudget(budget);
         token.ThrowIfCancellationRequested(); budget?.Check();
-        if (!ContentDiscovery.IsLocalSafePath(path)) { result.Notes.Add("安装包路径不是安全的本地路径"); return result; }
+        if (!ContentDiscovery.IsLocalSafePath(path)) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.01")); return result; }
         long inputLength = new FileInfo(path).Length;
         budget?.ChargeMetadata(); budget?.ReserveNativeRead(inputLength);
-        if (budget is not null) result.AccountingNotes.Add("MSI 原生元数据读取按输入长度独立预留工作预算；不是实测读取量。成员流按实际返回字节计量。");
+        if (budget is not null) result.AddAccountingNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.02"));
         uint error = MsiOpenDatabase(path, IntPtr.Zero, out uint database); // MSIDBOPEN_READONLY
-        if (error != 0) { result.Notes.Add($"无法以只读方式打开 MSI/复合文档，错误 {error}"); return result; }
+        if (error != 0) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.03", (error))); return result; }
         try
         {
             MsiInspection msi = MsiDatabaseReader.Read(database, token, budget is null ? null : budget.ChargeMetadata);
@@ -107,10 +118,12 @@ public static class StructuredContainerInspector
                     uint count = ReadChunk();
                     bool cabinet = count >= 4 && buffer.AsSpan(0, 4).SequenceEqual("MSCF"u8);
                     if (cabinetsOnly && !cabinet) return;
+                    EnsureAdaptiveMemberCapacity(budget, count, result.Members.Count + 1, result.ExpandedBytes + count,
+                        ref perEntry, ref remainingBytes, ref maximumEntries, expansionBase, entryBase);
                     if (result.Members.Count >= Math.Min(maximumEntries, budget?.Limits.MaximumEntries ?? 1024))
                     {
-                        if (budget is not null) throw new ScanResourceLimitException("安装包成员数量达到上限");
-                        result.Notes.Add("安装包成员数量达到上限"); return;
+                        if (budget is not null) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.04"), sourceText => new ScanResourceLimitException(sourceText));
+                        result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.05")); return;
                     }
                     EnsureTemporarySpace(temp.Path, 0, budget);
                     output = temp.CreateFilePath(); result.TrackTemporary(output);
@@ -119,13 +132,16 @@ public static class StructuredContainerInspector
                         while (count > 0)
                         {
                             token.ThrowIfCancellationRequested(); budget?.Check();
+                            EnsureAdaptiveMemberCapacity(budget, total + count, result.Members.Count + 1, result.ExpandedBytes + total + count,
+                                ref perEntry, ref remainingBytes, ref maximumEntries, expansionBase, entryBase);
                             // These are member/legacy-adapter bounds. They leave a local
                             // coverage gap; the shared budget below still aborts the run.
                             if (count > Math.Min(perEntry, budget?.Limits.MaximumEntryBytes ?? perEntry) - total ||
                                 count > remainingBytes - result.ExpandedBytes - total)
-                                throw new InvalidDataException("安装包成员展开达到大小上限");
-                            if (budget is not null && total + count > Math.Max(1, inputLength) * budget.Limits.MaximumCompressionRatio)
-                                throw new InvalidDataException("MSI 成员实际展开比超过本轮单项上限。");
+                                throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.06"), sourceText => new InvalidDataException(sourceText));
+                            if (budget is not null && total + count > Math.Max(1, inputLength) * budget.Limits.MaximumCompressionRatio &&
+                                !ScanResourceSession.Allow("ContainerLimits.MaximumCompressionRatio", checked((long)Math.Ceiling((total + count) / (double)Math.Max(1, inputLength))), known: false))
+                                throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.07"), sourceText => new InvalidDataException(sourceText));
                             budget?.AcceptExpansion(count);
                             EnsureTemporarySpace(output, count, budget);
                             result.ReserveTemporary(output, count);
@@ -143,7 +159,7 @@ public static class StructuredContainerInspector
                 catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
                 {
                     if (output is not null) result.DiscardTemporary(output);
-                    result.Notes.Add($"{name}：{ex.Message}");
+                    result.AddNote($"{name}：{ex.Message}");
                 }
                 finally
                 {
@@ -158,13 +174,13 @@ public static class StructuredContainerInspector
                     // It can confirm EOF even when the last real read used the budget exactly.
                     uint remaining = 0;
                     uint sizeCode = MsiRecordReadStream(record, 2, null, ref remaining);
-                    if (sizeCode != 0) throw new IOException($"MSI 成员长度读取失败，错误 {sizeCode}");
+                    if (sizeCode != 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.08", (sizeCode)), sourceText => new IOException(sourceText));
                     if (remaining == 0) return 0;
                     uint requested = Math.Min(remaining, (uint)(budget?.ReadAllowance(buffer.Length) ?? buffer.Length));
                     uint count = requested;
                     uint code = MsiRecordReadStream(record, 2, buffer, ref count);
-                    if (code != 0) throw new IOException($"安装包成员读取失败，错误 {code}");
-                    if (count > requested) throw new IOException("MSI 原生流返回了超出已请求范围的字节数。");
+                    if (code != 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.09", (code)), sourceText => new IOException(sourceText));
+                    if (count > requested) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadMsi.10"), sourceText => new IOException(sourceText));
                     budget?.ChargeDecoded(count);
                     return count;
                 }
@@ -180,9 +196,9 @@ public static class StructuredContainerInspector
         result.Msi = msi;
         result.Recognized = msi.Recognized;
         result.MsiAnalysis = MsiActionAnalyzer.Analyze(msi, token);
-        result.Notes.AddRange(result.MsiAnalysis.CoverageGaps);
+        foreach (MessageText gap in result.MsiAnalysis.CoverageGaps.Texts) result.AddNote(gap);
         if (!result.Recognized)
-        { result.Notes.Add("不是本工具支持的 MSI 安装数据库，或表目录未完整读取"); return; }
+        { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ApplyMsiMetadata.01")); return; }
         // Bounded compatibility summary; raw installation tables stay internal.
         result.Metadata.AddRange(msi.Actions.Take(16).Select(a => ScriptSignals.Redact($"CustomAction: {a.Action} | {a.Type} | {a.Source} | {MsiActionAnalyzer.RedactedTarget(a)}")));
         result.Metadata.AddRange(result.MsiAnalysis.Evidence.Take(16));
@@ -193,11 +209,11 @@ public static class StructuredContainerInspector
     {
         token.ThrowIfCancellationRequested(); budget?.Check(); budget?.ChargeMetadata();
         uint code = MsiDatabaseOpenView(database, sql, out uint view);
-        if (code != 0) { result.Notes.Add($"安装数据库表读取失败，错误 {code}"); return; }
+        if (code != 0) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.Query.01", (code))); return; }
         try
         {
             code = MsiViewExecute(view, 0); // Executes a fixed SELECT, not an installation action.
-            if (code != 0) { result.Notes.Add($"安装数据库查询失败，错误 {code}"); return; }
+            if (code != 0) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.Query.02", (code))); return; }
             int rows = 0;
             while (true)
             {
@@ -205,13 +221,13 @@ public static class StructuredContainerInspector
                 budget?.ChargeMetadata();
                 code = MsiViewFetch(view, out uint record);
                 if (code == 259) break;
-                if (code != 0) { result.Notes.Add($"安装数据库行读取失败，错误 {code}"); break; }
+                if (code != 0) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.Query.03", (code))); break; }
                 try
                 {
-                    if (++rows > MaxRows) { result.Notes.Add("安装数据库表行数达到上限"); break; }
+                    if (++rows > MaxRows) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.Query.04")); break; }
                     try { row(record); }
                     catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
-                    { result.Notes.Add("安装包成员表读取未完成：" + ex.Message); break; }
+                    { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.Query.05") + ex.Message); break; }
                 }
                 finally { MsiCloseHandle(record); }
             }
@@ -224,8 +240,8 @@ public static class StructuredContainerInspector
         uint length = 8192;
         StringBuilder buffer = new(8193);
         uint code = MsiRecordGetString(record, field, buffer, ref length);
-        if (code == 234) throw new InvalidDataException("安装数据库字段超过读取上限");
-        if (code != 0) throw new IOException($"安装数据库字段读取失败，错误 {code}");
+        if (code == 234) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadString.01"), sourceText => new InvalidDataException(sourceText));
+        if (code != 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadString.02", (code)), sourceText => new IOException(sourceText));
         return buffer.ToString();
     }
 
@@ -234,13 +250,15 @@ public static class StructuredContainerInspector
         StructuredInspection? providedResult = null)
     {
         StructuredInspection result = providedResult ?? new(budget);
+        long expansionBase = budget?.AcceptedExpandedBytes ?? 0;
+        int entryBase = Math.Max(0, (budget?.Limits.MaximumEntries ?? maximumEntries) - maximumEntries);
         result.BindBudget(budget);
         result.Recognized = true;
         token.ThrowIfCancellationRequested(); budget?.Check();
-        if (!ContentDiscovery.IsLocalSafePath(path)) { result.Notes.Add("CAB 路径不是安全的本地路径"); return result; }
+        if (!ContentDiscovery.IsLocalSafePath(path)) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.01")); return result; }
         long inputLength = new FileInfo(path).Length;
         budget?.ChargeMetadata(); budget?.ReserveNativeRead(inputLength);
-        if (budget is not null) result.AccountingNotes.Add("CAB 原生读取按输入长度、原生解码按成员声明长度独立预留工作预算；不是实测读取或解码量。临时占用在写入前预留。");
+        if (budget is not null) result.AddAccountingNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.02"));
         Exception? failure = null;
         int visited = 0;
         long pendingExpansion = 0;
@@ -255,26 +273,29 @@ public static class StructuredContainerInspector
                 if (message == 0x11) // SPFILENOTIFY_FILEINCABINET
                 {
                     budget?.ChargeMetadata();
+                    CabinetFile info = Marshal.PtrToStructure<CabinetFile>(first);
+                    EnsureAdaptiveMemberCapacity(budget, info.FileSize, visited + 1, result.ExpandedBytes + info.FileSize,
+                        ref perEntry, ref remainingBytes, ref maximumEntries, expansionBase, entryBase);
                     int entryLimit = Math.Min(maximumEntries, budget?.Limits.MaximumEntries ?? 1024);
                     if (++visited > entryLimit)
                     {
-                        if (budget is not null) throw new ScanResourceLimitException("CAB 成员数量达到上限");
-                        result.Notes.Add("CAB 成员数量达到上限"); return 0;
+                        if (budget is not null) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.03"), sourceText => new ScanResourceLimitException(sourceText));
+                        result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.04")); return 0;
                     }
-                    CabinetFile info = Marshal.PtrToStructure<CabinetFile>(first);
                     if (result.Members.Count >= entryLimit || info.FileSize > Math.Min(perEntry, budget?.Limits.MaximumEntryBytes ?? perEntry) ||
                         info.FileSize > remainingBytes - result.ExpandedBytes)
-                    { result.Notes.Add("CAB 展开达到数量或大小上限"); return 2; } // FILEOP_SKIP
-                    if (budget is not null && info.FileSize > Math.Max(1, inputLength) * budget.Limits.MaximumCompressionRatio)
-                    { result.Notes.Add("CAB 成员声明展开比超过本轮单项上限。"); return 2; }
-                    string name = ReadBoundedNativeString(info.NameInCabinet, 8192) ?? "<未命名>";
+                    { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.05")); return 2; } // FILEOP_SKIP
+                    if (budget is not null && info.FileSize > Math.Max(1, inputLength) * budget.Limits.MaximumCompressionRatio &&
+                        !ScanResourceSession.Allow("ContainerLimits.MaximumCompressionRatio", checked((long)Math.Ceiling(info.FileSize / (double)Math.Max(1, inputLength)))))
+                    { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.06")); return 2; }
+                    string name = ReadBoundedNativeString(info.NameInCabinet, 8192) ?? MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.07");
                     EnsureTemporarySpace(temp.Path, info.FileSize, budget);
                     string output = temp.CreateFilePath();
-                    if (output.Length >= 260) { result.Notes.Add("CAB 临时路径超过系统接口限制"); return 2; }
+                    if (output.Length >= 260) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.08")); return 2; }
                     EnsureTemporarySpace(output, info.FileSize, budget);
                     budget?.ReserveNativeDecoded(info.FileSize);
                     if (budget is not null && info.FileSize > budget.Limits.MaximumExpandedBytes - budget.AcceptedExpandedBytes - pendingExpansion)
-                        throw new ScanResourceLimitException("CAB 成员声明展开量超过本轮累计上限。");
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.09"), sourceText => new ScanResourceLimitException(sourceText));
                     pendingExpansion = checked(pendingExpansion + info.FileSize);
                     result.ReserveTemporary(output, info.FileSize);
                     ownedTargets.Add(output);
@@ -284,13 +305,13 @@ public static class StructuredContainerInspector
                     result.ExpandedBytes += info.FileSize;
                     return 1; // FILEOP_DOIT
                 }
-                if (message == 0x12) { result.Notes.Add("CAB 引用其他分卷，未访问外部路径"); return 13; }
+                if (message == 0x12) { result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.10")); return 13; }
                 if (message == 0x13)
                 {
                     FilePaths info = Marshal.PtrToStructure<FilePaths>(first);
                     string? completedPath = ReadBoundedNativeString(info.Target, 260);
                     if (completedPath is null || !ownedTargets.Contains(completedPath))
-                        throw new IOException("CAB 原生完成通知未对应本轮自有临时文件。");
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.11"), sourceText => new IOException(sourceText));
                     if (info.Win32Error == 0) completedTargets.Add(completedPath);
                     return info.Win32Error;
                 }
@@ -304,13 +325,13 @@ public static class StructuredContainerInspector
             int nativeError = Marshal.GetLastPInvokeError();
             if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
             token.ThrowIfCancellationRequested(); budget?.Check();
-            if (!success) result.Notes.Add("CAB 未完整展开：" + new Win32Exception(nativeError).Message);
+            if (!success) result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.12") + new Win32Exception(nativeError).Message);
             foreach (StructuredMember member in result.Members.ToArray())
                 if (!completedTargets.Contains(member.Path) || !File.Exists(member.Path) ||
                     !ContentDiscovery.IsLocalSafePath(member.Path) || new FileInfo(member.Path).Length != member.Size)
                 {
                     result.Members.Remove(member); result.DiscardTemporary(member.Path);
-                    result.Notes.Add("CAB 成员未能完整提取：" + member.Name);
+                    result.AddNote(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadCabinet.13") + member.Name);
                 }
                 else budget?.AcceptExpansion(member.Size);
             result.ExpandedBytes = result.Members.Sum(member => member.Size);
@@ -326,17 +347,29 @@ public static class StructuredContainerInspector
         for (int length = 0; length <= maximumCharacters; length++)
             if (Marshal.ReadInt16(pointer, checked(length * 2)) == 0)
                 return Marshal.PtrToStringUni(pointer, length);
-        throw new InvalidDataException("CAB 原生元数据字符串超过单项安全读取上限。");
+        throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.ReadBoundedNativeString.01"), sourceText => new InvalidDataException(sourceText));
     }
 
     private static void EnsureTemporarySpace(string path, long bytes, ContainerResourceBudget? budget)
     {
         if (budget is null) { TemporaryDirectory.EnsureFreeSpace(path, bytes); return; }
         budget.Check();
-        string volume = Path.GetPathRoot(Path.GetFullPath(path)) ?? throw new IOException("无法确定临时磁盘。");
-        long reserve = budget.Limits.ReservedDiskBytes;
+        string volume = Path.GetPathRoot(Path.GetFullPath(path)) ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.EnsureTemporarySpace.01"), sourceText => new IOException(sourceText));
+        long reserve = budget.EffectiveDiskReserve;
         if (new DriveInfo(volume).AvailableFreeSpace - reserve < bytes)
-            throw new ScanResourceLimitException("结构化容器展开将侵入本轮保留磁盘空间。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.StructuredContainerInspector.EnsureTemporarySpace.02"), sourceText => new ScanResourceLimitException(sourceText));
+    }
+
+    private static void EnsureAdaptiveMemberCapacity(ContainerResourceBudget? budget, long length, int entries, long expanded,
+        ref long perEntry, ref long remaining, ref int maximumEntries, long expansionBase, int entryBase)
+    {
+        if (budget is null || ScanResourceSession.Current is null) return;
+        if (length > perEntry && ScanResourceSession.Allow("ContainerLimits.MaximumEntryBytes", length, known: false))
+            perEntry = budget.Limits.MaximumEntryBytes;
+        if (entries > maximumEntries && ScanResourceSession.Allow("ContainerLimits.MaximumEntries", (long)entryBase + entries, known: false))
+            maximumEntries = budget.Limits.MaximumEntries - entryBase;
+        if (expanded > remaining && ScanResourceSession.Allow("ContainerLimits.MaximumExpandedBytes", checked(expansionBase + expanded), budget.AcceptedExpandedBytes, known: false))
+            remaining = budget.Limits.MaximumExpandedBytes - expansionBase;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

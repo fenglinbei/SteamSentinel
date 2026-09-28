@@ -1,11 +1,15 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Scanning;
+using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Remediation;
 
 public sealed class RemediationPlanBuilder(RuleSet rules)
 {
+    private readonly Lazy<SteamLayout> _steamLayout = new(SteamLocator.Discover);
+
     public async Task<RemediationPlan> BuildAsync(
         IEnumerable<Finding> selectedFindings,
         bool addKnownDomainBlock,
@@ -16,7 +20,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         Dictionary<string, RemediationAction> deduplication = new(StringComparer.OrdinalIgnoreCase);
         bool shouldBlockDomains = addKnownDomainBlock;
         Finding[] selected = selectedFindings.Take(257).ToArray();
-        if (selected.Length > 256) throw new InvalidDataException("处置计划超过安全上限，请按关联组分批处理。");
+        if (selected.Length > 256) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.01"), sourceText => new InvalidDataException(sourceText));
         IEnumerable<Finding> expanded = allFindings is null ? selected : RelatedArtifactRelations.SelectForPlan(selected, allFindings, rules);
 
         foreach (Finding finding in expanded.Where(item => item.CanRemediate))
@@ -29,7 +33,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             if (finding.SuggestedActions.Any(a => a is SuggestedActionKind.StopProcess or SuggestedActionKind.StopHostProcess))
             {
                 if (finding.ProcessId is null or <= 4 || finding.ProcessStartedAtUtc is null)
-                    throw new InvalidDataException("运行进程缺少 PID/启动时间绑定，请重新扫描。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.02"), sourceText => new InvalidDataException(sourceText));
                 await VerifyFileIdentityAsync(finding.Target, finding.Sha256, cancellationToken);
             }
             shouldBlockDomains |= (finding.IsKnownMalware && finding.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam) ||
@@ -42,7 +46,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.StopProcess when finding.ProcessId is not null => new RemediationAction
                     {
                         Type = RemediationActionType.StopProcess,
-                        DisplayName = $"停止进程 PID {finding.ProcessId}",
+                        DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.StopProcess.01", (finding.ProcessId)),
                         Target = finding.Target,
                         ProcessId = finding.ProcessId,
                         ProcessStartedAtUtc = finding.ProcessStartedAtUtc,
@@ -55,7 +59,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.RemoveRegistryValue when finding.RegistryKey is not null && finding.RegistryValueName is not null => new RemediationAction
                     {
                         Type = RemediationActionType.RemoveRegistryValue,
-                        DisplayName = $"删除启动项 {finding.RegistryValueName}",
+                        DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveRegistryValue.01", (finding.RegistryValueName)),
                         Target = finding.Target,
                         RegistryHive = finding.RegistryHive,
                         RegistryView = finding.RegistryView,
@@ -70,7 +74,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.RemoveScheduledTask => new RemediationAction
                     {
                         Type = RemediationActionType.RemoveScheduledTask,
-                        DisplayName = "删除已验证的关联计划任务",
+                        DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveScheduledTask.01"),
                         Target = finding.Target,
                         TaskName = finding.Target,
                         RelatedFilePath = finding.RelatedFilePath,
@@ -83,22 +87,22 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.RemoveDefenderExclusion => new RemediationAction
                     {
                         Type = RemediationActionType.RemoveDefenderExclusion,
-                        DisplayName = "移除已知恶意 Defender 排除项",
+                        DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveDefenderExclusion.01"),
                         Target = finding.Target,
                         IsKnownMalware = finding.IsKnownMalware,
                         ConfidenceScore = finding.Score
                     },
-                    SuggestedActionKind.StopHostProcess => BoundAction(finding, RemediationActionType.StopHostProcess, "关闭已加载恶意组件的宿主程序"),
-                    SuggestedActionKind.DisableService => BoundAction(finding, RemediationActionType.DisableService, "禁用关联恶意文件的服务"),
-                    SuggestedActionKind.RemoveRelatedDefenderExclusion => BoundAction(finding, RemediationActionType.RemoveRelatedDefenderExclusion, "移除关联恶意插件的安全排除项"),
-                    SuggestedActionKind.DisableRelatedFirewallRule => BoundAction(finding, RemediationActionType.DisableRelatedFirewallRule, "禁用关联投递链的防火墙放行规则"),
+                    SuggestedActionKind.StopHostProcess => BoundAction(finding, RemediationActionType.StopHostProcess, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.StopHostProcess.01")),
+                    SuggestedActionKind.DisableService => BoundAction(finding, RemediationActionType.DisableService, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableService.01")),
+                    SuggestedActionKind.RemoveRelatedDefenderExclusion => BoundAction(finding, RemediationActionType.RemoveRelatedDefenderExclusion, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveRelatedDefenderExclusion.01")),
+                    SuggestedActionKind.DisableRelatedFirewallRule => BoundAction(finding, RemediationActionType.DisableRelatedFirewallRule, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableRelatedFirewallRule.01")),
                     SuggestedActionKind.QuarantineFile when File.Exists(finding.Target) => await CreateFileActionAsync(finding, cancellationToken),
                     SuggestedActionKind.QuarantineDirectory when Directory.Exists(finding.Target) =>
                         await CreateDirectoryActionAsync(finding, cancellationToken),
                     SuggestedActionKind.RestoreSecurityControls => new RemediationAction
                     {
                         Type = RemediationActionType.RestoreSecurityControls,
-                        DisplayName = "恢复 Defender 与 Windows 防火墙",
+                        DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RestoreSecurityControls.01"),
                         Target = "Windows Security",
                         IsKnownMalware = finding.IsKnownMalware,
                         ConfidenceScore = finding.Score
@@ -113,10 +117,10 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     if (!string.Equals(previous.ExpectedSha256, action.ExpectedSha256, StringComparison.OrdinalIgnoreCase) ||
                         previous.ProcessStartedAtUtc != action.ProcessStartedAtUtc || previous.ExpectedValueData != action.ExpectedValueData ||
                         previous.ConfigurationSnapshot != action.ConfigurationSnapshot)
-                        throw new InvalidDataException("同一处置目标存在冲突快照，请重新扫描。");
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.03"), sourceText => new InvalidDataException(sourceText));
                 }
                 else { deduplication.Add(key, action); plan.Actions.Add(action); }
-                if (plan.Actions.Count > 64) throw new InvalidDataException("完整处置计划超过 64 个动作，请按关联组分批处理。");
+                if (plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.04"), sourceText => new InvalidDataException(sourceText));
             }
 
             if (finding.IsKnownMalware && !finding.SuggestedActions.Contains(SuggestedActionKind.StopHostProcess) &&
@@ -126,7 +130,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                 RemediationAction firewall = new()
                 {
                     Type = RemediationActionType.AddProgramFirewallBlock,
-                    DisplayName = "阻断恶意程序出站连接",
+                    DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.05"),
                     Target = Path.GetFullPath(finding.Target),
                     ExpectedSha256 = hash,
                     IsKnownMalware = true,
@@ -142,7 +146,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             plan.Actions.Add(new RemediationAction
             {
                 Type = RemediationActionType.BlockKnownDomains,
-                DisplayName = "在 hosts 中阻断已知 C2 域名",
+                DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.06"),
                 Target = "hosts",
                 Domains = [.. rules.KnownDomains],
                 IsKnownMalware = true,
@@ -150,7 +154,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             });
         }
 
-        if (plan.Actions.Count > 64) throw new InvalidDataException("完整处置计划超过 64 个动作，请按关联组分批处理。");
+        if (plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.07"), sourceText => new InvalidDataException(sourceText));
         OrderActionsForSafeExecution(plan.Actions);
 
         return plan;
@@ -175,14 +179,18 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         _ => 4
     };
 
-    private static async Task<RemediationAction> CreateFileActionAsync(Finding finding, CancellationToken cancellationToken)
+    private async Task<RemediationAction> CreateFileActionAsync(Finding finding, CancellationToken cancellationToken)
     {
         string path = Path.GetFullPath(finding.Target);
         string hash = await VerifyTargetIdentityAsync(finding, cancellationToken);
+        if (!FileRemediationScope.IsAllowed(path, hash, rules, _steamLayout.Value))
+            throw MessageExceptions.Create(MessageText.Create("Remediation.FileScopeNotApproved",
+                    path.Length <= 4096 ? path : path[..2046] + " … " + path[^2046..]),
+                sourceText => new FileRemediationScopeException(sourceText));
         return new RemediationAction
         {
             Type = RemediationActionType.QuarantineFile,
-            DisplayName = "隔离文件",
+            DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.CreateFileActionAsync.01"),
             Target = path,
             ExpectedSha256 = hash,
             IsKnownMalware = finding.IsKnownMalware,
@@ -190,10 +198,10 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         };
     }
 
-    private static RemediationAction BoundAction(Finding finding, RemediationActionType type, string label) => new()
+    private static RemediationAction BoundAction(Finding finding, RemediationActionType type, MessageText label) => new()
     {
         Type = type,
-        DisplayName = label,
+        DisplayNameText = label,
         Target = finding.Target,
         ExpectedSha256 = finding.Sha256,
         ProcessId = finding.ProcessId,
@@ -214,11 +222,11 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         string fingerprint = await RelatedDirectoryIdentity.ComputeAsync(path, cancellationToken);
         string? expected = finding.TargetSha256 ?? finding.Sha256;
         if (expected is not null && (!Validation.IsHexSha256(expected) || !expected.Equals(fingerprint, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidDataException("目录在扫描后发生变化，请重新扫描：" + path);
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.CreateDirectoryActionAsync.01") + path, sourceText => new InvalidDataException(sourceText));
         return new RemediationAction
         {
             Type = RemediationActionType.QuarantineDirectory,
-            DisplayName = "隔离目录",
+            DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.CreateDirectoryActionAsync.02"),
             Target = path,
             ExpectedSha256 = fingerprint,
             IsKnownMalware = finding.IsKnownMalware,
@@ -235,12 +243,12 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
     private static async Task<string> VerifyFileIdentityAsync(string path, string? expected, CancellationToken cancellationToken)
     {
         if (!Validation.IsHexSha256(expected) || RelatedArtifactReader.IsProtected(path))
-            throw new InvalidDataException($"目标缺少扫描身份或属于受保护范围，请重新扫描：{path}");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.VerifyFileIdentityAsync.01", (path)), sourceText => new InvalidDataException(sourceText));
         await using FileStream stream = RelatedArtifactReader.Open(path);
-        if (stream.Length > 256L * 1024 * 1024) throw new InvalidDataException("处置身份复核超过单文件 256 MiB 上限，请单独复查：" + path);
+        if (stream.Length > 256L * 1024 * 1024) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.VerifyFileIdentityAsync.02") + path, sourceText => new InvalidDataException(sourceText));
         string hash = await Hashing.Sha256StreamAsync(stream, cancellationToken);
         if (!expected!.Equals(hash, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"目标在扫描后发生变化，请重新扫描：{path}");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.VerifyFileIdentityAsync.03", (path)), sourceText => new InvalidDataException(sourceText));
         return hash;
     }
 }

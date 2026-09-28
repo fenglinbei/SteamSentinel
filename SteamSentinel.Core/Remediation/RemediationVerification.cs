@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 
 namespace SteamSentinel.Core.Remediation;
@@ -17,11 +18,11 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
     public async Task ObserveAsync(RemediationAction action, RemediationActionResult result, int pass,
         CancellationToken cancellationToken = default)
     {
-        if (pass is < 1 or > 2 || result.Verifications.Count >= 2) throw new InvalidOperationException("验证最多两轮。");
+        if (pass is < 1 or > 2 || result.Verifications.Count >= 2) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(MessageText.Create("RemediationVerification.ObserveAsync.01"), sourceText => new InvalidOperationException(sourceText));
         if (result.ExecutionStatus is RemediationExecutionStatus.SkippedDependency or RemediationExecutionStatus.ExecutionUnknown)
         {
             result.VerificationStatus = RemediationVerificationStatus.Unknown;
-            result.VerificationSummary = "动作未确认执行；当前状态不作为本次处置成功的依据。";
+            result.VerificationSummaryText = MessageText.Create("RemediationVerification.ObserveAsync.02");
             return;
         }
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -37,7 +38,7 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
             observation = new()
             {
                 Status = RemediationVerificationStatus.Unknown,
-                Message = ex is OperationCanceledException ? "只读验证超时或取消，无法确认状态。" : "只读验证失败：" + ex.Message
+                MessageText = ex is OperationCanceledException ? MessageText.Create("RemediationVerification.ObserveAsync.03") : MessageText.Create("Verification.FailedRead", MessageExceptions.Describe(ex))
             };
         }
         RemediationVerificationStatus status = observation.Status;
@@ -45,16 +46,16 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
         if (pass == 2 && status is RemediationVerificationStatus.ResidualDetected or RemediationVerificationStatus.PendingReboot &&
             result.Verifications.Any(item => IsClear(item.Status)))
             status = RemediationVerificationStatus.Reappeared;
-        string message = Limit(observation.Message, MaximumMessageCharacters);
+        MessageText message = Limit(observation.MessageText, MaximumMessageCharacters);
         if (result.ExecutionStatus == RemediationExecutionStatus.Failed && IsClear(status))
         {
             status = RemediationVerificationStatus.Unknown;
-            message = "动作执行失败；当前未见目标残留不能改写为处置成功。" + message;
+            message = MessageText.Create("Verification.ExecutionFailed", message);
         }
-        if (status == RemediationVerificationStatus.Reappeared) message = "首次验证通过后目标再次出现/状态回退，" + message;
-        result.Verifications.Add(new() { Pass = pass, Status = status, Message = Limit(message, MaximumMessageCharacters) });
+        if (status == RemediationVerificationStatus.Reappeared) message = MessageText.Create("Verification.Reappeared", message);
+        result.Verifications.Add(new() { Pass = pass, Status = status, MessageText = Limit(message, MaximumMessageCharacters) });
         result.VerificationStatus = status;
-        result.VerificationSummary = Limit(message, MaximumMessageCharacters);
+        result.VerificationSummaryText = Limit(message, MaximumMessageCharacters);
     }
 
     public async Task CompleteAsync(RemediationPlan plan, RemediationRunResult result,
@@ -83,23 +84,31 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
         result.VerificationStatus = states.Length == 0 ? RemediationVerificationStatus.NotChecked :
             priorities.Where(states.Contains).Cast<RemediationVerificationStatus?>().FirstOrDefault() ??
             (states.All(state => state == RemediationVerificationStatus.NoResidual) ? RemediationVerificationStatus.NoResidual : RemediationVerificationStatus.Verified);
-        result.VerificationSummary = "仅验证本计划目标，非全机安全结论。" + string.Join("，", states.GroupBy(state => state)
-            .Select(group => $"{Label(group.Key)} {group.Count()} 项"));
+        result.VerificationSummaryText = MessageText.Create("Verification.Summary", MessageText.Join(MessageText.Create("Common.ListSeparator"), states.GroupBy(state => state)
+            .Select(group => MessageText.Create("RemediationVerification.Summarize.02", LabelText(group.Key), group.Count()))));
         result.VerificationCompletedAtUtc = DateTimeOffset.UtcNow;
     }
 
     private static bool IsClear(RemediationVerificationStatus status) =>
         status is RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual;
 
-    public static string Label(RemediationVerificationStatus status) => status switch
+    public static string Label(RemediationVerificationStatus status, System.Globalization.CultureInfo culture)
     {
-        RemediationVerificationStatus.NotChecked => "尚未验证",
-        RemediationVerificationStatus.Verified => "已验证",
-        RemediationVerificationStatus.NoResidual => "未发现目标残留",
-        RemediationVerificationStatus.PendingReboot => "待重启复验",
-        RemediationVerificationStatus.ResidualDetected => "仍有残留",
-        RemediationVerificationStatus.Reappeared => "再次出现",
-        _ => "状态未知"
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return Label(status);
+    }
+
+    public static string Label(RemediationVerificationStatus status) => LabelText(status).Display;
+
+    public static MessageText LabelText(RemediationVerificationStatus status) => status switch
+    {
+        RemediationVerificationStatus.NotChecked => MessageText.Create("RemediationVerification.Label.NotChecked.01"),
+        RemediationVerificationStatus.Verified => MessageText.Create("RemediationVerification.Label.Verified.01"),
+        RemediationVerificationStatus.NoResidual => MessageText.Create("RemediationVerification.Label.NoResidual.01"),
+        RemediationVerificationStatus.PendingReboot => MessageText.Create("RemediationVerification.Label.PendingReboot.01"),
+        RemediationVerificationStatus.ResidualDetected => MessageText.Create("RemediationVerification.Label.ResidualDetected.01"),
+        RemediationVerificationStatus.Reappeared => MessageText.Create("RemediationVerification.Label.Reappeared.01"),
+        _ => MessageText.Create("RemediationVerification.Label.01")
     };
 
     public static string Limit(string? value, int length = MaximumMessageCharacters)
@@ -107,5 +116,11 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
         if (string.IsNullOrEmpty(value)) return string.Empty;
         string limited = value.Length <= length ? value : value[..Math.Max(0, length - 1)] + "…";
         return new string(limited.Select(character => char.IsControl(character) ? ' ' : character).ToArray());
+    }
+
+    public static MessageText Limit(MessageText value, int length = MaximumMessageCharacters)
+    {
+        string limited = Limit(value.OriginalText, length);
+        return limited == value.OriginalText ? value : new(limited);
     }
 }

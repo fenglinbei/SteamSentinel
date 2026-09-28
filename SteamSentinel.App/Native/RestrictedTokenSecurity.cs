@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
@@ -13,12 +14,12 @@ internal static class RestrictedTokenSecurity
         // Only the newly created restricted token is changed. Its user, privileges,
         // restricting SIDs and Low mandatory label are not changed here.
         GetTokenInformation(restrictedToken, 1, IntPtr.Zero, 0, out uint size);
-        if (size == 0 || size > 65536) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取扫描令牌用户。");
+        if (size == 0 || size > 65536) throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedTokenSecurity.ConfigureDefaultObjects.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
         IntPtr userInfo = Marshal.AllocHGlobal((int)size);
         try
         {
             if (!GetTokenInformation(restrictedToken, 1, userInfo, size, out _))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取扫描令牌用户。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedTokenSecurity.ConfigureDefaultObjects.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             IntPtr userSid = Marshal.ReadIntPtr(userInfo);
             SecurityIdentifier user = new(userSid);
             byte[] acl = BuildDefaultDacl(user);
@@ -29,10 +30,10 @@ internal static class RestrictedTokenSecurity
                 Marshal.WriteIntPtr(buffer, buffer + IntPtr.Size);
                 Marshal.Copy(acl, 0, buffer + IntPtr.Size, acl.Length);
                 if (!SetTokenInformation(restrictedToken, 6, buffer, (uint)IntPtr.Size))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "无法配置受限扫描令牌的对象权限。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedTokenSecurity.ConfigureDefaultObjects.03"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
                 Marshal.WriteIntPtr(buffer, userSid); // TOKEN_OWNER, always a SID in this token.
                 if (!SetTokenInformation(restrictedToken, 4, buffer, (uint)IntPtr.Size))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "无法配置受限扫描令牌的对象所有者。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedTokenSecurity.ConfigureDefaultObjects.04"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
             }
             finally { Marshal.FreeHGlobal(buffer); }
         }

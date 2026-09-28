@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 
@@ -12,9 +13,9 @@ public sealed partial class ContentScanner
             node.Signature = ContentSignatureStatus.Unavailable;
             node.Engines.Add(new()
             {
-                Engine = "离线 Authenticode",
+                EngineText = MessageText.Create("Backend.Core.ContentScanner.Signatures.InspectContainerSignature.01"),
                 Status = ContainerStageStatus.Unsupported,
-                Detail = "嵌入 PE 范围未生成独立文件，原生签名接口不能以外层句柄替代此内容身份。"
+                DetailText = MessageText.Create("Backend.Core.ContentScanner.Signatures.InspectContainerSignature.02")
             }); return;
         }
         context.Budget.Check();
@@ -37,12 +38,12 @@ public sealed partial class ContentScanner
         node.SignatureCheckedAtUtc = DateTimeOffset.UtcNow;
         node.Engines.Add(new()
         {
-            Engine = "离线 Authenticode",
+            EngineText = MessageText.Create("Backend.Core.ContentScanner.Signatures.InspectContainerSignature.03"),
             Status = result.Status is SignatureStatus.Error or SignatureStatus.Unavailable
             ? ContainerStageStatus.Failed : ContainerStageStatus.Complete,
             Offset = 0,
             Length = node.Length,
-            Detail = result.Detail + " 原生读取量不可测，另预留一份文件长度计入本轮工作预算。"
+            DetailText = result.DetailText + MessageText.Create("Backend.Core.ContentScanner.Signatures.InspectContainerSignature.04")
         });
         if (result.Status == SignatureStatus.HashMismatch) context.Report.Findings.Add(new()
         {
@@ -50,13 +51,13 @@ public sealed partial class ContentScanner
             Category = FindingCategory.File,
             Severity = FindingSeverity.Medium,
             Score = 40,
-            Title = "深层程序签名摘要不匹配",
-            Description = result.Detail,
+            TitleText = MessageText.Create("Backend.Core.ContentScanner.Signatures.InspectContainerSignature.05"),
+            DescriptionText = result.DetailText,
             Target = node.OriginalTarget,
             ContentPath = node.DisplayPath,
             Sha256 = node.Sha256,
             TargetSha256 = node.OriginalTargetSha256,
-            Evidence = "同一只读文件身份的离线 Authenticode 结果；未执行文件。",
+            EvidenceText = MessageText.Create("Backend.Core.ContentScanner.Signatures.InspectContainerSignature.06"),
             CanRemediate = false,
             SuggestedActions = [SuggestedActionKind.ReviewOnly]
         });

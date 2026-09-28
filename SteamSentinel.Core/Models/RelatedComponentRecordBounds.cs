@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 namespace SteamSentinel.Core.Models;
 
 /// <summary>Bounds derived path lists while retaining the source's original command and identity.</summary>
@@ -5,9 +6,9 @@ internal static class RelatedComponentRecordBounds
 {
     internal const int MaximumSourceTargets = 128;
     internal const int MaximumDetailCharacters = 8192;
-    internal const string SourceTargetLimitDetail = "来源目标列表达到 128 项、路径长度或记录文本上限；原始命令已保留，超出目标未纳入，关联检查未完成。";
-    internal const string OriginalSourceLimitDetail = "原始来源超过记录限额，未完整纳入/未解析；原始命令与工作目录未纳入，未据此解析或增加候选。来源位置或类型过长时仅保留有界标识片段。";
-    internal const string SourceDetailLimitDetail = "来源解析说明超过记录限额，部分说明未纳入；原始命令保持不变。";
+    internal static readonly MessageText SourceTargetLimitDetail = MessageText.Create("Backend.Core.RelatedComponentRecordBounds.SourceTargetLimitDetail.01");
+    internal static readonly MessageText OriginalSourceLimitDetail = MessageText.Create("Backend.Core.RelatedComponentRecordBounds.OriginalSourceLimitDetail.01");
+    internal static readonly MessageText SourceDetailLimitDetail = MessageText.Create("Backend.Core.RelatedComponentRecordBounds.SourceDetailLimitDetail.01");
 
     internal static RelatedSourceObservation PrepareOriginal(RelatedSourceObservation source, out bool omitted, string? targetUserSid = null)
     {
@@ -23,21 +24,21 @@ internal static class RelatedComponentRecordBounds
             Id = Bounded(source.Id, 128, Guid.NewGuid().ToString("N")),
             Kind = Bounded(source.Kind, 128, "Unknown"),
             Scope = scope,
-            Location = Bounded(source.Location, 32768, "<来源位置未取得>"),
+            Location = Bounded(source.Location, 32768, MessageText.Create("Backend.Core.RelatedComponentRecordBounds.PrepareOriginal.01")),
             UserSid = sid,
             RawCommand = "",
             WorkingDirectory = null,
             Status = DiagnosticReadStatus.LimitReached,
-            Detail = OriginalSourceLimitDetail
+            DetailText = OriginalSourceLimitDetail
         };
     }
 
-    internal static bool TryAppendDetail(RelatedSourceObservation source, string detail)
+    internal static bool TryAppendDetail(RelatedSourceObservation source, MessageText detail)
     {
         int maximum = DetailCapacity(source);
-        if ((long)source.Detail.Length + detail.Length + 1 <= maximum) { source.Detail += " " + detail; return true; }
+        if ((long)source.Detail.Length + detail.OriginalText.Length + 1 <= maximum) { source.DetailText += " " + detail; return true; }
         source.Status = DiagnosticReadStatus.LimitReached;
-        source.Detail = LimitedDetail(source.Detail, SourceDetailLimitDetail, maximum);
+        source.DetailText = LimitedDetail(source.DetailText, SourceDetailLimitDetail, maximum);
         return false;
     }
 
@@ -70,7 +71,7 @@ internal static class RelatedComponentRecordBounds
     {
         source.Status = DiagnosticReadStatus.LimitReached;
         if (source.Detail.Contains(SourceTargetLimitDetail, StringComparison.Ordinal)) return;
-        source.Detail = LimitedDetail(source.Detail, SourceTargetLimitDetail, DetailCapacity(source));
+        source.DetailText = LimitedDetail(source.DetailText, SourceTargetLimitDetail, DetailCapacity(source));
     }
 
     private static bool Fits(RelatedSourceObservation source) => Valid(source.Id, 128, true) && Valid(source.Kind, 128, true) &&
@@ -85,10 +86,10 @@ internal static class RelatedComponentRecordBounds
         source.RawCommand.Length + (source.WorkingDirectory?.Length ?? 0) + (source.UserSid?.Length ?? 0);
     private static int DetailCapacity(RelatedSourceObservation source) => (int)Math.Max(0, Math.Min(MaximumDetailCharacters,
         RelatedComponentFragments.MaximumRecordCharacters - FixedCharacters(source) - source.ResolvedTargets.Sum(value => (long)value.Length)));
-    private static string LimitedDetail(string original, string note, int maximum)
+    private static MessageText LimitedDetail(MessageText original, MessageText note, int maximum)
     {
-        if (maximum <= note.Length) return note[..maximum];
-        int keep = Math.Min(original.Length, maximum - note.Length - 1);
-        return original[..keep] + " " + note;
+        if (maximum <= note.OriginalText.Length) return note.Limit(maximum);
+        int keep = Math.Min(original.OriginalText.Length, maximum - note.OriginalText.Length - 1);
+        return original.Limit(keep) + " " + note;
     }
 }

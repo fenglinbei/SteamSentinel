@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Scanning;
 
 namespace SteamSentinel.Core.Inspection;
@@ -14,7 +15,7 @@ public sealed class BoundedReadOnlyStream : Stream
     public BoundedReadOnlyStream(Stream source, long offset, long length, bool leaveOpen = true, ContainerResourceBudget? budget = null)
     {
         if (!source.CanRead || !source.CanSeek || offset < 0 || length < 0 || offset > source.Length || length > source.Length - offset)
-            throw new ArgumentOutOfRangeException(nameof(length), "读取范围不在源流内。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundedReadOnlyStream.Constructor.01"), sourceText => new ArgumentOutOfRangeException(nameof(length), sourceText));
         _source = source; _offset = offset; _length = length; _leaveOpen = leaveOpen; _budget = budget;
     }
     public override bool CanRead => !_disposed;
@@ -32,7 +33,7 @@ public sealed class BoundedReadOnlyStream : Stream
             SeekOrigin.End => checked(_length + offset),
             _ => throw new ArgumentOutOfRangeException(nameof(origin))
         };
-        if (target < 0 || target > _length) throw new IOException("定位超过受限内容范围。");
+        if (target < 0 || target > _length) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundedReadOnlyStream.Seek.01"), sourceText => new IOException(sourceText));
         return _position = target;
     }
     public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -15,7 +16,7 @@ public static class DirectoryFingerprint
         string fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         if (!Directory.Exists(fullRoot)) throw new DirectoryNotFoundException(fullRoot);
         if (Validation.ContainsReparsePoint(fullRoot))
-            throw new UnauthorizedAccessException("目录路径包含重解析点，无法建立安全指纹。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.DirectoryFingerprint.CaptureAsync.01"), sourceText => new UnauthorizedAccessException(sourceText));
 
         string[] entries = EnumerateWithoutFollowingReparsePoints(fullRoot)
             .OrderBy(path => Path.GetRelativePath(fullRoot, path), StringComparer.OrdinalIgnoreCase)
@@ -28,7 +29,7 @@ public static class DirectoryFingerprint
             cancellationToken.ThrowIfCancellationRequested();
             FileAttributes attributes = File.GetAttributes(entry);
             if ((attributes & FileAttributes.ReparsePoint) != 0)
-                throw new UnauthorizedAccessException($"目录树包含重解析点：{entry}");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.DirectoryFingerprint.CaptureAsync.02", (entry)), sourceText => new UnauthorizedAccessException(sourceText));
 
             string relative = Path.GetRelativePath(fullRoot, entry).Replace(Path.DirectorySeparatorChar, '/');
             if ((attributes & FileAttributes.Directory) != 0)
@@ -60,12 +61,12 @@ public static class DirectoryFingerprint
         {
             string directory = pending.Pop();
             if (Validation.ContainsReparsePoint(directory))
-                throw new UnauthorizedAccessException($"目录树包含重解析点：{directory}");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.DirectoryFingerprint.EnumerateWithoutFollowingReparsePoints.01", (directory)), sourceText => new UnauthorizedAccessException(sourceText));
             foreach (string entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
             {
                 FileAttributes attributes = File.GetAttributes(entry);
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
-                    throw new UnauthorizedAccessException($"目录树包含重解析点：{entry}");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.DirectoryFingerprint.EnumerateWithoutFollowingReparsePoints.02", (entry)), sourceText => new UnauthorizedAccessException(sourceText));
                 yield return entry;
                 if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
             }

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -14,8 +15,28 @@ public enum SignatureStatus
     Untrusted,
     Unavailable
 }
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record SignatureResult(SignatureStatus Status, string Detail)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
 
-public sealed record SignatureResult(SignatureStatus Status, string Detail);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public SignatureResult(SignatureStatus Status, SteamSentinel.Core.Reporting.MessageText Detail) : this(Status, Detail.OriginalText)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
 
 public static class AuthenticodeVerifier
 {
@@ -38,7 +59,7 @@ public static class AuthenticodeVerifier
         try
         {
             if (!Path.IsPathFullyQualified(filePath) || fileHandle is { IsInvalid: true } or { IsClosed: true })
-                return new(SignatureStatus.Error, "离线签名检查未开始：文件路径或只读身份句柄不可用。");
+                return new(SignatureStatus.Error, MessageText.Create("Backend.Core.AuthenticodeVerifier.VerifyOffline.01"));
             fileHandle?.DangerousAddRef(ref handleReferenced);
             if (fileHandle is not null)
             {
@@ -48,7 +69,7 @@ public static class AuthenticodeVerifier
                 // its pathname or altering the caller's stream position/sharing protection.
                 signatureHandle = ReOpenFile(fileHandle, 0x80000000, 1, 0x00200000 | 0x08000000);
                 if (signatureHandle.IsInvalid)
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "无法为离线签名建立同身份同步只读句柄。");
+                    throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Backend.Core.AuthenticodeVerifier.VerifyOffline.02"));
             }
             fileInfo = new(filePath) { FileHandle = signatureHandle?.DangerousGetHandle() ?? IntPtr.Zero };
             pointer = Marshal.AllocHGlobal(Marshal.SizeOf<WinTrustFileInfo>());
@@ -61,7 +82,7 @@ public static class AuthenticodeVerifier
         }
         catch (Exception ex)
         {
-            return new(SignatureStatus.Error, "离线签名检查未完成：" + ex.Message + "；不能据此判定篡改或恶意。");
+            return new(SignatureStatus.Error, MessageText.Create("Backend.Core.AuthenticodeVerifier.VerifyOffline.03") + MessageExceptions.Describe(ex) + MessageText.Create("Backend.Core.AuthenticodeVerifier.VerifyOffline.04"));
         }
         finally
         {
@@ -84,14 +105,14 @@ public static class AuthenticodeVerifier
 
     internal static SignatureResult InterpretOfflineResult(int result) => result switch
     {
-        0 => new(SignatureStatus.Valid, "Authenticode 在当前本地信任与缓存条件下验证通过；未联网、未进行吊销检查，不代表文件或加载组件安全。"),
-        unchecked((int)0x800B0100) => new(SignatureStatus.Unsigned, "未取得可验证的 Authenticode 签名；这是离线签名观察，不代表恶意。"),
-        unchecked((int)0x80096010) => new(SignatureStatus.HashMismatch, "Authenticode 文件摘要与签名不匹配；属于完整性异常，无法仅凭此结果确定修改原因或恶意性。"),
+        0 => new(SignatureStatus.Valid, MessageText.Create("Backend.Core.AuthenticodeVerifier.InterpretOfflineResult.01")),
+        unchecked((int)0x800B0100) => new(SignatureStatus.Unsigned, MessageText.Create("Backend.Core.AuthenticodeVerifier.InterpretOfflineResult.02")),
+        unchecked((int)0x80096010) => new(SignatureStatus.HashMismatch, MessageText.Create("Backend.Core.AuthenticodeVerifier.InterpretOfflineResult.03")),
         unchecked((int)0x800B0109) or unchecked((int)0x800B0111) or unchecked((int)0x800B0004) =>
-            new(SignatureStatus.Untrusted, "签名链或签名者不受当前本地策略信任；未联网、未进行吊销检查，不能据此认定文件被修改。"),
+            new(SignatureStatus.Untrusted, MessageText.Create("Backend.Core.AuthenticodeVerifier.InterpretOfflineResult.04")),
         unchecked((int)0x800B010A) or unchecked((int)0x80092013) or unchecked((int)0x800B010E) =>
-            new(SignatureStatus.Unavailable, "离线缓存不足以完成本次信任检查；未联网补取证书或吊销信息。"),
-        _ => new(SignatureStatus.Error, $"离线 Authenticode 未通过或未完成：0x{result:X8}。本地缓存、证书信任、策略或文件格式均可能影响结果；未联网、未进行吊销检查，不能据此判定篡改或恶意。")
+            new(SignatureStatus.Unavailable, MessageText.Create("Backend.Core.AuthenticodeVerifier.InterpretOfflineResult.05")),
+        _ => new(SignatureStatus.Error, MessageText.Create("Backend.Core.AuthenticodeVerifier.InterpretOfflineResult.06", (System.FormattableString.Invariant($"{result:X8}"))))
     };
 
     public static SignatureResult Verify(string filePath)
@@ -106,14 +127,14 @@ public static class AuthenticodeVerifier
             int result = WinVerifyTrust(IntPtr.Zero, GenericVerifyV2, ref data);
             return result switch
             {
-                0 => new SignatureResult(SignatureStatus.Valid, "Authenticode 签名有效。"),
-                unchecked((int)0x800B0100) => new SignatureResult(SignatureStatus.Unsigned, "文件没有可验证的 Authenticode 签名。"),
-                _ => new SignatureResult(SignatureStatus.Invalid, $"签名校验失败：0x{result:X8}")
+                0 => new SignatureResult(SignatureStatus.Valid, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.01")),
+                unchecked((int)0x800B0100) => new SignatureResult(SignatureStatus.Unsigned, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.02")),
+                _ => new SignatureResult(SignatureStatus.Invalid, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.03", (System.FormattableString.Invariant($"{result:X8}"))))
             };
         }
         catch (Exception ex)
         {
-            return new SignatureResult(SignatureStatus.Error, ex.Message);
+            return new SignatureResult(SignatureStatus.Error, MessageExceptions.Describe(ex));
         }
         finally
         {

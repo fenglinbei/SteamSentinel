@@ -1,23 +1,69 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using SteamSentinel.Core.Scanning;
 
 namespace SteamSentinel.Core.Models;
 
-public sealed record WorkerDiagnostics(string Stage, string LastPath, string Operation,
-    long PrivateBytes, long PeakPrivateBytes, long ManagedBytes, DateTimeOffset CapturedAtUtc,
-    string? FailureType = null, string? FailureStack = null, string? LauncherIntegrity = null)
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record WorkerDiagnostics(string Stage, string LastPath, string Operation, long PrivateBytes, long PeakPrivateBytes, long ManagedBytes, DateTimeOffset CapturedAtUtc, string? FailureType = null, string? FailureStack = null, string? LauncherIntegrity = null)
 {
+    public long ValidateDisplayMessages() => (StageMessage?.Validate() ?? 0) + (LastPathMessage?.Validate() ?? 0) + (OperationMessage?.Validate() ?? 0);
     public static WorkerDiagnostics Capture(ScanProgress? progress, Exception? error = null)
     {
         using Process process = Process.GetCurrentProcess();
         string? stack = error?.StackTrace;
-        return new(progress?.Stage ?? "准备内容检查", progress?.CurrentItem ?? "", progress?.Message ?? "",
-            process.PrivateMemorySize64, process.PeakPagedMemorySize64, GC.GetTotalMemory(false), DateTimeOffset.UtcNow,
-            error?.GetType().Name, stack?[..Math.Min(stack.Length, 2048)]);
+        return new(progress is null ? MessageText.Create("Backend.Core.ReportBatch.Capture.01") : new MessageText(progress.Stage, progress.StageMessage),
+            new MessageText(progress?.CurrentItem ?? "", progress?.CurrentItemMessage), new MessageText(progress?.Message ?? "", progress?.DetailMessage), process.PrivateMemorySize64, process.PeakPagedMemorySize64, GC.GetTotalMemory(false), DateTimeOffset.UtcNow, error?.GetType().Name, stack?[..Math.Min(stack.Length, 2048)]);
+    }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? StageMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Stage); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText StageText
+    {
+        get => new(Stage ?? string.Empty, StageMessage);
+        init
+        {
+            Stage = value.OriginalText;
+            StageMessage = value.Message;
+        }
+    }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? LastPathMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, LastPath); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText LastPathText
+    {
+        get => new(LastPath ?? string.Empty, LastPathMessage);
+        init
+        {
+            LastPath = value.OriginalText;
+            LastPathMessage = value.Message;
+        }
+    }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? OperationMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Operation); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText OperationText
+    {
+        get => new(Operation ?? string.Empty, OperationMessage);
+        init
+        {
+            Operation = value.OriginalText;
+            OperationMessage = value.Message;
+        }
+    }
+
+    public WorkerDiagnostics(SteamSentinel.Core.Reporting.MessageText Stage, SteamSentinel.Core.Reporting.MessageText LastPath, SteamSentinel.Core.Reporting.MessageText Operation, long PrivateBytes, long PeakPrivateBytes, long ManagedBytes, DateTimeOffset CapturedAtUtc, string? FailureType = null, string? FailureStack = null, string? LauncherIntegrity = null) : this(Stage.OriginalText, LastPath.OriginalText, Operation.OriginalText, PrivateBytes, PeakPrivateBytes, ManagedBytes, CapturedAtUtc, FailureType, FailureStack, LauncherIntegrity)
+    {
+        StageMessage = Stage.Message;
+        LastPathMessage = LastPath.Message;
+        OperationMessage = Operation.Message;
     }
 }
 
-public sealed record ReportOffsets(int Findings, int Notes, int Roots, int Sources, int Summaries, int Candidates, int Scope);
+public sealed record ReportOffsets(int Findings, int Notes, int Roots, int Sources, int Summaries, int Candidates, int Scope, int Notices = 0);
 public sealed record ReportBatch(int Sequence, ReportOffsets Offsets, ScanReport Data)
 {
     // Indexed replacements, not append-only offsets: a group's count changes after it was sent.
@@ -31,16 +77,19 @@ public sealed record ReportBatch(int Sequence, ReportOffsets Offsets, ScanReport
 public sealed class ReportBatchWriter(Action<ReportBatch> send)
 {
     public const int BatchSize = 64;
-    private int _findings, _notes, _roots, _sources, _summaries, _candidates, _scope;
+    private int _findings, _notes, _roots, _sources, _summaries, _candidates, _scope, _notices;
     private readonly List<CoverageAggregate> _aggregates = [];
     private bool _diagnosticSent;
     private bool _relatedSent;
     private bool _containerEnded;
+    private int _resourceDecisionsSent = -1;
     private readonly List<(Guid Id, int Revision)> _containerVersions = [];
     public int Count { get; private set; }
 
     public void Send(ScanReport report, bool final = false)
     {
+        report.ValidateTextMessages();
+        report.ResourceAudit?.Validate();
         IReadOnlyList<TrustProxyDiagnosticFragment>? diagnostic = final && !_diagnosticSent && report.TrustProxyDiagnostics is not null
             ? TrustProxyDiagnosticFragments.Create(report.TrustProxyDiagnostics) : null;
         IReadOnlyList<RelatedComponentFragment>? related = final && !_relatedSent && report.RelatedComponentDiagnostics is not null
@@ -61,7 +110,7 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
             foreach (ContainerScanFragment fragment in containers)
                 TrustProxyDiagnosticFragments.ValidateWireFrame(new(Count,
                     new(report.Findings.Count, report.CoverageNotes.Count, report.Roots.Count, report.ContentSources.Count,
-                        report.RootSummaries.Count, report.CandidateRoots.Count, report.ScopeNotes.Count), DiagnosticHeader(report, false))
+                        report.RootSummaries.Count, report.CandidateRoots.Count, report.ScopeNotes.Count, report.CoverageNotices.Count), DiagnosticHeader(report, false))
                 { ContainerFragment = fragment });
         }
         // Reject an invalid whole snapshot or oversized envelope before changing ordinary offsets.
@@ -69,10 +118,10 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
             foreach (RelatedComponentFragment fragment in related)
                 TrustProxyDiagnosticFragments.ValidateWireFrame(new(Count,
                     new(report.Findings.Count, report.CoverageNotes.Count, report.Roots.Count, report.ContentSources.Count,
-                        report.RootSummaries.Count, report.CandidateRoots.Count, report.ScopeNotes.Count), DiagnosticHeader(report, fragment.IsFinal))
+                        report.RootSummaries.Count, report.CandidateRoots.Count, report.ScopeNotes.Count, report.CoverageNotices.Count), DiagnosticHeader(report, fragment.IsFinal))
                 { RelatedComponentFragment = fragment });
         // AMSI availability notes can be updated in place. Replay these bounded lists at completion.
-        if (final) _notes = 0;
+        if (final) { _notes = 0; _notices = 0; }
         List<CoverageAggregateUpdate> changes = [];
         for (int i = 0; i < report.CoverageAggregates.Count; i++)
             if (i >= _aggregates.Count || !ReferenceEquals(_aggregates[i], report.CoverageAggregates[i]))
@@ -80,10 +129,14 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
         int changed = 0;
         do
         {
-            ReportOffsets offsets = new(_findings, _notes, _roots, _sources, _summaries, _candidates, _scope);
+            ReportOffsets offsets = new(_findings, _notes, _roots, _sources, _summaries, _candidates, _scope, _notices);
             ScanReport data = new()
             {
                 ProductVersion = report.ProductVersion,
+                StatusSchemaVersion = report.StatusSchemaVersion,
+                ExecutionState = report.ExecutionState,
+                ExecutionReasonCode = report.ExecutionReasonCode,
+                LegacyExecutionStatus = report.LegacyExecutionStatus,
                 BuildIdentity = report.BuildIdentity,
                 ScanId = report.ScanId,
                 Mode = report.Mode,
@@ -93,15 +146,20 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
                 Coverage = report.Coverage,
                 Metrics = report.Metrics,
                 ContentScanSettings = Count == 0 ? report.ContentScanSettings : null,
+                ResourceAudit = final || report.ResourceAudit?.Decisions.Count != _resourceDecisionsSent ? report.ResourceAudit : null,
                 WorkerDiagnostics = report.WorkerDiagnostics,
                 Findings = Take(report.Findings, ref _findings),
                 CoverageNotes = Take(report.CoverageNotes, ref _notes),
+                CoverageNotices = TakeNotices(report.CoverageNotices, ref _notices),
                 Roots = Take(report.Roots, ref _roots),
                 ContentSources = Take(report.ContentSources, ref _sources),
                 RootSummaries = Take(report.RootSummaries, ref _summaries),
                 CandidateRoots = Take(report.CandidateRoots, ref _candidates),
                 ScopeNotes = Take(report.ScopeNotes, ref _scope)
             };
+            data.CoverageNoteMessages = DisplayMessageMap.Slice(report.CoverageNoteMessages, offsets.Notes, data.CoverageNotes.Count);
+            data.ScopeNoteMessages = DisplayMessageMap.Slice(report.ScopeNoteMessages, offsets.Scope, data.ScopeNotes.Count);
+            data.ContentSourceMessages = DisplayMessageMap.Slice(report.ContentSourceMessages, offsets.Sources, data.ContentSources.Count);
             List<CoverageAggregateUpdate> updates = [];
             long characters = 0;
             while (changed < changes.Count && updates.Count < BatchSize)
@@ -114,13 +172,14 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
                 changed++;
             }
             send(new(Count, offsets, data) { CoverageUpdates = updates });
+            _resourceDecisionsSent = report.ResourceAudit?.Decisions.Count ?? -1;
             foreach (CoverageAggregateUpdate update in updates)
                 if (update.Index < _aggregates.Count) _aggregates[update.Index] = update.Value;
                 else _aggregates.Add(update.Value);
             Count++;
         } while (_findings < report.Findings.Count || _notes < report.CoverageNotes.Count || _roots < report.Roots.Count ||
             _sources < report.ContentSources.Count || _summaries < report.RootSummaries.Count ||
-            _candidates < report.CandidateRoots.Count || _scope < report.ScopeNotes.Count || changed < changes.Count);
+            _candidates < report.CandidateRoots.Count || _scope < report.ScopeNotes.Count || _notices < report.CoverageNotices.Count || changed < changes.Count);
         if (diagnostic is not null)
         {
             foreach (TrustProxyDiagnosticFragment fragment in diagnostic)
@@ -128,6 +187,10 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
                 ScanReport data = new()
                 {
                     ProductVersion = report.ProductVersion,
+                    StatusSchemaVersion = report.StatusSchemaVersion,
+                    ExecutionState = report.ExecutionState,
+                    ExecutionReasonCode = report.ExecutionReasonCode,
+                    LegacyExecutionStatus = report.LegacyExecutionStatus,
                     BuildIdentity = report.BuildIdentity,
                     ScanId = report.ScanId,
                     Mode = report.Mode,
@@ -177,6 +240,10 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
     private static ScanReport DiagnosticHeader(ScanReport report, bool complete) => new()
     {
         ProductVersion = report.ProductVersion,
+        StatusSchemaVersion = report.StatusSchemaVersion,
+        ExecutionState = report.ExecutionState,
+        ExecutionReasonCode = report.ExecutionReasonCode,
+        LegacyExecutionStatus = report.LegacyExecutionStatus,
         BuildIdentity = report.BuildIdentity,
         ScanId = report.ScanId,
         Mode = report.Mode,
@@ -188,6 +255,20 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
         WorkerDiagnostics = report.WorkerDiagnostics
     };
 
+    private static List<CoverageNotice> TakeNotices(List<CoverageNotice> values, ref int offset)
+    {
+        List<CoverageNotice> result = [];
+        long characters = 0;
+        while (offset < values.Count && result.Count < BatchSize)
+        {
+            CoverageNotice notice = values[offset];
+            notice.Validate();
+            if (result.Count > 0 && characters + notice.TextCharacters > 32 * 1024) break;
+            result.Add(notice); characters += notice.TextCharacters; offset++;
+        }
+        return result;
+    }
+
     private static List<T> Take<T>(List<T> source, ref int offset)
     {
         List<T> result = source.GetRange(offset, Math.Min(BatchSize, source.Count - offset));
@@ -198,22 +279,34 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
 
 public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.MaximumRecords)
 {
+    public void IncreaseRecordBudget(int records)
+    {
+        if (records < maximumRecords || records > int.MaxValue - 257) throw new InvalidDataException("Invalid report budget increase.");
+        maximumRecords = records;
+    }
     public ScanReport? Report { get; private set; }
     public int Count { get; private set; }
     private TrustProxyDiagnosticAssembly? _diagnostic;
     private RelatedComponentAssembly? _related;
     private ContainerScanAssembly? _container;
+    private long _displayMessageCharacters;
     public bool HasIncompleteTrustProxyDiagnostics => _diagnostic is { IsComplete: false };
     public bool HasIncompleteRelatedComponentDiagnostics => _related is { IsComplete: false };
     public bool HasIncompleteContainers => _container is { IsComplete: false };
     public void Apply(ReportBatch batch)
     {
-        if (batch.Sequence != Count) throw new InvalidDataException("扫描结果批次不连续，不能作为完整结果。");
+        if (batch.Sequence != Count) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.Apply.01"), sourceText => new InvalidDataException(sourceText));
         ScanReport data = batch.Data;
+        data?.ResourceAudit?.Validate();
+        if (data?.ResourceAudit is { } audit && (audit.Decisions.Count > ScanResourceAudit.MaximumDecisions ||
+            Report?.ResourceAudit is { } previous && (audit.Decisions.Count < previous.Decisions.Count ||
+                audit.WaitingMilliseconds < previous.WaitingMilliseconds || audit.PeakParallelFiles < previous.PeakParallelFiles ||
+                previous.Decisions.Where((d, i) => !ScanResourceAudit.SameDecision(d, audit.Decisions[i])).Any())))
+            throw new InvalidDataException("Resource history cannot be rewritten.");
         if (data is null || batch.Offsets is null || batch.CoverageUpdates is null || data.Metrics is null ||
             data.Findings is null || data.CoverageNotes is null || data.Roots is null || data.ContentSources is null ||
-            data.RootSummaries is null || data.CandidateRoots is null || data.ScopeNotes is null || data.CoverageAggregates is null)
-            throw new InvalidDataException("扫描结果批次结构缺失。");
+            data.RootSummaries is null || data.CandidateRoots is null || data.ScopeNotes is null || data.CoverageAggregates is null || data.CoverageNotices is null)
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.Apply.02"), sourceText => new InvalidDataException(sourceText));
         ScanReport target = Report ?? new ScanReport
         {
             ProductVersion = data.ProductVersion,
@@ -224,20 +317,42 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
             RuleSetVersion = data.RuleSetVersion,
             ContentScanSettings = data.ContentScanSettings
         };
-        if (target.ScanId != data.ScanId) throw new InvalidDataException("扫描结果标识不一致。");
+        if (target.ScanId != data.ScanId) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.Apply.03"), sourceText => new InvalidDataException(sourceText));
+        if (data.StatusSchemaVersion is < 0 or > ScanExecution.SchemaVersion || !Enum.IsDefined(data.ExecutionState) ||
+            data.ExecutionReasonCode is not null && !ReasonCodes.IsValid(data.ExecutionReasonCode) || data.LegacyExecutionStatus?.Length > 4096)
+            throw new InvalidDataException("Invalid scan execution metadata.");
         ReportOffsets o = batch.Offsets;
         // Validate every range before mutating, so a rejected batch cannot partially add findings.
         Validate(target.Findings, data.Findings, o.Findings); Validate(target.CoverageNotes, data.CoverageNotes, o.Notes);
+        long displayCharacters = _displayMessageCharacters;
+        foreach (Finding finding in data.Findings)
+        {
+            displayCharacters += finding.ValidateDisplayMessages();
+            finding.SteamUiEvidence?.Validate();
+            if (finding.ReasonCode is not null && !ReasonCodes.IsValid(finding.ReasonCode)) throw new InvalidDataException("Invalid finding reason code.");
+        }
+        foreach (Finding replaced in target.Findings.Skip(o.Findings).Take(data.Findings.Count))
+            displayCharacters -= replaced.ValidateDisplayMessages();
+        displayCharacters += data.ValidateTextMessages();
+        displayCharacters += data.WorkerDiagnostics?.ValidateDisplayMessages() ?? 0;
+        displayCharacters -= DisplayMessageMap.RangeCharacters(target.CoverageNoteMessages, o.Notes, data.CoverageNotes.Count) +
+            DisplayMessageMap.RangeCharacters(target.ScopeNoteMessages, o.Scope, data.ScopeNotes.Count) +
+            DisplayMessageMap.RangeCharacters(target.ContentSourceMessages, o.Sources, data.ContentSources.Count);
+        if (displayCharacters > ScanResourceGuard.MaximumTextCharacters)
+            throw new InvalidDataException("Display message aggregate limit exceeded.");
         Validate(target.Roots, data.Roots, o.Roots); Validate(target.ContentSources, data.ContentSources, o.Sources);
         Validate(target.RootSummaries, data.RootSummaries, o.Summaries); Validate(target.CandidateRoots, data.CandidateRoots, o.Candidates);
         Validate(target.ScopeNotes, data.ScopeNotes, o.Scope);
+        Validate(target.CoverageNotices, data.CoverageNotices, o.Notices);
+        foreach (CoverageNotice notice in data.CoverageNotices)
+        { if (notice is null) throw new InvalidDataException("Missing coverage notice."); notice.Validate(); }
         ValidateCoverage(target.CoverageAggregates, batch.CoverageUpdates);
         if (data.CoverageAggregates.Count != 0)
-            throw new InvalidDataException("覆盖分组必须通过带索引的更新传输。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.Apply.04"), sourceText => new InvalidDataException(sourceText));
         if (data.TrustProxyDiagnostics is not null || data.RelatedComponentDiagnostics is not null || data.Containers is not null)
-            throw new InvalidDataException("诊断数据必须通过有界分片传输。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.Apply.05"), sourceText => new InvalidDataException(sourceText));
         if ((batch.TrustProxyFragment is null ? 0 : 1) + (batch.RelatedComponentFragment is null ? 0 : 1) + (batch.ContainerFragment is null ? 0 : 1) > 1)
-            throw new InvalidDataException("单个批次不得混装两种诊断分片。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.Apply.06"), sourceText => new InvalidDataException(sourceText));
         TrustProxyDiagnosticAssembly? nextDiagnostic = null;
         PreparedTrustProxyFragment? prepared = null;
         if (batch.TrustProxyFragment is not null)
@@ -263,10 +378,15 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
             TrustProxyDiagnosticFragments.ValidateWireFrame(batch);
         }
         // No report, finding, offset, or diagnostic state changes occur before all validation succeeds.
+        _displayMessageCharacters = displayCharacters;
         Put(target.Findings, data.Findings, o.Findings); Put(target.CoverageNotes, data.CoverageNotes, o.Notes);
         Put(target.Roots, data.Roots, o.Roots); Put(target.ContentSources, data.ContentSources, o.Sources);
         Put(target.RootSummaries, data.RootSummaries, o.Summaries); Put(target.CandidateRoots, data.CandidateRoots, o.Candidates);
         Put(target.ScopeNotes, data.ScopeNotes, o.Scope);
+        Put(target.CoverageNotices, data.CoverageNotices, o.Notices);
+        target.CoverageNoteMessages = DisplayMessageMap.Put(target.CoverageNoteMessages, data.CoverageNoteMessages, o.Notes, data.CoverageNotes.Count);
+        target.ScopeNoteMessages = DisplayMessageMap.Put(target.ScopeNoteMessages, data.ScopeNoteMessages, o.Scope, data.ScopeNotes.Count);
+        target.ContentSourceMessages = DisplayMessageMap.Put(target.ContentSourceMessages, data.ContentSourceMessages, o.Sources, data.ContentSources.Count);
         foreach (CoverageAggregateUpdate update in batch.CoverageUpdates)
             if (update.Index < target.CoverageAggregates.Count) target.CoverageAggregates[update.Index] = update.Value;
             else target.CoverageAggregates.Add(update.Value);
@@ -288,8 +408,13 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
         }
         bool incomplete = HasIncompleteTrustProxyDiagnostics || HasIncompleteRelatedComponentDiagnostics || HasIncompleteContainers;
         target.CompletedAtUtc = incomplete ? null : data.CompletedAtUtc;
+        target.StatusSchemaVersion = data.StatusSchemaVersion;
+        target.ExecutionState = (incomplete || data.CompletedAtUtc is null) && data.ExecutionState == ScanExecutionState.Completed ? ScanExecutionState.Running : data.ExecutionState;
+        target.ExecutionReasonCode = data.ExecutionReasonCode;
+        target.LegacyExecutionStatus = data.LegacyExecutionStatus;
         target.Coverage = incomplete || target.Containers is { Complete: false } ? ScanCoverage.Partial : data.Coverage;
         target.WorkerDiagnostics = data.WorkerDiagnostics ?? target.WorkerDiagnostics;
+        if (data.ResourceAudit is not null) target.ResourceAudit = System.Text.Json.JsonSerializer.Deserialize<ScanResourceAudit>(System.Text.Json.JsonSerializer.Serialize(data.ResourceAudit));
         CopyMetrics(data.Metrics, target.Metrics);
         Report = target;
         Count++;
@@ -297,7 +422,7 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
 
     private static void ValidateCoverage(List<CoverageAggregate> target, List<CoverageAggregateUpdate> values)
     {
-        if (values.Count > ReportBatchWriter.BatchSize) throw new InvalidDataException("覆盖更新批次过大。");
+        if (values.Count > ReportBatchWriter.BatchSize) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.ValidateCoverage.01"), sourceText => new InvalidDataException(sourceText));
         int expected = target.Count, previous = -1;
         foreach (CoverageAggregateUpdate update in values)
         {
@@ -307,12 +432,12 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
                 string.IsNullOrWhiteSpace(value.RuleId) || value.RuleId.Length > 128 || value.Count <= 0 ||
                 value.Examples is null || value.Examples.Count > CoverageAggregate.MaximumExamples ||
                 value.Count < value.Examples.Count || value.Examples.Any(p => p is null || p.Length > CoverageAggregate.MaximumExampleCharacters))
-                throw new InvalidDataException("覆盖分组更新超过安全范围。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.ValidateCoverage.02"), sourceText => new InvalidDataException(sourceText));
             if (update.Index < target.Count)
             {
                 CoverageAggregate old = target[update.Index];
                 if (old.RuleId != value.RuleId || !old.Root.Equals(value.Root, StringComparison.OrdinalIgnoreCase) || value.Count < old.Count)
-                    throw new InvalidDataException("覆盖分组标识或累计计数不一致。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.ValidateCoverage.03"), sourceText => new InvalidDataException(sourceText));
             }
             else expected++;
             previous = update.Index;
@@ -323,7 +448,7 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
     {
         if (offset < 0 || offset > target.Count || values.Count > ReportBatchWriter.BatchSize ||
             (long)offset + values.Count > (long)maximumRecords + 256)
-            throw new InvalidDataException("扫描结果批次超过安全范围。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ReportBatch.Validate.01"), sourceText => new InvalidDataException(sourceText));
     }
     private static void Put<T>(List<T> target, List<T> values, int offset)
     {

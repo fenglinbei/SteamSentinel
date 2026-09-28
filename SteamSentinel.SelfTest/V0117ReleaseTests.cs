@@ -25,8 +25,8 @@ internal static partial class Program
         XDocument properties = XDocument.Load(Path.Combine(repository, "Directory.Build.props"));
         string version = properties.Descendants("VersionPrefix").Single().Value;
         string minimumTests = properties.Descendants("SteamSentinelMinimumSelfTests").Single().Value;
-        bool minimumTestsValid = int.TryParse(minimumTests, out int minimumTestCount) && minimumTestCount >= 795;
-        Check("0.2.0 中央版本与机器测试基线唯一", version == "0.2.0" && minimumTestsValid &&
+        bool minimumTestsValid = int.TryParse(minimumTests, out int minimumTestCount) && minimumTestCount >= 1600;
+        Check("0.3.0 中央版本与机器测试基线唯一", version == "0.3.0" && minimumTestsValid &&
             properties.Descendants("AssemblyVersion").Single().Value == "$(VersionPrefix).0" &&
             properties.Descendants("InformationalVersion").Single().Value == "$(VersionPrefix)+$(SteamSentinelBuildId)");
 
@@ -49,9 +49,13 @@ internal static partial class Program
             installer.Contains("MinVersion=10.0.19041", StringComparison.Ordinal) &&
             installer.Contains("OutputBaseFilename={#ArtifactBaseName}-setup", StringComparison.Ordinal) &&
             installer.Contains("SetupIconFile={#PayloadDir}\\SteamSentinel.App\\Assets\\App.ico", StringComparison.Ordinal));
-        Check("0.1.17 安装升级清理旧版平铺文档", installer.Contains("{app}\\COVERAGE-0.1.11.md", StringComparison.Ordinal) &&
-            installer.Contains("{app}\\COVERAGE-0.1.12.md", StringComparison.Ordinal) &&
-            installer.Contains("{app}\\COVERAGE-0.1.16.md", StringComparison.Ordinal));
+        int retirePayload = installer.LastIndexOf("CheckInstallPayload('Retire');", StringComparison.Ordinal);
+        int verifyPayload = installer.LastIndexOf("CheckInstallPayload('Verify');", StringComparison.Ordinal);
+        Check("0.3.0 安装升级先预检并按受控目录退役再核验，不盲删旧文档",
+            !installer.Contains("[InstallDelete]", StringComparison.Ordinal) &&
+            installer.Contains("CheckInstallPayload('Preflight');", StringComparison.Ordinal) &&
+            installer.Contains("#define IncomingManifestHash GetSHA256OfFile(PayloadDir", StringComparison.Ordinal) &&
+            retirePayload >= 0 && verifyPayload > retirePayload);
         int installRunStart = installer.IndexOf("[Run]", StringComparison.Ordinal);
         int uninstallRunStart = installer.IndexOf("[UninstallRun]", StringComparison.Ordinal);
         string installRunSection = installRunStart >= 0 && uninstallRunStart > installRunStart

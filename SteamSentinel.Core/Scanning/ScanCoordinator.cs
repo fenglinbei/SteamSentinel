@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Rules;
 using SteamSentinel.Core.Steam;
@@ -23,9 +24,11 @@ public sealed class ScanCoordinator
     public Task<ScanReport> RunTrustProxyDiagnosticsAsync(IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default) => Task.Run(() =>
     {
-        ScanReport report = new() { Mode = ScanMode.Custom, RuleSetVersion = _rules.Version };
+        ScanReport report = new() { Mode = ScanMode.Custom, RuleSetVersion = _rules.Version, StatusSchemaVersion = ScanExecution.SchemaVersion, ExecutionState = ScanExecutionState.Running };
         new TrustProxyDiagnosticScanner().Collect(report, progress, cancellationToken);
         report.CompletedAtUtc = DateTimeOffset.UtcNow;
+        ScanExecution.Set(report, cancellationToken.IsCancellationRequested ? ScanExecutionState.Cancelled : ScanExecutionState.Completed,
+            cancellationToken.IsCancellationRequested ? ReasonCodes.UserCancelled : null);
         return report;
     });
 
@@ -39,31 +42,41 @@ public sealed class ScanCoordinator
         passwordProvider ??= new NullPasswordProvider();
         ScanReport report = new()
         {
+            StatusSchemaVersion = ScanExecution.SchemaVersion,
+            ExecutionState = ScanExecutionState.Running,
             Mode = options.Mode,
             RuleSetVersion = _rules.Version,
-            ContentScanSettings = options
+            ContentScanSettings = ScanEnhancements.ForExecution(options)
         };
         report.Roots.AddRange(options.CustomRoots);
+        ScanResourceSession.Current?.Bind(report);
+        if (options.MaximumParallelFiles > 1 || options.AllowResourceDecisions)
+        {
+            report.ResourceAudit ??= new();
+            report.ResourceAudit.Preflight ??= ScanResourcePlanner.Capture(Path.GetTempPath());
+        }
         if (options.IncludeSystem || options.IncludeSteam)
-            report.ScopeNotes.Add("系统阶段：" + (options.IncludeSystem ? "检查相关进程、启动项和系统配置。" : "") +
-                (options.IncludeSteam ? "检查 Steam 客户端。" : ""));
+            report.AddScopeNote(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.01") + (options.IncludeSystem ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.02") : (MessageText)"") +
+                (options.IncludeSteam ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.03") : (MessageText)""));
         if (options.IncludeWorkshop || options.IncludeRelatedContent || options.IncludeDownloadLocations || options.CustomRoots.Count > 0 || options.RelatedRoots.Count > 0)
         {
-            report.ScopeNotes.Add(options.Mode == ScanMode.Quick ? Reporting.CoveragePresentation.QuickScope : Reporting.CoveragePresentation.FullScope);
-            report.ScopeNotes.Add(options.Mode == ScanMode.Custom ? "内容阶段只检查所选文件或目录，系统运行状态是否检查以系统阶段说明为准。" :
-                "内容阶段工坊范围：" + (options.IncludeWorkshop ? options.WorkshopAppIds.Count == 0 ? "全部已发现的本地工坊" : string.Join("，", options.WorkshopAppIds) : "未额外检查工坊"));
-            report.ScopeNotes.Add(options.IncludeDownloadLocations ? "已额外包含下载、桌面与临时目录，资料和样本库也可能进入扫描。" : "未额外扫描下载、桌面与临时目录，已识别的关联落点除外。");
-            report.ScopeNotes.Add((options.MaximumContentBytes == long.MaxValue ? "内容阶段不设整轮哈希字节上限，仍保留文件数、内存与解压安全限制" : $"内容阶段文件哈希读取预算：{options.MaximumContentBytes / 1024 / 1024:N0} MiB") +
-                (options.Mode == ScanMode.Quick ? $"，另为小型启动文件保留最多 {options.MaximumQuickPriorityBytes / 1048576m:0.########} MiB。" : "。") +
-                (options.InspectArchives ? "已开启压缩内容检查。" : "未开启压缩内容检查。"));
+            report.AddScopeNote(options.Mode == ScanMode.Quick ? MessageText.Create("Coverage.QuickScope.01") : MessageText.Create("Coverage.FullScope.01"));
+            report.AddScopeNote(options.Mode == ScanMode.Custom ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.04") :
+                MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.05") + (options.IncludeWorkshop ? options.WorkshopAppIds.Count == 0 ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.06") : string.Join("，", options.WorkshopAppIds) : MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.07")));
+            report.AddScopeNote(options.IncludeDownloadLocations ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.08") : MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.09"));
+            report.AddScopeNote((options.MaximumContentBytes == long.MaxValue ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.10") : MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.11", (System.FormattableString.Invariant($"{options.MaximumContentBytes / 1024 / 1024:N0}")))) +
+                (options.Mode == ScanMode.Quick ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.12", (System.FormattableString.Invariant($"{options.MaximumQuickPriorityBytes / 1048576m:0.########}"))) : (MessageText)"。") +
+                (options.InspectArchives ? MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.13") : MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.14")));
         }
-        if (options.WorkshopAppIds.Count > 0) MarkPartial(report, "本次只检查所选工坊 AppID：" + string.Join("，", options.WorkshopAppIds) + "，不能作为全部工坊复扫。");
+        if (options.WorkshopAppIds.Count > 0) MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.15") + string.Join("，", options.WorkshopAppIds) + MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.16"), ReasonCodes.WorkshopSelection);
 
         checkpoint?.Invoke(report);
         string? currentApp = null, currentKind = null;
         int decorated = 0;
         void Checkpoint(ScanReport state)
         {
+            // Read the live resource-session options; do not scan a detached budget copy.
+            state.ContentScanSettings = ScanEnhancements.ForExecution(options);
             foreach (Finding finding in state.Findings.Skip(decorated))
             {
                 finding.AppId ??= currentApp;
@@ -83,9 +96,9 @@ public sealed class ScanCoordinator
             SteamLayout? layout = null;
             if (options.IncludeSteam || options.IncludeWorkshop || options.IncludeRelatedContent)
             {
-                progress?.Report(new ScanProgress("Steam 发现", "Steam Library", 0, null, "解析 Steam 多库布局"));
+                progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.17"), "Steam Library", 0, null, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.18")));
                 layout = _layoutOverride ?? SteamLocator.Discover();
-                foreach (string note in layout.DiscoveryNotes) MarkPartial(report, note);
+                foreach (MessageText note in layout.DiscoveryTexts) MarkPartial(report, note);
                 foreach (string root in layout.SteamRoots.Concat(layout.LibraryRoots).Concat(layout.WorkshopRoots))
                 {
                     if (!report.Roots.Contains(root, StringComparer.OrdinalIgnoreCase)) report.Roots.Add(root);
@@ -100,7 +113,7 @@ public sealed class ScanCoordinator
 
             if (options.IncludeSystem && layout is not null)
             {
-                progress?.Report(new ScanProgress("关联检查", "启动目标与已加载模块", 0, null, "定位实际落点与恶意组件链"));
+                progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.19"), MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.20"), 0, null, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.21")));
                 await new RelatedArtifactScanner(_rules).CollectAsync(layout, report, options, cancellationToken);
             }
 
@@ -108,7 +121,7 @@ public sealed class ScanCoordinator
                 new RelatedComponentPipeline(_rules).CollectInitial(report, options, progress, cancellationToken);
             if (options.RelatedSignaturePaths.Count > 0)
             {
-                if (!_allowRelatedSignatureProbe) MarkPartial(report, "宿主签名检查未运行：此调用没有启用受限扫描组件能力。");
+                if (!_allowRelatedSignatureProbe) MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.22"));
                 else await new RelatedSignatureProbe().CollectAsync(report, options.RelatedSignaturePaths,
                     options.MaximumRelatedSignatureBytes, cancellationToken, Checkpoint);
             }
@@ -124,9 +137,9 @@ public sealed class ScanCoordinator
             foreach (string root in priorityRoots.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!ContentDiscovery.IsLocalSafePath(root)) { MarkPartial(report, $"关联路径无法安全读取：{root}"); continue; }
+                if (!ContentDiscovery.IsLocalSafePath(root)) { MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.23", (root))); continue; }
                 if (!scanned.Add(Path.GetFullPath(root))) continue;
-                report.ContentSources.Add($"优先检查关联落点：{root}");
+                report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.24", (root)));
                 await contentScanner.ScanRootAsync(root, report, options, passwordProvider, progress, cancellationToken);
             }
 
@@ -137,7 +150,15 @@ public sealed class ScanCoordinator
                     if (!scanned.Add(Path.GetFullPath(source.Path))) continue;
                     int first = report.Findings.Count;
                     currentApp = source.AppId; currentKind = source.Kind;
-                    report.ContentSources.Add($"{source.Name}，{source.Kind}：{source.Path}");
+                    report.AddContentSource($"{source.Name}，{source.Kind}：{source.Path}");
+                    if (source.AppId == VPetDiscovery.AppId &&
+                        Path.GetFileName(source.Path).Equals(VPetDiscovery.ModDirectoryName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        List<string> metadataNotes = [];
+                        foreach (string directory in ContentDiscovery.Children(source.Path, true, metadataNotes, 256))
+                            RecordVPetMetadata(report, directory, cancellationToken);
+                        foreach (string note in metadataNotes) MarkPartial(report, note);
+                    }
                     await contentScanner.ScanRootAsync(source.Path, report, options, passwordProvider, progress, cancellationToken,
                         projectType: source.Kind);
                     foreach (Finding finding in report.Findings.Skip(first)) { finding.AppId = source.AppId; finding.SourceKind = source.Kind; }
@@ -151,20 +172,22 @@ public sealed class ScanCoordinator
                 {
                     string appId = ContentDiscovery.WorkshopAppId(root);
                     if (options.WorkshopAppIds.Count > 0 && !options.WorkshopAppIds.Contains(appId)) continue;
-                    List<string> notes = [];
+                    MessageTextCollection notes = [];
                     IReadOnlyList<string> projects = ContentDiscovery.Children(root, true, notes, 40_000);
-                    foreach (string note in notes) MarkPartial(report, note);
+                    foreach (MessageText note in notes.Texts) MarkPartial(report, note);
 
                     foreach (string projectDirectory in projects)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         string id = Path.GetFileName(projectDirectory);
                         if (!ContentDiscovery.IsNumericId(id)) continue;
+                        VPetModMetadata? vpet = appId == VPetDiscovery.AppId
+                            ? RecordVPetMetadata(report, projectDirectory, cancellationToken) : null;
                         WallpaperProject project = appId == "431960" ? SteamLocator.ReadWallpaperProject(projectDirectory)
-                            : new(projectDirectory, id, null, "workshop", null, null, null);
+                            : new(projectDirectory, id, vpet?.Name, vpet is null ? "workshop" : "vpet-mod", null, null, null);
                         report.Metrics.WorkshopItemsVisited++;
-                        progress?.Report(new ScanProgress($"Steam 工坊 {appId}", projectDirectory,
-                            report.Metrics.WorkshopItemsVisited, null, project.Title ?? project.WorkshopId));
+                        progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.25", (appId)), projectDirectory,
+                            report.Metrics.WorkshopItemsVisited, null, (MessageText)(project.Title ?? project.WorkshopId)));
 
                         if (project.ParseError is not null)
                         {
@@ -174,10 +197,10 @@ public sealed class ScanCoordinator
                                 Category = FindingCategory.WallpaperEngine,
                                 Severity = FindingSeverity.Medium,
                                 Score = 35,
-                                Title = "Wallpaper Engine 项目元数据缺失或损坏",
-                                Description = project.ParseError,
+                                TitleText = MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.26"),
+                                DescriptionText = project.ParseErrorText,
                                 Target = projectDirectory,
-                                Evidence = $"Workshop ID: {project.WorkshopId}",
+                                EvidenceText = $"Workshop ID: {project.WorkshopId}",
                                 WorkshopId = project.WorkshopId,
                                 CanRemediate = false,
                                 SuggestedActions = [SuggestedActionKind.ReviewOnly]
@@ -187,7 +210,7 @@ public sealed class ScanCoordinator
                         if (!scanned.Add(Path.GetFullPath(projectDirectory))) continue;
                         currentApp = appId; currentKind = "workshop";
                         int first = report.Findings.Count;
-                        report.ContentSources.Add($"工坊 {appId}/{project.WorkshopId}：{projectDirectory}");
+                        report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.27", (appId), (project.WorkshopId), (projectDirectory)));
                         await contentScanner.ScanRootAsync(projectDirectory, report, options, passwordProvider,
                             progress, cancellationToken, project.WorkshopId, project.Type);
                         foreach (Finding finding in report.Findings.Skip(first)) { finding.AppId = appId; finding.SourceKind = "workshop"; }
@@ -198,7 +221,7 @@ public sealed class ScanCoordinator
                 {
                     currentApp = "431960"; currentKind = "wallpaper-local";
                     if (!Directory.Exists(root)) continue;
-                    List<string> notes = [];
+                    MessageTextCollection notes = [];
                     foreach (string projectDirectory in ContentDiscovery.Children(root, true, notes))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -211,7 +234,7 @@ public sealed class ScanCoordinator
                         await contentScanner.ScanRootAsync(projectDirectory, report, options, passwordProvider,
                             progress, cancellationToken, "local:" + project.WorkshopId, projectType);
                     }
-                    foreach (string note in notes) MarkPartial(report, note);
+                    foreach (MessageText note in notes.Texts) MarkPartial(report, note);
                 }
             }
 
@@ -224,9 +247,9 @@ public sealed class ScanCoordinator
             foreach (string root in related.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!ContentDiscovery.IsLocalSafePath(root)) { MarkPartial(report, $"关联路径无法安全读取：{root}"); continue; }
+                if (!ContentDiscovery.IsLocalSafePath(root)) { MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.28", (root))); continue; }
                 if (!scanned.Add(Path.GetFullPath(root))) continue;
-                report.ContentSources.Add($"关联落点：{root}");
+                report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.29", (root)));
                 await contentScanner.ScanRootAsync(root, report, options, passwordProvider, progress, cancellationToken);
             }
 
@@ -237,7 +260,7 @@ public sealed class ScanCoordinator
                 try { full = Path.GetFullPath(root); }
                 catch
                 {
-                    MarkPartial(report, $"自定义路径无效：{root}");
+                    MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.30", (root)));
                     continue;
                 }
 
@@ -248,12 +271,22 @@ public sealed class ScanCoordinator
         catch (OperationCanceledException)
         {
             report.Coverage = ScanCoverage.Partial;
-            report.CoverageNotes.Add("扫描被用户取消。");
+            ScanExecution.Set(report, ScanExecutionState.Cancelled, ReasonCodes.UserCancelled);
+            ScanExecution.AddNotice(report, ReasonCodes.UserCancelled, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.31"));
+            throw;
+        }
+        catch (Exception ex)
+        {
+            ScanExecution.Set(report, ScanExecutionState.Failed, ReasonCodes.ForFailureType(ex.GetType().Name));
+            report.Coverage = ScanCoverage.Partial;
             throw;
         }
         finally
         {
+            report.ContentScanSettings = ScanEnhancements.ForExecution(options);
+            if (report.ExecutionState == ScanExecutionState.Running) ScanExecution.Set(report, ScanExecutionState.Completed);
             report.CompletedAtUtc = DateTimeOffset.UtcNow;
+            if (report.ResourceAudit is { } audit) audit.Phase = ScanResourcePhase.Finished;
         }
 
         Checkpoint(report);
@@ -266,9 +299,20 @@ public sealed class ScanCoordinator
         return report;
     }
 
-    private static void MarkPartial(ScanReport report, string message)
+    private static VPetModMetadata RecordVPetMetadata(ScanReport report, string directory, CancellationToken token)
+    {
+        VPetModMetadata metadata = VPetDiscovery.ReadMetadata(directory, token);
+        report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RecordVPetMetadata.01", (metadata.ReasonCode), (directory)) +
+            (metadata.Name is null ? (MessageText)"" : MessageText.Create("Backend.Core.ScanCoordinator.RecordVPetMetadata.02", (metadata.Name))) +
+            (metadata.DeclaredWorkshopId is null ? (MessageText)"" : MessageText.Create("Backend.Core.ScanCoordinator.RecordVPetMetadata.03", (metadata.DeclaredWorkshopId))));
+        if (metadata.Status != VPetMetadataStatus.Available)
+            MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RecordVPetMetadata.04", (metadata.ReasonCode), (directory)));
+        return metadata;
+    }
+
+    private static void MarkPartial(ScanReport report, MessageText message, string reason = ReasonCodes.ReadIncomplete)
     {
         report.Coverage = ScanCoverage.Partial;
-        report.CoverageNotes.Add(message);
+        ScanExecution.AddNotice(report, reason, message);
     }
 }

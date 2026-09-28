@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -27,7 +28,7 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
         switch (action.Type)
         {
             case RemediationActionType.RemoveBoundCertificate:
-                if (action.BoundCertificate is null) return State(RemediationVerificationStatus.Unknown, "缺少精确证书目标。");
+                if (action.BoundCertificate is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.01"));
                 BoundCertificateProbe certificate = await Task.Run(() => new BoundCertificateRepair(new WindowsBoundCertificateStore(),
                     () => WindowsIdentity.GetCurrent().User?.Value ?? string.Empty).Probe(action.BoundCertificate), cancellationToken);
                 return State(certificate.Status switch
@@ -35,9 +36,9 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
                     BoundCertificateProbeStatus.Absent => RemediationVerificationStatus.NoResidual,
                     BoundCertificateProbeStatus.Present => RemediationVerificationStatus.ResidualDetected,
                     _ => RemediationVerificationStatus.Unknown
-                }, certificate.Detail);
+                }, certificate.DetailText);
             case RemediationActionType.RestoreBoundProxyConfiguration:
-                if (action.BoundProxy is null) return State(RemediationVerificationStatus.Unknown, "缺少精确代理目标。");
+                if (action.BoundProxy is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.02"));
                 return await Task.Run(() => new BoundProxyRepair(new WindowsBoundProxySettings(),
                     () => WindowsIdentity.GetCurrent().User?.Value ?? string.Empty).Probe(action.BoundProxy), cancellationToken);
             case RemediationActionType.QuarantineFile:
@@ -50,35 +51,35 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
                 return RegistryState(action);
             case RemediationActionType.RemoveScheduledTask:
                 if (!Validation.TryNormalizeScheduledTaskName(action.TaskName ?? action.Target, out string name))
-                    return State(RemediationVerificationStatus.Unknown, "计划任务名无效。");
+                    return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.03"));
                 // Enumerating the parent collection avoids treating every GetTask error as 'missing'.
                 string parent = name[..(name.LastIndexOf('\\') + 1)];
                 string leaf = name[(name.LastIndexOf('\\') + 1)..];
                 return await ScriptStateAsync("$s=New-Object -ComObject Schedule.Service;$s.Connect();$folder=$null;" +
                     "try{$folder=$s.GetFolder(" + Literal(parent) + ")}catch{if($_.Exception.HResult -eq -2147024894 -or $_.Exception.HResult -eq -2147024893){'NoResidual';exit};throw};" +
                     "$tasks=$folder.GetTasks(1);$present=$false;foreach($t in $tasks){if($t.Name -ieq " + Literal(leaf) + "){$present=$true}};" +
-                    "if($present){'ResidualDetected'}else{'NoResidual'}", "任务注册状态", cancellationToken);
+                    "if($present){'ResidualDetected'}else{'NoResidual'}", MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.04"), cancellationToken);
             case RemediationActionType.DisableService:
                 return await ScriptStateAsync("$s=@(Get-CimInstance Win32_Service -ErrorAction Stop|Where-Object {$_.Name -ceq " + Literal(action.Target) + "});" +
                     "if($s.Count -eq 0){'NoResidual'}elseif($s.Count -ne 1){'Unknown'}elseif($s[0].StartMode -ne 'Disabled'){'ResidualDetected'}" +
                     "elseif($s[0].State -eq 'Stopped'){'Verified'}elseif($s[0].State -in @('Running','Stop Pending','Paused')){'PendingReboot'}else{'Unknown'}",
-                    "服务必须已禁用且停止，待重启复验表示仍未停止，需重启复扫，并非已清除", cancellationToken);
+                    MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.05"), cancellationToken);
             case RemediationActionType.RestoreSecurityControls:
                 string? security = await runReadOnlyScript(SecurityStatusScript, cancellationToken);
-                if (security is null) return State(RemediationVerificationStatus.Unknown, "无法读取安全产品实际状态。");
+                if (security is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.06"));
                 using (JsonDocument document = JsonDocument.Parse(security)) return AssessSecurity(document.RootElement);
             case RemediationActionType.RemoveDefenderExclusion:
             case RemediationActionType.RemoveRelatedDefenderExclusion:
                 string kind = action.Type == RemediationActionType.RemoveDefenderExclusion ? "ExclusionPath" : action.ConfigurationKind ?? "";
-                if (kind is not ("ExclusionPath" or "AttackSurfaceReductionOnlyExclusions")) return State(RemediationVerificationStatus.Unknown, "排除项类型未知。");
+                if (kind is not ("ExclusionPath" or "AttackSurfaceReductionOnlyExclusions")) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.07"));
                 return await ScriptStateAsync("$p=Get-MpPreference -ErrorAction Stop;if(@($p." + kind + "|Where-Object {$_ -ieq " + Literal(action.Target) + "}).Count -gt 0){'ResidualDetected'}else{'NoResidual'}",
-                    "Defender 排除项实际状态", cancellationToken);
+                    MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.08"), cancellationToken);
             case RemediationActionType.DisableRelatedFirewallRule:
                 return await ScriptStateAsync("$r=@(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop|Where-Object {$_.Name -ceq " + Literal(action.Target) + "});" +
                     "if($r.Count -eq 0){'NoResidual'}elseif(@($r|Where-Object {[int]$_.Enabled -ne 2}).Count -eq 0){'Verified'}else{'ResidualDetected'}",
-                    "防火墙活动策略规则实际状态", cancellationToken);
+                    MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.09"), cancellationToken);
             case RemediationActionType.AddProgramFirewallBlock:
-                if (incidentId is null) return State(RemediationVerificationStatus.Unknown, "缺少事件身份，无法验证本次创建的防火墙规则。");
+                if (incidentId is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.10"));
                 string ruleName = $"SteamSentinel-{incidentId:N}-{action.ActionId:N}";
                 return await ScriptStateAsync("$r=@(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop|Where-Object {$_.DisplayName -ceq " + Literal(ruleName) + "});" +
                     "if($r.Count -eq 0){'ResidualDetected';exit};if($r.Count -ne 1){'Unknown';exit};$r=$r[0];" +
@@ -92,17 +93,17 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
                     "$d.Count -eq 1 -and [string]$d[0].LocalAddress -eq 'Any' -and [string]$d[0].RemoteAddress -eq 'Any' -and " +
                     "$s.Count -eq 1 -and $s[0].Service -eq 'Any' -and $i.Count -eq 1 -and [string]$i[0].InterfaceAlias -eq 'Any' -and " +
                     "$t.Count -eq 1 -and [string]$t[0].InterfaceType -eq 'Any' -and $f.Count -eq 3 -and @($f|Where-Object {[int]$_.Enabled -ne 1}).Count -eq 0)" +
-                    "{'Verified'}else{'ResidualDetected'}", "本事件的精确程序出站规则及活动防火墙配置，非网络连通性测试", cancellationToken);
+                    "{'Verified'}else{'ResidualDetected'}", MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.11"), cancellationToken);
             case RemediationActionType.BlockKnownDomains:
                 string hosts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "drivers", "etc", "hosts");
                 await using (FileStream stream = new(hosts, FileMode.Open, FileAccess.Read, FileShare.Read, 16 * 1024, FileOptions.Asynchronous))
                 {
-                    if (stream.Length > 1024 * 1024) return State(RemediationVerificationStatus.Unknown, "hosts 超过 1 MiB 只读验证上限。");
+                    if (stream.Length > 1024 * 1024) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.12"));
                     using StreamReader reader = new(stream);
                     return AssessHosts(await reader.ReadToEndAsync(cancellationToken), action.Domains);
                 }
             default:
-                return State(RemediationVerificationStatus.Unknown, "此动作不在只读复验覆盖范围，执行成功不代表已经验证。");
+                return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.13"));
         }
     }
 
@@ -113,25 +114,24 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
         int? Number(string property) => state.TryGetProperty(property, out JsonElement value) && value.TryGetInt32(out int number) ? number : null;
         string? mode = state.TryGetProperty("Mode", out JsonElement modeValue) && modeValue.ValueKind == JsonValueKind.String ? modeValue.GetString() : null;
         if (Bool("FirewallError") == false && Number("FirewallCount") == 3 && Number("FirewallEnabled") is { } enabled && enabled < 3)
-            return State(RemediationVerificationStatus.ResidualDetected, "活动策略仍有防火墙配置未开启。");
+            return State(RemediationVerificationStatus.ResidualDetected, MessageText.Create("WindowsRemediationStateProbe.AssessSecurity.01"));
         if (Bool("DefenderError") != false || Bool("FirewallError") != false || Number("FirewallCount") != 3 ||
             Number("FirewallEnabled") != 3 || Bool("ThirdPartyKnown") != true || Bool("ThirdParty") != false ||
             !string.Equals(mode, "Normal", StringComparison.OrdinalIgnoreCase))
-            return State(RemediationVerificationStatus.Unknown, "安全状态不能完整确认：Defender 模式=" + RemediationVerification.Limit(mode, 80) +
-                "，可能为第三方杀软/被动模式、策略管理或探测不可用，不推断主防护已恢复。");
+            return State(RemediationVerificationStatus.Unknown, MessageText.Create("Verification.SecurityUnknown", RemediationVerification.Limit(mode, 80)));
         if (Bool("Antivirus") == true && Bool("Realtime") == true && Bool("Behavior") == true)
-            return State(RemediationVerificationStatus.Verified, "已读取实际状态：Defender 正常模式、实时/行为防护及三个活动防火墙配置均开启。");
+            return State(RemediationVerificationStatus.Verified, MessageText.Create("WindowsRemediationStateProbe.AssessSecurity.04"));
         if (Bool("RebootRequired") == true)
-            return State(RemediationVerificationStatus.PendingReboot, "Defender 明确报告需要重启，防护恢复尚未验证，重启后复扫。");
+            return State(RemediationVerificationStatus.PendingReboot, MessageText.Create("WindowsRemediationStateProbe.AssessSecurity.05"));
         if (Bool("Antivirus") == false || Bool("Realtime") == false || Bool("Behavior") == false)
-            return State(RemediationVerificationStatus.ResidualDetected, "实际 Defender 防护尚未全部开启，不能以设置请求成功替代验证。");
-        return State(RemediationVerificationStatus.Unknown, "Defender 返回字段不完整，恢复状态未知。");
+            return State(RemediationVerificationStatus.ResidualDetected, MessageText.Create("WindowsRemediationStateProbe.AssessSecurity.06"));
+        return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.AssessSecurity.07"));
     }
 
     public static RemediationVerificationObservation AssessHosts(string contents, IReadOnlyCollection<string> domains)
     {
         if (domains.Count == 0 || domains.Count > 256 || domains.Any(domain => !Validation.IsSafeDomain(domain)) || contents.Length > 1024 * 1024)
-            return State(RemediationVerificationStatus.Unknown, "域名或 hosts 文本超出只读验证范围。");
+            return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.AssessHosts.01"));
         Dictionary<string, HashSet<string>> mappings = domains.Distinct(StringComparer.OrdinalIgnoreCase)
             .ToDictionary(domain => domain, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
         foreach (string line in contents.Split('\n'))
@@ -142,30 +142,30 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
         }
         bool blocked = mappings.Values.All(addresses => addresses.SetEquals(["0.0.0.0", "::"]));
         return State(blocked ? RemediationVerificationStatus.Verified : RemediationVerificationStatus.ResidualDetected,
-            blocked ? "已验证所有指定域名的精确 hosts 双栈阻断行，不代表 DNS 缓存/应用内解析或实际网络连通性已验证。" : "指定域名的 hosts 阻断行缺失或存在冲突映射。");
+            blocked ? MessageText.Create("WindowsRemediationStateProbe.AssessHosts.02") : MessageText.Create("WindowsRemediationStateProbe.AssessHosts.03"));
     }
 
     public static RemediationVerificationObservation AssessProcessIdentity(DateTimeOffset? expected, DateTimeOffset? actual, bool exists)
     {
-        if (!exists) return State(RemediationVerificationStatus.NoResidual, "原 PID 已不存在，不代表不存在其他新进程。");
-        if (expected is null || actual is null) return State(RemediationVerificationStatus.Unknown, "无法确认 PID 启动时间身份。");
+        if (!exists) return State(RemediationVerificationStatus.NoResidual, MessageText.Create("WindowsRemediationStateProbe.AssessProcessIdentity.01"));
+        if (expected is null || actual is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.AssessProcessIdentity.02"));
         return expected.Value.UtcDateTime == actual.Value.UtcDateTime
-            ? State(RemediationVerificationStatus.ResidualDetected, "原 PID 及启动时间对应的进程仍存在。")
-            : State(RemediationVerificationStatus.NoResidual, "PID 已复用，原启动时间对应的进程已停止，未操作复用 PID 的新进程。");
+            ? State(RemediationVerificationStatus.ResidualDetected, MessageText.Create("WindowsRemediationStateProbe.AssessProcessIdentity.03"))
+            : State(RemediationVerificationStatus.NoResidual, MessageText.Create("WindowsRemediationStateProbe.AssessProcessIdentity.04"));
     }
 
     public static RemediationVerificationObservation PathState(string path)
     {
         // File.Exists hides access errors. Only definite file/path-not-found is absence.
-        try { _ = File.GetAttributes(path); return State(RemediationVerificationStatus.ResidualDetected, "隔离原路径仍存在（包括类型被替换的目标）。"); }
-        catch (FileNotFoundException) { return State(RemediationVerificationStatus.NoResidual, "隔离原路径已不存在。"); }
-        catch (DirectoryNotFoundException) { return State(RemediationVerificationStatus.NoResidual, "隔离原路径已不存在。"); }
-        catch (Exception ex) { return State(RemediationVerificationStatus.Unknown, "无法读取隔离原路径状态：" + ex.Message); }
+        try { _ = File.GetAttributes(path); return State(RemediationVerificationStatus.ResidualDetected, MessageText.Create("WindowsRemediationStateProbe.PathState.01")); }
+        catch (FileNotFoundException) { return State(RemediationVerificationStatus.NoResidual, MessageText.Create("WindowsRemediationStateProbe.PathState.02")); }
+        catch (DirectoryNotFoundException) { return State(RemediationVerificationStatus.NoResidual, MessageText.Create("WindowsRemediationStateProbe.PathState.03")); }
+        catch (Exception ex) { return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.PathState.04") + MessageExceptions.Describe(ex)); }
     }
 
     private static RemediationVerificationObservation ProcessState(RemediationAction action)
     {
-        if (action.ProcessId is null) return State(RemediationVerificationStatus.Unknown, "PID 缺失。");
+        if (action.ProcessId is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ProcessState.01"));
         Process process;
         try { process = Process.GetProcessById(action.ProcessId.Value); }
         catch (ArgumentException) { return AssessProcessIdentity(action.ProcessStartedAtUtc, null, false); }
@@ -179,23 +179,23 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
     private static RemediationVerificationObservation RegistryState(RemediationAction action)
     {
         if (action.RegistryHive is not ("HKCU" or "HKLM") || !Enum.TryParse(action.RegistryView, out RegistryView view))
-            return State(RemediationVerificationStatus.Unknown, "Run 注册表定位字段无效。");
+            return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.RegistryState.01"));
         using RegistryKey root = RegistryKey.OpenBaseKey(action.RegistryHive == "HKCU" ? RegistryHive.CurrentUser : RegistryHive.LocalMachine, view);
         using RegistryKey? key = root.OpenSubKey(action.RegistryKey!, writable: false);
         bool present = key?.GetValueNames().Contains(action.RegistryValueName, StringComparer.OrdinalIgnoreCase) == true;
         return State(present ? RemediationVerificationStatus.ResidualDetected : RemediationVerificationStatus.NoResidual,
-            present ? "相同 Run/RunOnce 值名称仍存在（即使数据已变化）。" : "指定 Run/RunOnce 值已不存在。");
+            present ? MessageText.Create("WindowsRemediationStateProbe.RegistryState.02") : MessageText.Create("WindowsRemediationStateProbe.RegistryState.03"));
     }
 
-    private async Task<RemediationVerificationObservation> ScriptStateAsync(string script, string message, CancellationToken token)
+    private async Task<RemediationVerificationObservation> ScriptStateAsync(string script, MessageText message, CancellationToken token)
     {
         string? output = await runReadOnlyScript(script, token);
         RemediationVerificationStatus status = output is not null && Enum.TryParse(output.Trim(), out RemediationVerificationStatus parsed) &&
             Enum.IsDefined(parsed) ? parsed : RemediationVerificationStatus.Unknown;
-        return State(status, message + "：" + RemediationVerification.Label(status));
+        return State(status, MessageText.Create("Common.LabelValue", message, RemediationVerification.LabelText(status)));
     }
     private static string Literal(string text) => "([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" +
         Convert.ToBase64String(Encoding.UTF8.GetBytes(text)) + "')))";
-    private static RemediationVerificationObservation State(RemediationVerificationStatus status, string message) =>
-        new() { Status = status, Message = RemediationVerification.Limit(message) };
+    private static RemediationVerificationObservation State(RemediationVerificationStatus status, MessageText message) =>
+        new() { Status = status, MessageText = RemediationVerification.Limit(message) };
 }

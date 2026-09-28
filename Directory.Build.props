@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <SteamSentinelRuntimeFrameworkVersion>10.0.12</SteamSentinelRuntimeFrameworkVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
@@ -20,8 +21,8 @@
       safe local fallback is deliberately unattributed rather than pretending
       that an arbitrary working tree came from a particular commit.
     -->
-    <VersionPrefix>0.2.0</VersionPrefix>
-    <SteamSentinelMinimumSelfTests>1600</SteamSentinelMinimumSelfTests>
+    <VersionPrefix>0.3.0</VersionPrefix>
+    <SteamSentinelMinimumSelfTests>2358</SteamSentinelMinimumSelfTests>
     <Version>$(VersionPrefix)</Version>
     <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
     <FileVersion>$(VersionPrefix).0</FileVersion>
@@ -38,4 +39,20 @@
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/fenglinbei/SteamSentinel</RepositoryUrl>
   </PropertyGroup>
+  <!-- A global RuntimeFrameworkVersion also overrides Windows SDK references.
+       Pin only the .NET runtime families and apphost after implicit SDK items
+       are available; keep Windows SDK and targeting-pack versions unchanged. -->
+  <Target Name="PinSteamSentinelSelfContainedRuntime" BeforeTargets="ProcessFrameworkReferences"
+          Condition="'$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <KnownFrameworkReference Update="Microsoft.NETCore.App;Microsoft.WindowsDesktop.App;Microsoft.WindowsDesktop.App.WPF;Microsoft.WindowsDesktop.App.WindowsForms"
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'">
+        <DefaultRuntimeFrameworkVersion>$(SteamSentinelRuntimeFrameworkVersion)</DefaultRuntimeFrameworkVersion>
+        <LatestRuntimeFrameworkVersion>$(SteamSentinelRuntimeFrameworkVersion)</LatestRuntimeFrameworkVersion>
+      </KnownFrameworkReference>
+      <KnownAppHostPack Update="Microsoft.NETCore.App" Condition="'%(KnownAppHostPack.TargetFramework)' == 'net10.0'">
+        <AppHostPackVersion>$(SteamSentinelRuntimeFrameworkVersion)</AppHostPackVersion>
+      </KnownAppHostPack>
+    </ItemGroup>
+  </Target>
 </Project>

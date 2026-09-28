@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -44,11 +45,11 @@ internal static class MsiDatabaseReader
             if (!names.Contains(table))
             {
                 result.Tables.Add(new(table, discovery.State == MsiReadState.Complete ? MsiReadState.Absent : MsiReadState.NotChecked, 0,
-                    discovery.State == MsiReadState.Complete ? "表不存在" : "表目录未完整读取，不能确认不存在"));
+                    discovery.State == MsiReadState.Complete ? MessageText.Create("Backend.Core.MsiDatabaseReader.Read.01") : MessageText.Create("Backend.Core.MsiDatabaseReader.Read.02")));
                 return;
             }
             if (totalRows >= MaximumTotalRows || textBudgetExhausted || textCharacters >= MaximumTextCharacters)
-            { result.Tables.Add(new(table, MsiReadState.NotChecked, 0, "安装表共享读取预算已耗尽")); return; }
+            { result.Tables.Add(new(table, MsiReadState.NotChecked, 0, MessageText.Create("Backend.Core.MsiDatabaseReader.Read.03"))); return; }
             result.Tables.Add(ReadTable(table, $"SELECT {projection} FROM `{table}`", columns, add));
         }
 
@@ -57,23 +58,23 @@ internal static class MsiDatabaseReader
             token.ThrowIfCancellationRequested();
             checkpoint?.Invoke();
             uint code = MsiDatabaseOpenView(database, sql, out uint view);
-            if (code != 0) return new(table, MsiReadState.Failed, 0, $"固定 SELECT 打开失败，错误 {code}");
+            if (code != 0) return new(table, MsiReadState.Failed, 0, MessageText.Create("Backend.Core.MsiDatabaseReader.Read.04", (code)));
             int rows = 0;
             try
             {
                 code = MsiViewExecute(view, 0);
-                if (code != 0) return new(table, MsiReadState.Failed, 0, $"固定 SELECT 读取失败，错误 {code}");
+                if (code != 0) return new(table, MsiReadState.Failed, 0, MessageText.Create("Backend.Core.MsiDatabaseReader.Read.05", (code)));
                 while (true)
                 {
                     token.ThrowIfCancellationRequested();
                     checkpoint?.Invoke();
                     code = MsiViewFetch(view, out uint record);
                     if (code == 259) return new(table, MsiReadState.Complete, rows);
-                    if (code != 0) return new(table, MsiReadState.Failed, rows, $"表行读取失败，错误 {code}");
+                    if (code != 0) return new(table, MsiReadState.Failed, rows, MessageText.Create("Backend.Core.MsiDatabaseReader.Read.06", (code)));
                     try
                     {
                         if (rows >= MaximumTableRows || totalRows >= MaximumTotalRows)
-                            return new(table, MsiReadState.LimitReached, rows, "表行数或共享行数达到上限");
+                            return new(table, MsiReadState.LimitReached, rows, MessageText.Create("Backend.Core.MsiDatabaseReader.Read.07"));
                         string[] fields = new string[columns];
                         for (int i = 0; i < columns; i++)
                         {
@@ -81,14 +82,14 @@ internal static class MsiDatabaseReader
                             if (textCharacters + fields[i].Length > MaximumTextCharacters)
                             {
                                 textBudgetExhausted = true;
-                                return new(table, MsiReadState.LimitReached, rows, "安装表共享文本预算达到上限");
+                                return new(table, MsiReadState.LimitReached, rows, MessageText.Create("Backend.Core.MsiDatabaseReader.Read.08"));
                             }
                             textCharacters += fields[i].Length;
                         }
                         add(fields); rows++; totalRows++;
                     }
-                    catch (InvalidDataException ex) { return new(table, MsiReadState.LimitReached, rows, ex.Message); }
-                    catch (IOException ex) { return new(table, MsiReadState.Failed, rows, ex.Message); }
+                    catch (InvalidDataException ex) { return new(table, MsiReadState.LimitReached, rows, MessageExceptions.Describe(ex)); }
+                    catch (IOException ex) { return new(table, MsiReadState.Failed, rows, MessageExceptions.Describe(ex)); }
                     finally { MsiCloseHandle(record); }
                 }
             }
@@ -103,9 +104,9 @@ internal static class MsiDatabaseReader
         uint length = MaximumFieldCharacters + 1; // Input capacity includes the NUL terminator.
         StringBuilder buffer = new(MaximumFieldCharacters + 1);
         uint code = MsiRecordGetString(record, field, buffer, ref length);
-        if (code == 234) throw new InvalidDataException("安装数据库字段超过读取上限");
-        if (code != 0) throw new IOException($"安装数据库字段读取失败，错误 {code}");
-        if (length > MaximumFieldCharacters) throw new InvalidDataException("安装数据库字段超过读取上限");
+        if (code == 234) throw MessageExceptions.Create(MessageText.Create("Backend.Core.MsiDatabaseReader.ReadField.01"), sourceText => new InvalidDataException(sourceText));
+        if (code != 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.MsiDatabaseReader.ReadField.02", (code)), sourceText => new IOException(sourceText));
+        if (length > MaximumFieldCharacters) throw MessageExceptions.Create(MessageText.Create("Backend.Core.MsiDatabaseReader.ReadField.03"), sourceText => new InvalidDataException(sourceText));
         return buffer.ToString();
     }
 

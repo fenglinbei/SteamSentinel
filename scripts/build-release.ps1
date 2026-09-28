@@ -50,11 +50,19 @@ function Assert-PreviewSourcePathAllowed {
         $normalized -match '^SteamSentinel\.(App|ArchiveWorker|Broker|Core|SelfTest)/.+\.cs$' -or
         $normalized -match '^SteamSentinel\.(App|ArchiveWorker|Broker|Core|SelfTest)/[^/]+\.csproj$' -or
         $normalized -match '^SteamSentinel\.(App|ArchiveWorker|Broker|Core|SelfTest)/packages\.lock\.json$' -or
+        $normalized -eq 'SteamSentinel.SelfTest/app.manifest' -or
+        $normalized -match '^SteamSentinel.Core/Reporting/(PresentationMessages|StatusMessages)(\.zh-Hans)?\.resx$' -or
         $normalized -eq 'Directory.Build.props' -or
         $normalized -eq 'global.json' -or
         $normalized -eq '.editorconfig' -or
         $normalized -match '^docs/[^/]+\.md$' -or
         $normalized -match '^scripts/[^/]+\.ps1$' -or
+        $normalized -eq 'scripts/check_localization_resources.py' -or
+        $normalized -eq 'installer/ChineseSimplified.isl' -or
+        $normalized -eq 'installer/Initialize-MachineState.ps1' -or
+        $normalized -eq 'installer/MachineStateBootstrap.cs' -or
+        $normalized -eq 'installer/Maintain-InstallPayload.ps1' -or
+        $normalized -eq 'installer/PayloadMaintenance.cs' -or
         $normalized -match '^\.github/workflows/[^/]+\.(yml|yaml)$'
     if (-not $allowed) {
         throw "Dirty Preview refuses added file outside the source allowlist: $Path"
@@ -94,18 +102,97 @@ function Write-Utf8Lines {
     [IO.File]::WriteAllLines($Path, $Lines, [Text.UTF8Encoding]::new($false))
 }
 
+function Assert-SelfContainedRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string[]]$Applications,
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion
+    )
+
+    $configurations = @()
+    $needsWpf = $false
+    $needsWindowsForms = $false
+    foreach ($application in $Applications) {
+        $executable = Join-Path $Root ($application + '.exe')
+        $configPath = Join-Path $Root ($application + '.runtimeconfig.json')
+        if (-not (Test-Path -LiteralPath $executable -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+            throw "Native apphost or runtime configuration is missing: $application"
+        }
+        $options = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json).runtimeOptions
+        $expectedNames = @('Microsoft.NETCore.App')
+        if ($application -ne 'SteamSentinel.ArchiveWorker') {
+            $expectedNames += 'Microsoft.WindowsDesktop.App'
+            if ($application -eq 'SteamSentinel.Broker') { $needsWindowsForms = $true }
+            else { $needsWpf = $true }
+        }
+        $included = @($options.includedFrameworks)
+        if ($null -ne $options.framework -or $null -ne $options.frameworks -or
+            $included.Count -ne $expectedNames.Count) {
+            throw "Runtime configuration is not the expected self-contained deployment: $application"
+        }
+        foreach ($name in $expectedNames) {
+            $matches = @($included | Where-Object name -eq $name)
+            if ($matches.Count -ne 1 -or $matches[0].version -ne $ExpectedVersion) {
+                throw "Unexpected bundled framework for ${application}: $name must be $ExpectedVersion."
+            }
+        }
+        $configurations += [ordered]@{
+            application = $application
+            includedFrameworks = @($included | ForEach-Object { [ordered]@{ name = $_.name; version = $_.version } })
+        }
+    }
+
+    $runtimeFiles = @('System.Private.CoreLib.dll', 'hostfxr.dll', 'hostpolicy.dll')
+    if ($needsWpf) { $runtimeFiles += 'PresentationFramework.dll' }
+    if ($needsWindowsForms) { $runtimeFiles += 'System.Windows.Forms.dll' }
+    $versionPattern = '^' + [Regex]::Escape($ExpectedVersion) + '($|[ +\-])'
+    $binaries = @()
+    foreach ($relative in $runtimeFiles) {
+        $file = Get-Item -LiteralPath (Join-Path $Root $relative)
+        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            $file.VersionInfo.ProductVersion -notmatch $versionPattern) {
+            throw "Bundled runtime file has an unexpected servicing version: $relative"
+        }
+        $binaries += [ordered]@{
+            path = $relative
+            productVersion = $file.VersionInfo.ProductVersion
+            fileVersion = $file.VersionInfo.FileVersion
+            sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        }
+    }
+    # coreclr uses a native build number, not the semantic servicing version.
+    $coreClr = Get-Item -LiteralPath (Join-Path $Root 'coreclr.dll')
+    $coreLib = Get-Item -LiteralPath (Join-Path $Root 'System.Private.CoreLib.dll')
+    $nativeVersion = ($coreClr.VersionInfo.FileVersion -split ' ')[0].Replace(',', '.')
+    if ($coreClr.PSIsContainer -or ($coreClr.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        $nativeVersion -ne $coreLib.VersionInfo.FileVersion) {
+        throw 'Bundled coreclr and System.Private.CoreLib build versions differ.'
+    }
+    $binaries += [ordered]@{
+        path = 'coreclr.dll'
+        productVersion = $coreClr.VersionInfo.ProductVersion
+        fileVersion = $coreClr.VersionInfo.FileVersion
+        sha256 = (Get-FileHash -LiteralPath $coreClr.FullName -Algorithm SHA256).Hash
+    }
+    return [ordered]@{ expectedVersion = $ExpectedVersion; configurations = $configurations; binaries = $binaries }
+}
+
 $solutionRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $workspaceRoot = (Resolve-Path -LiteralPath (Join-Path $solutionRoot '..\..')).Path
 $propsPath = Join-Path $solutionRoot 'Directory.Build.props'
-[xml]$props = Get-Content -LiteralPath $propsPath -Raw
+[xml]$props = Get-Content -LiteralPath $propsPath -Raw -Encoding UTF8
 $version = [string]$props.Project.PropertyGroup.VersionPrefix
+$runtimeFrameworkVersion = [string]$props.Project.PropertyGroup.SteamSentinelRuntimeFrameworkVersion
+$targetFramework = [string]$props.Project.PropertyGroup.TargetFramework
 $minimumSelfTests = [int]$props.Project.PropertyGroup.SteamSentinelMinimumSelfTests
 if ($version -notmatch '^\d+\.\d+\.\d+$') {
     throw "Directory.Build.props has an invalid VersionPrefix: $version"
 }
-if ($minimumSelfTests -lt 1) { throw 'Directory.Build.props has an invalid SteamSentinelMinimumSelfTests value.' }
+if ($runtimeFrameworkVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'A fixed servicing runtime version is required.' }
+if ($minimumSelfTests -lt 2348) { throw 'SteamSentinelMinimumSelfTests cannot be below the 0.3.0 acceptance baseline of 2348.' }
 
-$expectedSdk = [string]((Get-Content -LiteralPath (Join-Path $solutionRoot 'global.json') -Raw | ConvertFrom-Json).sdk.version)
+$expectedSdk = [string]((Get-Content -LiteralPath (Join-Path $solutionRoot 'global.json') -Raw -Encoding UTF8 | ConvertFrom-Json).sdk.version)
 $actualSdk = (& dotnet --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $actualSdk -ne $expectedSdk) {
     throw "The pinned .NET SDK is required (expected $expectedSdk; actual $actualSdk)."
@@ -218,6 +305,8 @@ try {
     $checksumPath = Join-Path $stageRoot "SteamSentinel-$artifactVersion-RELEASE-SHA256.txt"
     $metadataPath = Join-Path $stageRoot 'RELEASE-METADATA.json'
     $selfTestPath = Join-Path $stageRoot 'SELFTEST-RESULTS.json'
+    $installerTestPath = Join-Path $stageRoot 'INSTALLER-MAINTENANCE-RESULTS.json'
+    $machineStateTestPath = Join-Path $stageRoot 'INSTALLER-MACHINE-STATE-RESULTS.json'
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
     & git -C $solutionRoot archive --format=zip --prefix=SteamSentinel/ -o $sourceArchivePath $sourceTree
@@ -232,9 +321,73 @@ try {
         throw 'The source archive did not contain the expected repository root.'
     }
 
-    [xml]$snapshotProps = Get-Content -LiteralPath (Join-Path $snapshotRoot 'Directory.Build.props') -Raw
-    if ([string]$snapshotProps.Project.PropertyGroup.VersionPrefix -ne $version) {
-        throw 'The source snapshot version differs from the version used to name artifacts.'
+    [xml]$snapshotProps = Get-Content -LiteralPath (Join-Path $snapshotRoot 'Directory.Build.props') -Raw -Encoding UTF8
+    if ([string]$snapshotProps.Project.PropertyGroup.VersionPrefix -ne $version -or
+        [string]$snapshotProps.Project.PropertyGroup.SteamSentinelRuntimeFrameworkVersion -ne $runtimeFrameworkVersion -or
+        [string]$snapshotProps.Project.PropertyGroup.TargetFramework -ne $targetFramework) {
+        throw 'The source snapshot product/runtime versions differ from the selected build inputs.'
+    }
+
+    # These installer tests exercise real Windows handle/ACL semantics on inert, temporary
+    # fixtures. They require an explicit administrator token; never substitute skipped tests.
+    $buildPrincipal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $buildPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Run the release build elevated: mandatory installer file/ACL tests require an administrator token.'
+    }
+    $installerTestScript = Join-Path $snapshotRoot 'scripts\Test-InstallerPayloadMaintenance.ps1'
+    $installerTestSource = Join-Path $snapshotRoot 'installer\PayloadMaintenance.cs'
+    $installerTestScriptHash = (Get-FileHash -LiteralPath $installerTestScript -Algorithm SHA256).Hash
+    $installerTestSourceHash = (Get-FileHash -LiteralPath $installerTestSource -Algorithm SHA256).Hash
+    $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    & $windowsPowerShell '-NoLogo' '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' `
+        '-File' $installerTestScript '-ResultsPath' $installerTestPath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installerTestPath -PathType Leaf)) {
+        throw "Mandatory installer maintenance tests failed (exit=$LASTEXITCODE)."
+    }
+    $installerTests = Get-Content -LiteralPath $installerTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($field in @('schema','passed','failed','skipped','elapsedMs','sourceSha256','testScriptSha256',
+        'powershell','productionRootTouched','vmOperated','testOnlyCompilationSymbol','tests')) {
+        if ($null -eq $installerTests.PSObject.Properties[$field]) { throw "Installer test result missing $field." }
+    }
+    if ($installerTests.schema -ne 'SteamSentinel.InstallerPayloadMaintenanceTests/1' -or
+        [int]$installerTests.passed -lt 34 -or [int]$installerTests.failed -ne 0 -or [int]$installerTests.skipped -ne 0 -or
+        [long]$installerTests.elapsedMs -lt 0 -or @($installerTests.tests).Count -ne [int]$installerTests.passed -or
+        @($installerTests.tests | Where-Object { $_.passed -ne $true }).Count -ne 0 -or
+        $installerTests.sourceSha256 -ne $installerTestSourceHash -or $installerTests.testScriptSha256 -ne $installerTestScriptHash -or
+        $installerTests.powershell -notlike '5.1.*' -or $installerTests.productionRootTouched -ne $false -or
+        $installerTests.vmOperated -ne $false -or $installerTests.testOnlyCompilationSymbol -ne 'STEAMSENTINEL_INSTALLER_TESTS' -or
+        (Get-FileHash -LiteralPath $installerTestSource -Algorithm SHA256).Hash -ne $installerTestSourceHash -or
+        (Get-FileHash -LiteralPath $installerTestScript -Algorithm SHA256).Hash -ne $installerTestScriptHash) {
+        throw 'Installer maintenance tests did not satisfy the zero-failure, zero-skip, source-bound gate.'
+    }
+
+    # Machine-state migration is a separate gate: never infer permission safety
+    # from payload-retirement tests or from the application's self-test count.
+    $machineStateTestScript = Join-Path $snapshotRoot 'scripts\Test-InstallerMachineState.ps1'
+    $machineStateTestSource = Join-Path $snapshotRoot 'installer\MachineStateBootstrap.cs'
+    $machineStateTestScriptHash = (Get-FileHash -LiteralPath $machineStateTestScript -Algorithm SHA256).Hash
+    $machineStateTestSourceHash = (Get-FileHash -LiteralPath $machineStateTestSource -Algorithm SHA256).Hash
+    & $windowsPowerShell '-NoLogo' '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' `
+        '-File' $machineStateTestScript '-ResultsPath' $machineStateTestPath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $machineStateTestPath -PathType Leaf)) {
+        throw "Mandatory installer machine-state tests failed (exit=$LASTEXITCODE)."
+    }
+    $machineStateTests = Get-Content -LiteralPath $machineStateTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($field in @('schema','passed','failed','skipped','elapsedMs','sourceSha256','testScriptSha256',
+        'powershell','productionRootTouched','productionRegistryTouched','vmOperated','testOnlyCompilationSymbol','tests')) {
+        if ($null -eq $machineStateTests.PSObject.Properties[$field]) { throw "Machine-state test result missing $field." }
+    }
+    if ($machineStateTests.schema -ne 'SteamSentinel.InstallerMachineStateTests/1' -or
+        [int]$machineStateTests.passed -lt 43 -or [int]$machineStateTests.failed -ne 0 -or [int]$machineStateTests.skipped -ne 0 -or
+        [long]$machineStateTests.elapsedMs -lt 0 -or @($machineStateTests.tests).Count -ne [int]$machineStateTests.passed -or
+        @($machineStateTests.tests | Where-Object { $_.passed -ne $true }).Count -ne 0 -or
+        $machineStateTests.sourceSha256 -ne $machineStateTestSourceHash -or $machineStateTests.testScriptSha256 -ne $machineStateTestScriptHash -or
+        $machineStateTests.powershell -notlike '5.1.*' -or $machineStateTests.productionRootTouched -ne $false -or
+        $machineStateTests.productionRegistryTouched -ne $false -or $machineStateTests.vmOperated -ne $false -or
+        $machineStateTests.testOnlyCompilationSymbol -ne 'STEAMSENTINEL_INSTALLER_TESTS' -or
+        (Get-FileHash -LiteralPath $machineStateTestSource -Algorithm SHA256).Hash -ne $machineStateTestSourceHash -or
+        (Get-FileHash -LiteralPath $machineStateTestScript -Algorithm SHA256).Hash -ne $machineStateTestScriptHash) {
+        throw 'Machine-state tests did not satisfy the zero-failure, zero-skip, source-bound gate.'
     }
 
     $signingProfile = Get-ReleaseSigningProfile -Thumbprint $SigningThumbprint `
@@ -244,20 +397,53 @@ try {
         "-p:SteamSentinelSourceRevision=$commit",
         "-p:SteamSentinelBuildChannel=$buildChannel",
         "-p:SteamSentinelBuildId=$buildId",
-        '-p:ContinuousIntegrationBuild=true'
+        '-p:ContinuousIntegrationBuild=true',
+        '-p:SelfContained=true',
+        '-p:AppendRuntimeIdentifierToOutputPath=false',
+        '-p:UseAppHost=true'
     )
     $nuget = 'https://api.nuget.org/v3/index.json'
     Invoke-DotNet restore $solution '--locked-mode' '--source' $nuget '-r' 'win-x64' `
         '-p:NuGetAudit=true' '-p:NuGetAuditMode=all' `
         @msbuildProperties
-    Invoke-DotNet build $solution '-c' 'Release' '--no-restore' @msbuildProperties
-    Invoke-DotNet run '--project' (Join-Path $snapshotRoot 'SteamSentinel.SelfTest\SteamSentinel.SelfTest.csproj') `
-        '-c' 'Release' '--no-build' '--' '--results' $selfTestPath
+    $runtimePackRequests = @()
+    foreach ($project in @('SteamSentinel.App', 'SteamSentinel.ArchiveWorker', 'SteamSentinel.Broker', 'SteamSentinel.SelfTest')) {
+        $assets = Get-Content -LiteralPath (Join-Path $snapshotRoot "$project\obj\project.assets.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($framework in $assets.project.frameworks.PSObject.Properties) {
+            foreach ($dependency in @($framework.Value.downloadDependencies)) {
+                if ($null -eq $dependency -or
+                    $dependency.name -notmatch '^Microsoft\.(NETCore|WindowsDesktop)\.App\.(Runtime|Host)\.win-x64$') { continue }
+                if ($dependency.version -ne "[$runtimeFrameworkVersion, $runtimeFrameworkVersion]") {
+                    throw "Restore requested an unexpected runtime pack: $project / $($dependency.name) / $($dependency.version)"
+                }
+                $runtimePackRequests += [ordered]@{ project = $project; name = $dependency.name; version = $dependency.version }
+            }
+        }
+    }
+    # Preserve the established test/Worker relative paths while giving every
+    # executable a private runtime, without changing the host shared runtime.
+    # The SDK rejects solution-level RID builds. SelfTest references the full
+    # product graph (including App's Worker reference), so build that graph.
+    Invoke-DotNet build (Join-Path $snapshotRoot 'SteamSentinel.SelfTest\SteamSentinel.SelfTest.csproj') `
+        '-c' 'Release' '-r' 'win-x64' '--no-restore' @msbuildProperties
+    $testedRuntimes = @()
+    foreach ($entry in @(
+        @('SteamSentinel.App', 'SteamSentinel'),
+        @('SteamSentinel.ArchiveWorker', 'SteamSentinel.ArchiveWorker'),
+        @('SteamSentinel.Broker', 'SteamSentinel.Broker'),
+        @('SteamSentinel.SelfTest', 'SteamSentinel.SelfTest')
+    )) {
+        $testBin = Join-Path $snapshotRoot ($entry[0] + '\bin\Release\' + $targetFramework)
+        $testedRuntimes += Assert-SelfContainedRuntime -Root $testBin -Applications @($entry[1]) -ExpectedVersion $runtimeFrameworkVersion
+    }
+    $selfTestExecutable = Join-Path $snapshotRoot ("SteamSentinel.SelfTest\bin\Release\$targetFramework\SteamSentinel.SelfTest.exe")
+    & $selfTestExecutable '--results' $selfTestPath
+    if ($LASTEXITCODE -ne 0) { throw "Native SelfTest apphost failed with exit code $LASTEXITCODE" }
 
     if (-not (Test-Path -LiteralPath $selfTestPath -PathType Leaf)) {
         throw 'SelfTest did not create its machine-readable result.'
     }
-    $selfTest = Get-Content -LiteralPath $selfTestPath -Raw | ConvertFrom-Json
+    $selfTest = Get-Content -LiteralPath $selfTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($null -eq $selfTest.PSObject.Properties['elapsedMs'] -or [long]$selfTest.elapsedMs -lt 0) {
         throw 'SelfTest result is missing a valid elapsedMs value.'
     }
@@ -279,6 +465,8 @@ try {
         @publishArgs '-o' $runtimeStage
     Invoke-DotNet publish (Join-Path $snapshotRoot 'SteamSentinel.Broker\SteamSentinel.Broker.csproj') `
         @publishArgs '-o' $runtimeStage
+    $publishedRuntime = Assert-SelfContainedRuntime -Root $runtimeStage `
+        -Applications @('SteamSentinel', 'SteamSentinel.ArchiveWorker', 'SteamSentinel.Broker') -ExpectedVersion $runtimeFrameworkVersion
 
     $versionedAssemblies = @(
         'SteamSentinel.dll',
@@ -322,7 +510,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $dotnetRoot "sdk\$actualSdk\Sdks\Microsoft.NET.Sdk.WindowsDesktop\THIRD-PARTY-NOTICES.TXT") `
         -Destination (Join-Path $packageDir 'WINDOWSDESKTOP-THIRD-PARTY-NOTICES.txt')
 
-    $rules = Get-Content -LiteralPath (Join-Path $snapshotRoot 'SteamSentinel.Core\Rules\default-rules.json') -Raw | ConvertFrom-Json
+    $rules = Get-Content -LiteralPath (Join-Path $snapshotRoot 'SteamSentinel.Core\Rules\default-rules.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $builtAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
     Write-Utf8Lines -Path (Join-Path $packageDir 'VERSION.txt') -Lines @(
         'Product=SteamSentinel',
@@ -334,7 +522,10 @@ try {
         "Mode=$Mode",
         "Dirty=$isDirty",
         "Rules=$($rules.version)",
-        'Runtime=win-x64 self-contained .NET 10',
+        "Runtime=win-x64 self-contained .NET $runtimeFrameworkVersion",
+        "NETCoreRuntime=$runtimeFrameworkVersion",
+        "WindowsDesktopRuntime=$runtimeFrameworkVersion",
+        'SelfTestHost=native-apphost self-contained',
         "Sdk=$actualSdk",
         "BuiltAtUtc=$builtAtUtc",
         "SignatureStatus=$signatureStatus"
@@ -396,12 +587,48 @@ try {
         exactTag = if ($isPublicRelease) { $tag } else { $null }
         sdk = $actualSdk
         runtime = 'win-x64'
+        runtimeFrameworkVersion = $runtimeFrameworkVersion
         selfContained = $true
+        runtimeVerification = [ordered]@{
+            requestedDownloads = $runtimePackRequests
+            tested = $testedRuntimes
+            published = $publishedRuntime
+        }
         selfTest = [ordered]@{
+            host = 'native-apphost'
+            selfContained = $true
+            runtimeFrameworkVersion = $runtimeFrameworkVersion
             passed = [int]$selfTest.passed
             failed = [int]$selfTest.failed
             skipped = [int]$selfTest.skipped
             elapsedMs = [long]$selfTest.elapsedMs
+        }
+        installerMaintenanceTests = [ordered]@{
+            host = 'Windows-PowerShell-5.1-elevated'
+            passed = [int]$installerTests.passed
+            failed = [int]$installerTests.failed
+            skipped = [int]$installerTests.skipped
+            elapsedMs = [long]$installerTests.elapsedMs
+            sourceSha256 = $installerTestSourceHash
+            testScriptSha256 = $installerTestScriptHash
+            resultsFile = [IO.Path]::GetFileName($installerTestPath)
+            resultsSha256 = (Get-FileHash -LiteralPath $installerTestPath -Algorithm SHA256).Hash
+            productionRootTouched = $false
+            testOnlyCompilationSymbol = 'STEAMSENTINEL_INSTALLER_TESTS'
+        }
+        installerMachineStateTests = [ordered]@{
+            host = 'Windows-PowerShell-5.1-elevated'
+            passed = [int]$machineStateTests.passed
+            failed = [int]$machineStateTests.failed
+            skipped = [int]$machineStateTests.skipped
+            elapsedMs = [long]$machineStateTests.elapsedMs
+            sourceSha256 = $machineStateTestSourceHash
+            testScriptSha256 = $machineStateTestScriptHash
+            resultsFile = [IO.Path]::GetFileName($machineStateTestPath)
+            resultsSha256 = (Get-FileHash -LiteralPath $machineStateTestPath -Algorithm SHA256).Hash
+            productionRootTouched = $false
+            productionRegistryTouched = $false
+            testOnlyCompilationSymbol = 'STEAMSENTINEL_INSTALLER_TESTS'
         }
         signing = [ordered]@{
             status = $signatureStatus
@@ -415,7 +642,7 @@ try {
         }
         builtAtUtc = $builtAtUtc
     }
-    [IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
 
     $releaseHashes = Get-ChildItem -LiteralPath $stageRoot -File |
         Where-Object FullName -ne $checksumPath |
@@ -449,6 +676,8 @@ try {
 finally {
     if (-not $completed -and (Test-Path -LiteralPath $stageRoot)) {
         Assert-ChildPath $stageRoot $OutputRoot
-        Remove-Item -LiteralPath $stageRoot -Recurse -Force
+        # Retain actual failed test results/source for diagnosis. A staging directory
+        # is not a release bundle and is never promoted by a later build.
+        Write-Warning "Incomplete build retained for diagnosis: $stageRoot"
     }
 }

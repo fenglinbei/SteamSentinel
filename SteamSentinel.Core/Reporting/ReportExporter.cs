@@ -6,51 +6,86 @@ namespace SteamSentinel.Core.Reporting;
 
 public static class ReportExporter
 {
+    public static string CoverageLabel(ScanCoverage value, System.Globalization.CultureInfo culture)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return CoverageLabel(value);
+    }
+
+    public static string CategoryLabel(FindingCategory value, System.Globalization.CultureInfo culture)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return CategoryLabel(value);
+    }
+
+    public static string ActionLabel(RemediationActionType value, System.Globalization.CultureInfo culture)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return ActionLabel(value);
+    }
+
+    public static string SeverityLabel(FindingSeverity value, System.Globalization.CultureInfo culture)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        return SeverityLabel(value);
+    }
+    public static async Task ExportMarkdownAsync(ScanReport report, string path, System.Globalization.CultureInfo culture, CancellationToken cancellationToken = default)
+    {
+        using IDisposable scope = DisplayText.UseCulture(culture);
+        await ExportMarkdownAsync(report, path, cancellationToken).ConfigureAwait(false);
+    }
+
     public static Task ExportJsonAsync(ScanReport report, string path, CancellationToken cancellationToken = default) =>
         JsonFile.WriteAtomicAsync(path, report, cancellationToken, ReportPrivacy.ExportOptions);
 
     public static async Task ExportMarkdownAsync(ScanReport report, string path, CancellationToken cancellationToken = default)
     {
         StringBuilder text = new();
-        text.AppendLine($"# {ProductInfo.Name} 扫描报告");
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.01", DisplayText.Get("Product.DisplayName")));
         text.AppendLine();
-        text.AppendLine($"- 工具版本：`{report.ProductVersion}`");
-        text.AppendLine($"- 构建标识：`{Escape(report.BuildIdentity)}`");
-        text.AppendLine($"- 规则版本：`{report.RuleSetVersion}`");
-        text.AppendLine($"- 扫描 ID：`{report.ScanId}`");
-        text.AppendLine($"- 开始时间：{report.StartedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}");
-        text.AppendLine($"- 结束时间：{report.CompletedAtUtc?.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}");
-        text.AppendLine($"- 检查完整性：**{CoverageLabel(report.Coverage)}**");
-        text.AppendLine($"- 最高严重度：**{SeverityLabel(report.HighestSeverity)}**");
-        text.AppendLine($"- 执行状态：{report.ExecutionStatus}");
-        text.AppendLine($"- 风险或提示数量：{report.RiskFindingCount}，不包含检查范围说明");
-        text.AppendLine("- 处理资格：" + FindingHandlingPresentation.Count(report.Findings).Summary);
-        foreach (string scope in report.ScopeNotes) text.AppendLine("- 检查范围：" + Escape(scope));
+        text.AppendLine(DisplayText.Get("Report.OriginalTextNotice"));
         text.AppendLine();
-        text.AppendLine("> “未发现已知威胁”不等同于对未知漏洞或未解密内容的绝对安全保证。");
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.02", (report.ProductVersion)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.03", (Escape(report.BuildIdentity))));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.04", (report.RuleSetVersion)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.05", (report.ScanId)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.06", (report.StartedAtUtc.ToLocalTime())));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.07", (report.CompletedAtUtc?.ToLocalTime())));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.08", (CoverageLabel(report.Coverage))));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.09", (SeverityLabel(report.HighestSeverity))));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.10", (report.ExecutionStatus)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.11", (report.ExecutionState), (report.ExecutionReasonCode ?? ReasonCodes.Unspecified)));
+        if (report.LegacyExecutionStatus is { } legacy) text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.12", (legacy)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.13", (report.RiskFindingCount)));
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.14") + FindingHandlingPresentation.Count(report.Findings).Summary);
+        foreach (MessageText scope in report.ScopeTexts) text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.15") + Escape(scope.Display));
+        text.AppendLine();
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.16"));
         text.AppendLine();
 
-        text.AppendLine("## 扫描统计");
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.17"));
         text.AppendLine();
-        text.AppendLine($"- 文件：{report.Metrics.FilesVisited}");
-        text.AppendLine($"- 进程：{report.Metrics.ProcessesVisited}");
-        text.AppendLine($"- 持久化项：{report.Metrics.PersistenceItemsVisited}");
-        text.AppendLine($"- 工坊项目：{report.Metrics.WorkshopItemsVisited}");
-        text.AppendLine($"- 压缩包条目：{report.Metrics.ArchiveEntriesVisited}");
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.18", (report.Metrics.FilesVisited)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.19", (report.Metrics.ProcessesVisited)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.20", (report.Metrics.PersistenceItemsVisited)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.21", (report.Metrics.WorkshopItemsVisited)));
+        text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.22", (report.Metrics.ArchiveEntriesVisited)));
+        if (report.ResourceAudit is { } audit)
+            foreach (string line in ScanResourcePresentation.Describe(audit)) text.AppendLine("- " + Escape(line));
         text.AppendLine();
-        text.AppendLine("## 内容来源与相关文件位置");
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.23"));
         if (report.ContentScanSettings is ScanOptions settings)
         {
             text.AppendLine();
-            text.AppendLine($"- 内容扫描设置：{settings.Mode}，额外下载/桌面/临时目录：{settings.IncludeDownloadLocations}，压缩包：{settings.InspectArchives}，AMSI：{settings.UseAmsi}");
-            string hashBudget = settings.MaximumContentBytes == long.MaxValue ? "不设整轮哈希字节上限" :
-                $"{settings.MaximumContentBytes / 1024 / 1024:N0} MiB（{settings.MaximumContentBytes:N0} 字节）";
-            text.AppendLine($"- 累计哈希预算：{hashBudget}" +
-                (settings.Mode == ScanMode.Quick ? $"，另为不超过 {settings.MaximumQuickPriorityFileBytes / 1048576m:0.########} MiB 的启动文件保留最多 {settings.MaximumQuickPriorityBytes / 1048576m:0.########} MiB" : "") +
-                $"，单条解压上限：{settings.MaximumEntryBytes / 1024 / 1024:N0} MiB，嵌套深度：{settings.MaximumArchiveDepth}");
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.24", (settings.Mode), (settings.IncludeDownloadLocations), (settings.InspectArchives), (settings.UseAmsi)));
+            string hashBudget = settings.MaximumContentBytes == long.MaxValue ? DisplayText.Get("Report.ExportMarkdownAsync.25") :
+                DisplayText.Format("Report.ExportMarkdownAsync.26", (settings.MaximumContentBytes / 1024 / 1024), (settings.MaximumContentBytes));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.27", (hashBudget)) +
+                (settings.Mode == ScanMode.Quick ? DisplayText.Format("Report.ExportMarkdownAsync.28", (settings.MaximumQuickPriorityFileBytes / 1048576m), (settings.MaximumQuickPriorityBytes / 1048576m)) : "") +
+                DisplayText.Format("Report.ExportMarkdownAsync.29", (settings.MaximumEntryBytes / 1024 / 1024), (settings.MaximumArchiveDepth)));
             var configured = System.Text.Json.JsonSerializer.SerializeToNode(settings)!;
             text.AppendLine();
-            text.AppendLine("### 本轮扫描预算");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.30"));
             text.AppendLine();
             foreach (ScanLimitDefinition field in ScanLimitSettings.Fields)
             {
@@ -58,51 +93,51 @@ public static class ReportExporter
                 var value = parts.Length == 1 ? configured[parts[0]] : configured[parts[0]]?[parts[1]];
                 if (value is null) continue;
                 decimal number = value.GetValue<decimal>();
-                string display = field.Key == "MaximumContentBytes" && number == long.MaxValue ? "不设该项总量限制" : $"{number / field.Scale:0.########} {field.Unit}";
-                text.AppendLine($"- {field.Label}：{display}");
+                string display = field.Key == "MaximumContentBytes" && number == long.MaxValue ? DisplayText.Get("Report.ExportMarkdownAsync.31") : (number / field.Scale).ToString("0.########", DisplayText.Culture) + " " + field.Unit;
+                text.AppendLine("- " + DisplayText.Format("Common.LabelValue", field.Label, display));
             }
         }
         if (report.WorkerDiagnostics is WorkerDiagnostics diagnostic)
         {
             text.AppendLine();
-            text.AppendLine("### 扫描组件诊断");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.32"));
             text.AppendLine();
-            text.AppendLine("- 最后处理阶段：" + Escape(diagnostic.Stage + " / " + diagnostic.Operation));
-            text.AppendLine("- 最后处理路径：" + Escape(diagnostic.LastPath));
-            text.AppendLine($"- 组件私有内存：{diagnostic.PrivateBytes / 1024 / 1024:N0} MiB，峰值：{diagnostic.PeakPrivateBytes / 1024 / 1024:N0} MiB，托管内存：{diagnostic.ManagedBytes / 1024 / 1024:N0} MiB");
-            text.AppendLine("- 主窗口权限级别：" + Escape(diagnostic.LauncherIntegrity ?? "未记录"));
-            text.AppendLine($"- 内存采样时间：{diagnostic.CapturedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}，采样值不等同于失败瞬间峰值");
-            if (diagnostic.FailureType is not null) text.AppendLine("- 内部错误类型：" + Escape(diagnostic.FailureType));
-            if (diagnostic.FailureStack is not null) text.AppendLine("- 内部调用位置：" + Escape(diagnostic.FailureStack));
-            text.AppendLine("- 中断时正在处理的文件不能视作已完成检查，已交回结果也不能证明其他内容安全。");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.33") + Escape(diagnostic.StageText.Display + " / " + diagnostic.OperationText.Display));
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.34") + Escape(diagnostic.LastPathText.Display));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.35", (diagnostic.PrivateBytes / 1024 / 1024), (diagnostic.PeakPrivateBytes / 1024 / 1024), (diagnostic.ManagedBytes / 1024 / 1024)));
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.36") + Escape(diagnostic.LauncherIntegrity ?? DisplayText.Get("Report.ExportMarkdownAsync.37")));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.38", (diagnostic.CapturedAtUtc.ToLocalTime())));
+            if (diagnostic.FailureType is not null) text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.39") + Escape(diagnostic.FailureType));
+            if (diagnostic.FailureStack is not null) text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.40") + Escape(diagnostic.FailureStack));
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.41"));
         }
         text.AppendLine();
-        foreach (string source in report.ContentSources.Distinct()) text.AppendLine("- " + Escape(source));
-        foreach (string source in report.CandidateRoots.Distinct()) text.AppendLine("- 关联候选落点：" + Escape(source));
+        foreach (MessageText source in report.ContentSourceTexts.DistinctBy(text => text.OriginalText)) text.AppendLine("- " + Escape(source.Display));
+        foreach (string source in report.CandidateRoots.Distinct()) text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.42") + Escape(source));
         text.AppendLine();
 
         if (report.RootSummaries.Count > 0)
         {
-            text.AppendLine("## 各扫描路径的结果");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.43"));
             text.AppendLine();
-            text.AppendLine("| 路径 | 已知威胁数 | 可处置发现数 | 检查完整性 |");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.44"));
             text.AppendLine("|---|---:|---:|---|");
             foreach (ScanRootSummary root in report.RootSummaries)
                 text.AppendLine($"| {Escape(root.Path)} | {root.KnownThreats} | {root.ActionableFindings} | {CoverageLabel(root.Coverage)} |");
             text.AppendLine();
         }
 
-        if (report.CoverageNotes.Count > 0 || report.CoverageAggregates.Count > 0 || report.Findings.Any(f => f.Category == FindingCategory.Coverage))
+        if (report.CoverageNotes.Count > 0 || report.CoverageNotices.Count > 0 || report.CoverageAggregates.Count > 0 || report.Findings.Any(f => f.Category == FindingCategory.Coverage))
         {
-            text.AppendLine("## 未检查内容与补查方式");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.45"));
             text.AppendLine();
             foreach (CoverageGroup group in CoveragePresentation.Groups(report))
             {
-                text.AppendLine($"### {Escape(group.Kind)} · {group.Count} 条检查范围记录（非去重文件数）");
+                text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.46", (Escape(group.Kind)), (group.Count)));
                 text.AppendLine();
                 text.AppendLine(Escape(group.NextStep));
                 text.AppendLine();
-                foreach (CoverageEntry item in group.Entries) text.AppendLine($"- {Escape(item.Target)}：{Escape(item.Detail)}");
+                foreach (CoverageEntry item in group.Entries) text.AppendLine("- " + DisplayText.Format("Common.LabelValue", Escape(item.TargetDisplay), Escape(item.Detail)));
                 text.AppendLine();
             }
             text.AppendLine();
@@ -110,9 +145,9 @@ public static class ReportExporter
 
         if (report.TrustProxyDiagnostics is { } trustProxy)
         {
-            text.AppendLine("## 证书与代理只读诊断");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.47"));
             text.AppendLine();
-            text.AppendLine("以下是本次采集的配置与公开证书，完整来源 ID、关系和公开 DER 保存在 JSON 报告中。");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.48"));
             text.AppendLine();
             text.AppendLine("```text");
             text.AppendLine(TrustProxyReportPresentation.Describe(trustProxy).Replace("```", "｀｀｀", StringComparison.Ordinal));
@@ -121,9 +156,9 @@ public static class ReportExporter
         }
         if (report.RelatedComponentDiagnostics is { } relatedComponents)
         {
-            text.AppendLine("## 组件关联只读诊断");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.49"));
             text.AppendLine();
-            text.AppendLine("来源、宿主、候选组件和补查轮次单独记录；关联关系不证明写入行为，也不增加自动处理资格。完整观察 ID 与各轮状态见 JSON 报告。");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.50"));
             text.AppendLine();
             text.AppendLine("```text");
             text.AppendLine(RelatedComponentReportPresentation.Describe(relatedComponents).Replace("```", "｀｀｀", StringComparison.Ordinal));
@@ -132,58 +167,58 @@ public static class ReportExporter
         }
         if (report.Containers is { } containers)
         {
-            text.AppendLine("## 容器递归、完整性与检查预算");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.51"));
             text.AppendLine();
-            text.AppendLine("以下仅保存容器元数据、原始外层/分卷身份、阶段链和本轮资源计量；不打包样本、解密内容或密码。");
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.52"));
             text.AppendLine();
             text.AppendLine("```text");
             text.AppendLine(ContainerReportPresentation.Describe(containers).Replace("```", "｀｀｀", StringComparison.Ordinal));
             text.AppendLine("```");
             text.AppendLine();
         }
-        text.AppendLine("## 发现");
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.53"));
         text.AppendLine();
-        text.AppendLine("| 严重度 | 规则 ID | 分类 | 分数 | 标题 | SHA-256 | 目标 |");
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.54"));
         text.AppendLine("|---|---|---|---:|---|---|---|");
         foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage).OrderByDescending(f => f.Severity).ThenByDescending(f => f.Score))
         {
-            text.AppendLine($"| {SeverityLabel(finding.Severity)} | `{Escape(finding.RuleId)}` | {CategoryLabel(finding.Category)} | {finding.Score} | {Escape(finding.Title)} | `{Escape(finding.Sha256 ?? "—")}` | `{Escape(finding.Target)}` |");
+            text.AppendLine($"| {SeverityLabel(finding.Severity)} | `{Escape(finding.RuleId)}` | {CategoryLabel(finding.Category)} | {finding.Score} | {Escape(finding.TitleText.Display)} | `{Escape(finding.Sha256 ?? "—")}` | `{Escape(finding.TargetText.Display)}` |");
         }
 
         text.AppendLine();
-        text.AppendLine("## 逐项详情");
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.55"));
         text.AppendLine();
         foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage).OrderByDescending(f => f.Severity).ThenByDescending(f => f.Score))
         {
-            text.AppendLine($"### {SeverityLabel(finding.Severity)} · {Escape(finding.Title)}");
+            text.AppendLine($"### {SeverityLabel(finding.Severity)} · {Escape(finding.TitleText.Display)}");
             text.AppendLine();
-            text.AppendLine($"- 规则 ID：`{Escape(finding.RuleId)}`");
-            text.AppendLine($"- 说明：{Escape(finding.Description)}");
-            text.AppendLine($"- 内容归属：AppID {Escape(finding.AppId ?? "—")}，工坊 {Escape(finding.WorkshopId ?? "—")}，{Escape(finding.SourceKind ?? "—")}");
-            if (finding.RelatedFilePath is not null) text.AppendLine($"- 关联文件：{Escape(finding.RelatedFilePath)}，SHA-256：{Escape(finding.RelatedFileSha256 ?? "—")}");
-            text.AppendLine($"- 目标：`{Escape(finding.Target)}`");
-            text.AppendLine($"- SHA-256：`{Escape(finding.Sha256 ?? "未计算/不适用")}`");
-            text.AppendLine($"- 命中内容位置：`{Escape(finding.ContentPath ?? finding.Target)}`");
-            text.AppendLine($"- 隔离目标 SHA-256：`{Escape(finding.TargetSha256 ?? "未计算/不适用")}`");
-            text.AppendLine($"- 证据：{Escape(finding.Evidence)}");
-            text.AppendLine($"- 处置资格：{(FindingHandlingPresentation.Get(finding).CanSelect ? "可选中处置，仍需确认预览" : "仅复核")}");
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.56", (Escape(finding.RuleId))));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.57", (Escape(finding.DescriptionText.Display))));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.58", (Escape(finding.AppId ?? "—")), (Escape(finding.WorkshopId ?? "—")), (Escape(finding.SourceKind ?? "—"))));
+            if (finding.RelatedFilePath is not null) text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.59", (Escape(finding.RelatedFilePath)), (Escape(finding.RelatedFileSha256 ?? "—"))));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.60", (Escape(finding.TargetText.Display))));
+            text.AppendLine("- " + DisplayText.Format("Common.LabelValue", "SHA-256", $"`{Escape(finding.Sha256 ?? DisplayText.Get("Report.ExportMarkdownAsync.61"))}`"));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.62", (Escape(finding.ContentPath ?? finding.Target))));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.63", (Escape(finding.TargetSha256 ?? DisplayText.Get("Report.ExportMarkdownAsync.64")))));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.65", (Escape(finding.EvidenceDisplay))));
+            text.AppendLine(DisplayText.Format("Report.ExportMarkdownAsync.66", ((FindingHandlingPresentation.Get(finding).CanSelect ? DisplayText.Get("Report.ExportMarkdownAsync.67") : DisplayText.Get("Report.ExportMarkdownAsync.68")))));
             FindingHandlingInfo handling = FindingHandlingPresentation.Get(finding);
-            text.AppendLine("- 处理状态：" + handling.Label + "；" + Escape(handling.Reason));
-            text.AppendLine("- 下一步：" + Escape(handling.NextStep));
-            if (!handling.CanSelect) text.AppendLine("- 执行说明：本扫描记录未执行该项修改；此状态不表示曾尝试处理并失败。");
-            if (finding.DiagnosticObservationIds.Count > 0) text.AppendLine("- 诊断观察 ID：" + Escape(string.Join(", ", finding.DiagnosticObservationIds)));
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.69") + handling.Label + DisplayText.Get("Common.Semicolon") + Escape(handling.Reason));
+            text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.70") + Escape(handling.NextStep));
+            if (!handling.CanSelect) text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.71"));
+            if (finding.DiagnosticObservationIds.Count > 0) text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.72") + Escape(string.Join(", ", finding.DiagnosticObservationIds)));
             if (RelatedComponentReportPresentation.IsRelatedFinding(finding))
             {
-                text.AppendLine("- 组件关联证据层级：" + RelatedComponentReportPresentation.EvidenceTierLabel(finding.AssociationEvidenceTier) + "，不代表动作授权。");
-                text.AppendLine("- 组件关联观察 ID：" + Escape(string.Join(", ", finding.AssociationObservationIds.Take(16))) +
-                    (finding.AssociationObservationIds.Count > 16 ? "；其余观察 ID 见完整 JSON。" : "；原因见组件关联只读诊断。"));
+                text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.73") + RelatedComponentReportPresentation.EvidenceTierLabel(finding.AssociationEvidenceTier) + DisplayText.Get("Report.ExportMarkdownAsync.74"));
+                text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.75") + Escape(string.Join(", ", finding.AssociationObservationIds.Take(16))) +
+                    (finding.AssociationObservationIds.Count > 16 ? DisplayText.Get("Report.ExportMarkdownAsync.76") : DisplayText.Get("Report.ExportMarkdownAsync.77")));
             }
             text.AppendLine();
         }
 
-        text.AppendLine("## 结论边界");
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.78"));
         text.AppendLine();
-        text.AppendLine("文件存在、运行关联和 Steam 篡改是不同证据。工具可隔离已知威胁，也保留需要你确认的启发式处置。处置成功不代表整台电脑无毒，请重启后复扫，必要时用专业杀毒软件全盘检查。如果可能发生凭据窃取，应从可信设备更换密码并撤销其他会话，本地恢复不能撤回已外泄的数据。");
+        text.AppendLine(DisplayText.Get("Report.ExportMarkdownAsync.79"));
 
         await Utilities.AtomicFile.WriteAsync(path, async output =>
         {
@@ -197,54 +232,56 @@ public static class ReportExporter
 
     public static string CoverageLabel(ScanCoverage value) => value switch
     {
-        ScanCoverage.Complete => "已完成本次范围内的检查",
-        ScanCoverage.Partial => "部分内容未检查或未做完整比对",
-        _ => "本次未执行检查"
+        ScanCoverage.Complete => DisplayText.Get("Report.CoverageLabel.Complete.01"),
+        ScanCoverage.Partial => DisplayText.Get("Report.CoverageLabel.Partial.01"),
+        ScanCoverage.Skipped => DisplayText.Get("Report.CoverageLabel.01"),
+        _ => DisplayText.Get("Common.Unknown")
     };
 
     public static string CategoryLabel(FindingCategory value) => value switch
     {
-        FindingCategory.File => "文件",
-        FindingCategory.Archive => "压缩包",
-        FindingCategory.Process => "进程",
-        FindingCategory.Persistence => "启动项与驻留",
-        FindingCategory.Steam => "Steam 客户端",
+        FindingCategory.File => DisplayText.Get("Report.CategoryLabel.File.01"),
+        FindingCategory.Archive => DisplayText.Get("Report.CategoryLabel.Archive.01"),
+        FindingCategory.Process => DisplayText.Get("Report.CategoryLabel.Process.01"),
+        FindingCategory.Persistence => DisplayText.Get("Report.CategoryLabel.Persistence.01"),
+        FindingCategory.Steam => DisplayText.Get("Report.CategoryLabel.Steam.01"),
         FindingCategory.WallpaperEngine => "Wallpaper Engine",
-        FindingCategory.Network => "网络",
-        FindingCategory.Certificate => "证书",
-        FindingCategory.SecurityControl => "安全设置",
-        FindingCategory.Coverage => "检查范围说明",
-        _ => "其他"
+        FindingCategory.Network => DisplayText.Get("Report.CategoryLabel.Network.01"),
+        FindingCategory.Certificate => DisplayText.Get("Report.CategoryLabel.Certificate.01"),
+        FindingCategory.SecurityControl => DisplayText.Get("Report.CategoryLabel.SecurityControl.01"),
+        FindingCategory.Coverage => DisplayText.Get("Report.CategoryLabel.Coverage.01"),
+        _ => DisplayText.Get("Report.CategoryLabel.01")
     };
 
     public static string ActionLabel(RemediationActionType value) => value switch
     {
-        RemediationActionType.StopProcess => "停止进程",
-        RemediationActionType.StopHostProcess => "关闭加载恶意组件的宿主",
-        RemediationActionType.DisableService => "禁用关联服务",
-        RemediationActionType.RemoveRelatedDefenderExclusion => "移除关联安全排除项",
-        RemediationActionType.DisableRelatedFirewallRule => "禁用关联放行规则",
-        RemediationActionType.RemoveBoundCertificate => "移除已核验的精确信任证书",
-        RemediationActionType.RestoreBoundProxyConfiguration => "恢复已核验的精确代理配置",
-        RemediationActionType.RemoveRegistryValue => "删除启动项",
-        RemediationActionType.RemoveScheduledTask => "删除计划任务",
-        RemediationActionType.RemoveDefenderExclusion => "移除 Defender 排除项",
-        RemediationActionType.QuarantineFile => "隔离文件",
-        RemediationActionType.QuarantineDirectory => "隔离目录",
-        RemediationActionType.AddProgramFirewallBlock => "阻断程序出站连接",
-        RemediationActionType.BlockKnownDomains => "阻断已知恶意域名",
-        RemediationActionType.RestoreSecurityControls => "恢复安全设置",
-        RemediationActionType.RollbackIncident => "回滚隔离事件",
-        RemediationActionType.DeleteIncident => "永久删除隔离事件",
-        _ => "其他处置动作"
+        RemediationActionType.StopProcess => DisplayText.Get("Report.ActionLabel.StopProcess.01"),
+        RemediationActionType.StopHostProcess => DisplayText.Get("Report.ActionLabel.StopHostProcess.01"),
+        RemediationActionType.DisableService => DisplayText.Get("Report.ActionLabel.DisableService.01"),
+        RemediationActionType.RemoveRelatedDefenderExclusion => DisplayText.Get("Report.ActionLabel.RemoveRelatedDefenderExclusion.01"),
+        RemediationActionType.DisableRelatedFirewallRule => DisplayText.Get("Report.ActionLabel.DisableRelatedFirewallRule.01"),
+        RemediationActionType.RemoveBoundCertificate => DisplayText.Get("Report.ActionLabel.RemoveBoundCertificate.01"),
+        RemediationActionType.RestoreBoundProxyConfiguration => DisplayText.Get("Report.ActionLabel.RestoreBoundProxyConfiguration.01"),
+        RemediationActionType.RemoveRegistryValue => DisplayText.Get("Report.ActionLabel.RemoveRegistryValue.01"),
+        RemediationActionType.RemoveScheduledTask => DisplayText.Get("Report.ActionLabel.RemoveScheduledTask.01"),
+        RemediationActionType.RemoveDefenderExclusion => DisplayText.Get("Report.ActionLabel.RemoveDefenderExclusion.01"),
+        RemediationActionType.QuarantineFile => DisplayText.Get("Report.ActionLabel.QuarantineFile.01"),
+        RemediationActionType.QuarantineDirectory => DisplayText.Get("Report.ActionLabel.QuarantineDirectory.01"),
+        RemediationActionType.AddProgramFirewallBlock => DisplayText.Get("Report.ActionLabel.AddProgramFirewallBlock.01"),
+        RemediationActionType.BlockKnownDomains => DisplayText.Get("Report.ActionLabel.BlockKnownDomains.01"),
+        RemediationActionType.RestoreSecurityControls => DisplayText.Get("Report.ActionLabel.RestoreSecurityControls.01"),
+        RemediationActionType.RollbackIncident => DisplayText.Get("Report.ActionLabel.RollbackIncident.01"),
+        RemediationActionType.DeleteIncident => DisplayText.Get("Report.ActionLabel.DeleteIncident.01"),
+        _ => DisplayText.Get("Report.ActionLabel.01")
     };
 
     public static string SeverityLabel(FindingSeverity value) => value switch
     {
-        FindingSeverity.Critical => "严重",
-        FindingSeverity.High => "高度可疑",
-        FindingSeverity.Medium => "需要复核",
-        FindingSeverity.Low => "低风险提示",
-        _ => "信息"
+        FindingSeverity.Critical => DisplayText.Get("Report.SeverityLabel.Critical.01"),
+        FindingSeverity.High => DisplayText.Get("Report.SeverityLabel.High.01"),
+        FindingSeverity.Medium => DisplayText.Get("Report.SeverityLabel.Medium.01"),
+        FindingSeverity.Low => DisplayText.Get("Report.SeverityLabel.Low.01"),
+        FindingSeverity.Information => DisplayText.Get("Report.SeverityLabel.01"),
+        _ => DisplayText.Get("Common.Unknown")
     };
 }

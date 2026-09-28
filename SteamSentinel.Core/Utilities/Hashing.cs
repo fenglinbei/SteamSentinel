@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers;
 using System.Security.Cryptography;
 
@@ -61,7 +62,7 @@ public static class Hashing
 
                 total += read;
                 if (total > maximumBytes)
-                    throw new InvalidDataException($"文件在读取期间超过 {maximumBytes} 字节哈希上限。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.Hashing.Sha256StreamAsync.01", (maximumBytes)), sourceText => new InvalidDataException(sourceText));
                 hash.AppendData(buffer, 0, read);
                 bytesRead?.Invoke(read);
             }

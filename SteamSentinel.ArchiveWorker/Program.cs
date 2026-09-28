@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text.Json;
 using System.Threading.Channels;
 using SteamSentinel.Core.Models;
@@ -20,6 +21,7 @@ internal static class Program
         ScanProgress? lastProgress = null;
         WorkerDiagnostics? diagnostics = null;
         ScanReport? live = null;
+        ReportBatchWriter? partialWriter = null;
         ScanResourceGuard resources = new(checkProcessMemory: true);
         byte[]? emergencyReserve = new byte[2 * 1024 * 1024];
         try
@@ -36,13 +38,15 @@ internal static class Program
             WorkerMessage? start = JsonSerializer.Deserialize<WorkerMessage>(line, JsonFile.Options);
             if (start?.Type != WorkerMessageTypes.Start || start.Options is null)
             {
-                await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Failed, Error = "工作进程没有收到有效启动请求。" });
+                await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Failed, ReasonCode = ReasonCodes.WorkerStartFailed, ErrorText = MessageText.Create("Backend.Worker.Program.Main.01") });
                 return 2;
             }
-            ContainerRequestValidation.Validate(start.Options, Path.Combine(Environment.CurrentDirectory, "recovery"));
+            ScanOptions scanOptions = ScanEnhancements.ForExecution(start.Options);
+            ContainerRequestValidation.Validate(scanOptions, Path.Combine(Environment.CurrentDirectory, "recovery"));
 
             using CancellationTokenSource scanCancellation = new();
             Channel<ArchivePasswordResponse> responses = Channel.CreateBounded<ArchivePasswordResponse>(8);
+            Channel<ScanLimitResponse> resourceResponses = Channel.CreateBounded<ScanLimitResponse>(1);
             _ = Task.Run(async () =>
             {
                 try
@@ -53,26 +57,39 @@ internal static class Program
                         if (input is null) { scanCancellation.Cancel(); break; }
                         WorkerMessage? message = JsonSerializer.Deserialize<WorkerMessage>(input.TrimStart('\uFEFF'), JsonFile.Options);
                         if (message?.Type == WorkerMessageTypes.Cancel) { scanCancellation.Cancel(); break; }
+                        if (message?.Type == WorkerMessageTypes.ResourceResponse && message.ResourceResponse is { } decision)
+                        {
+                            if (!scanOptions.AllowResourceDecisions || !resourceResponses.Writer.TryWrite(decision))
+                                throw new InvalidDataException("Unexpected resource response.");
+                            continue;
+                        }
                         if (message?.Type != WorkerMessageTypes.PasswordResponse || message.PasswordResponse is null)
-                            throw new InvalidDataException("扫描组件收到无效或过量控制消息。");
+                            throw MessageExceptions.Create(MessageText.Create("Backend.Worker.Program.Main.02"), sourceText => new InvalidDataException(sourceText));
                         _ = ArchivePasswordInput.ValidateAndGetPasswords(message.PasswordResponse);
                         if (!responses.Writer.TryWrite(message.PasswordResponse))
-                            throw new InvalidDataException("扫描组件收到无效或过量控制消息。");
+                            throw MessageExceptions.Create(MessageText.Create("Backend.Worker.Program.Main.03"), sourceText => new InvalidDataException(sourceText));
                     }
                 }
                 catch (Exception ex)
                 {
                     responses.Writer.TryComplete(ex);
+                    resourceResponses.Writer.TryComplete(ex);
                     try { scanCancellation.Cancel(); } catch (ObjectDisposedException) { }
                 }
-                finally { responses.Writer.TryComplete(); }
+                finally { responses.Writer.TryComplete(); resourceResponses.Writer.TryComplete(); }
             });
             StdioPasswordProvider passwordProvider = new(responses.Reader);
+            using ScanResourceSession? resourceSession = scanOptions.AllowResourceDecisions
+                ? new(scanOptions, request =>
+                {
+                    WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.ResourceRequest, ResourceRequest = request }).GetAwaiter().GetResult();
+                    return resourceResponses.Reader.ReadAsync(scanCancellation.Token).AsTask().GetAwaiter().GetResult();
+                }, scanCancellation.Token) : null;
             long lastDiagnostics = 0, lastCheckpoint = 0, lastProgressSent = 0;
             string? lastStageSent = null;
             int lastFindings = -1;
             long lastCoverageOccurrences = -1;
-            ReportBatchWriter batches = new(batch => WriteAsync(new WorkerMessage
+            ReportBatchWriter batches = partialWriter = new(batch => WriteAsync(new WorkerMessage
             { Type = WorkerMessageTypes.Checkpoint, Batch = batch }).GetAwaiter().GetResult());
             SynchronousProgress progress = new(message =>
             {
@@ -109,8 +126,9 @@ internal static class Program
                 lastCheckpoint = Environment.TickCount64;
             }
             ScanCoordinator coordinator = new(allowRelatedSignatureProbe: true);
-            ScanReport report = await coordinator.RunAsync(start.Options, passwordProvider, progress,
+            ScanReport report = await coordinator.RunAsync(scanOptions, passwordProvider, progress,
                 cancellationToken: scanCancellation.Token, checkpoint: Checkpoint);
+            if (resourceSession is not null) resourceSession.Audit.Phase = ScanResourcePhase.Finished;
             scanCancellation.Token.ThrowIfCancellationRequested();
             report.WorkerDiagnostics = WorkerDiagnostics.Capture(lastProgress);
             batches.Send(report, final: true);
@@ -120,7 +138,8 @@ internal static class Program
         }
         catch (OperationCanceledException)
         {
-            await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Failed, Error = "扫描已取消。" });
+            TryPublishPartial();
+            await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Failed, ReasonCode = ReasonCodes.UserCancelled, ErrorText = MessageText.Create("Backend.Worker.Program.Main.04") });
             return 3;
         }
         catch (Exception ex)
@@ -128,13 +147,26 @@ internal static class Program
             emergencyReserve = null;
             if (ex is OutOfMemoryException) GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
             try { diagnostics = WorkerDiagnostics.Capture(lastProgress, ex); } catch { }
+            TryPublishPartial();
             await WriteAsync(new WorkerMessage
             {
                 Type = WorkerMessageTypes.Failed,
-                Error = $"{ex.GetType().Name}: {ex.Message}",
+                ErrorText = MessageText.Create("Backend.Exception", ex.GetType().Name, MessageExceptions.Describe(ex)),
+                ReasonCode = ReasonCodes.ForFailureType(ex.GetType().Name),
                 Diagnostics = diagnostics
             });
             return 1;
+        }
+        void TryPublishPartial()
+        {
+            if (live is null || partialWriter is null) return;
+            try
+            {
+                if (live.ResourceAudit is { } audit) audit.Phase = ScanResourcePhase.Finished;
+                new ScanResourceGuard().Check(live);
+                partialWriter.Send(live, final: true);
+            }
+            catch (Exception) { /* Keep the previously validated checkpoint if final serialization cannot fit. */ }
         }
     }
 
@@ -144,7 +176,7 @@ internal static class Program
         try
         {
             string json = JsonSerializer.Serialize(message, CompactJson);
-            if (json.Length > 1024 * 1024) throw new InvalidDataException("扫描结果单批过大，已保留此前交回的结果。");
+            if (json.Length > 1024 * 1024) throw MessageExceptions.Create(MessageText.Create("Backend.Worker.Program.WriteAsync.01"), sourceText => new InvalidDataException(sourceText));
             await Console.Out.WriteLineAsync(json);
             await Console.Out.FlushAsync();
         }
@@ -172,7 +204,7 @@ internal static class Program
                     if (response.RequestId == request.RequestId) return response;
             }
             cancellationToken.ThrowIfCancellationRequested();
-            throw new OperationCanceledException("密码响应通道已关闭。", cancellationToken);
+            throw MessageExceptions.Create(MessageText.Create("Backend.Worker.Program.RequestPasswordAsync.01"), sourceText => new OperationCanceledException(sourceText, cancellationToken));
         }
     }
 

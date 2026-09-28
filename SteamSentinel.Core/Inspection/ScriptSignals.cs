@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -55,6 +56,12 @@ public static class ScriptSignals
         return Analyze(s => value.Contains(s, StringComparison.OrdinalIgnoreCase));
     }
 
+    internal static IReadOnlyList<MessageText> AnalyzeMessages(string text)
+    {
+        string value = Normalize(text);
+        return AnalyzeMessages(s => value.Contains(s, StringComparison.OrdinalIgnoreCase));
+    }
+
     internal static readonly string[] Tokens = ["DownloadString", "DownloadData", "Invoke-WebRequest", "Invoke-RestMethod",
         "http://", "https://", "Start-Process", "Invoke-Expression", "iex ", "wscript", "mshta", "rundll32", "steamprocess",
         "wsock32.dll", "millennium", "SteamKey20260310", "Add-MpPreference", "ExclusionPath", "AttackSurfaceReductionOnlyExclusions",
@@ -62,19 +69,22 @@ public static class ScriptSignals
         "/api/v1/plugin/beacon", "proconnector.cfd"];
 
     internal static IReadOnlyList<string> Analyze(Func<string, bool> Has)
+        => AnalyzeMessages(Has).Select(message => message.OriginalText).ToArray();
+
+    internal static IReadOnlyList<MessageText> AnalyzeMessages(Func<string, bool> Has)
     {
-        List<string> signals = [];
+        List<MessageText> signals = [];
         bool download = Has("DownloadString") || Has("DownloadData") || Has("Invoke-WebRequest") || Has("Invoke-RestMethod") || Has("http://") || Has("https://");
         bool execute = Has("Start-Process") || Has("Invoke-Expression") || Has("iex ") || Has("wscript") || Has("mshta") || Has("rundll32");
         bool steam = Has("steamprocess") || Has("wsock32.dll") && Has("millennium") || Has("SteamKey20260310");
         bool defense = Has("Add-MpPreference") || Has("ExclusionPath") || Has("AttackSurfaceReductionOnlyExclusions");
-        if (download && execute && steam) signals.Add("下载执行链与 Steam 插件或家族载荷同时出现");
-        if (steam && defense) signals.Add("Steam 插件部署同时尝试修改安全排除项");
+        if (download && execute && steam) signals.Add(MessageText.Create("Backend.Core.ScriptSignals.Analyze.01"));
+        if (steam && defense) signals.Add(MessageText.Create("Backend.Core.ScriptSignals.Analyze.02"));
         if (download && execute && (Has("captcha") || Has("Verification ID") || Has("human verification")))
-            signals.Add("验证码提示与下载执行命令同时出现");
+            signals.Add(MessageText.Create("Backend.Core.ScriptSignals.Analyze.03"));
         if (Has("steam_save_mafile") && Has("steam_outbox_list") && Has("password") &&
             (Has("/api/v1/plugin/beacon") || Has("proconnector.cfd")))
-            signals.Add("Steam 登录拦截、验证资料发送队列与第三方接收端点同时出现");
+            signals.Add(MessageText.Create("Backend.Core.ScriptSignals.Analyze.04"));
         return signals;
     }
 
@@ -93,6 +103,6 @@ public static class ScriptSignals
             result = Query.Replace(result, "${key}[REDACTED]");
             return result;
         }
-        catch (RegexMatchTimeoutException) { return "[内容已隐藏]"; }
+        catch (RegexMatchTimeoutException) { return MessageText.Create("Backend.Core.ScriptSignals.RedactSecrets.01"); }
     }
 }

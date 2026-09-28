@@ -16,8 +16,9 @@ public sealed class TrustProxyDiagnosticReport
     public List<DiagnosticCheck> Checks { get; init; } = [];
 }
 
-public sealed class DiagnosticCheck
+public sealed partial class DiagnosticCheck
 {
+    public string? CheckCode { get; init; }
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string? ObservationId { get; init; }
     public string Name { get; init; } = string.Empty;
@@ -26,7 +27,7 @@ public sealed class DiagnosticCheck
     public string Detail { get; init; } = string.Empty;
 }
 
-public sealed class ProxyConfigurationObservation
+public sealed partial class ProxyConfigurationObservation
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Source { get; init; } = string.Empty;
@@ -40,13 +41,40 @@ public sealed class ProxyConfigurationObservation
     public string? ProxyServer { get; init; }
     public string? ProxyBypass { get; init; }
     public string? AutoConfigUrl { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? ProxyServerMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, ProxyServer); init => field = value; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText ProxyServerText => new(ProxyServer ?? string.Empty, ProxyServerMessage);
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? ProxyBypassMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, ProxyBypass); init => field = value; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText ProxyBypassText => new(ProxyBypass ?? string.Empty, ProxyBypassMessage);
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? AutoConfigUrlMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, AutoConfigUrl); init => field = value; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText AutoConfigUrlText => new(AutoConfigUrl ?? string.Empty, AutoConfigUrlMessage);
     public List<DiagnosticConfigurationValue> Values { get; init; } = [];
 }
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record DiagnosticConfigurationValue(string Name, string Kind, string? Value, bool Present, string? Sha256 = null, bool Redacted = false, DiagnosticReadStatus ReadStatus = DiagnosticReadStatus.Complete)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? ValueMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Value); init => field = value; }
 
-public sealed record DiagnosticConfigurationValue(string Name, string Kind, string? Value, bool Present,
-    string? Sha256 = null, bool Redacted = false, DiagnosticReadStatus ReadStatus = DiagnosticReadStatus.Complete);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText ValueText
+    {
+        get => new(Value ?? string.Empty, ValueMessage);
+        init
+        {
+            Value = value.OriginalText;
+            ValueMessage = value.Message;
+        }
+    }
 
-public sealed class CertificateStoreObservation
+}
+
+public sealed partial class CertificateStoreObservation
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Scope { get; init; } = string.Empty;
@@ -58,7 +86,7 @@ public sealed class CertificateStoreObservation
     public int CertificatesRead { get; set; }
 }
 
-public sealed class CertificateObservation
+public sealed partial class CertificateObservation
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string StoreObservationId { get; init; } = string.Empty;
@@ -83,8 +111,28 @@ public sealed class CertificateObservation
     public List<string> ChainCertificateSha256 { get; init; } = [];
     public string ChainDetail { get; set; } = string.Empty;
 }
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record DiagnosticRelation(string FromId, string ToId, string Kind, string Evidence)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? EvidenceMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Evidence); init => field = value; }
 
-public sealed record DiagnosticRelation(string FromId, string ToId, string Kind, string Evidence);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText EvidenceText
+    {
+        get => new(Evidence ?? string.Empty, EvidenceMessage);
+        init
+        {
+            Evidence = value.OriginalText;
+            EvidenceMessage = value.Message;
+        }
+    }
+
+    public DiagnosticRelation(string FromId, string ToId, string Kind, SteamSentinel.Core.Reporting.MessageText Evidence) : this(FromId, ToId, Kind, Evidence.OriginalText)
+    {
+        EvidenceMessage = Evidence.Message;
+    }
+}
 
 public sealed class DiagnosticScanLimits
 {

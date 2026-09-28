@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Xml;
@@ -13,14 +14,14 @@ internal static class RelatedArtifactReader
 {
     internal static FileStream Open(string path)
     {
-        if (!ContentDiscovery.IsLocalSafePath(path)) throw new UnauthorizedAccessException("关联路径不是安全的本地文件。");
+        if (!ContentDiscovery.IsLocalSafePath(path)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.Open.01"), sourceText => new UnauthorizedAccessException(sourceText));
         string requested = Path.GetFullPath(path);
         SafeFileHandle handle = CreateFile(requested, 0x80000000, 1, IntPtr.Zero, 3,
             0x00200000 | 0x08000000 | 0x40000000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             int error = Marshal.GetLastWin32Error(); handle.Dispose();
-            throw new Win32Exception(error, "无法只读锁定关联文件。");
+            throw SteamSentinel.Core.Reporting.MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.Open.02"), sourceText => new Win32Exception(error, sourceText));
         }
         try
         {
@@ -33,14 +34,19 @@ internal static class RelatedArtifactReader
     internal static void ValidatePath(SafeFileHandle handle, string requested)
     {
         if (!GetFileInformationByHandleEx(handle, 9, out AttributeTag attributes, 8) || (attributes.Attributes & 0x400) != 0)
-            throw new UnauthorizedAccessException("关联文件属于重解析点或无法验证属性。");
-        char[] buffer = new char[32768];
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ValidatePath.01"), sourceText => new UnauthorizedAccessException(sourceText));
+        char[] buffer = new char[Math.Min(32768, Math.Max(512, requested.Length + 16))];
         uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
-        if (length == 0 || length >= buffer.Length) throw new IOException("无法验证关联文件最终路径。");
+        if (length >= buffer.Length && length < 32768)
+        {
+            buffer = new char[length + 1];
+            length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
+        }
+        if (length == 0 || length >= buffer.Length) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ValidatePath.02"), sourceText => new IOException(sourceText));
         string final = new(buffer, 0, (int)length);
         if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
         if (!requested.Equals(final, StringComparison.OrdinalIgnoreCase) || !ContentDiscovery.IsLocalSafePath(requested))
-            throw new UnauthorizedAccessException("关联文件路径在打开时发生变化。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ValidatePath.03"), sourceText => new UnauthorizedAccessException(sourceText));
     }
 
     internal static bool IsProtected(string path) =>
@@ -76,12 +82,12 @@ public static class RelatedTaskSnapshotReader
         token.ThrowIfCancellationRequested();
         if (!Validation.TryNormalizeScheduledTaskName(taskName, out string normalized) ||
             normalized.IndexOfAny(['*', '?', '"', '<', '>', '|']) >= 0 || taskName.StartsWith(@"\\", StringComparison.Ordinal))
-            throw new InvalidDataException("计划任务名称无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ReadUnderRootAsync.01"), sourceText => new InvalidDataException(sourceText));
         string path = Path.GetFullPath(Path.Combine(root, normalized.TrimStart('\\')));
         if (!ContentDiscovery.IsWithin(path, root) || path.Equals(Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("计划任务超出允许读取的目录。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ReadUnderRootAsync.02"), sourceText => new InvalidDataException(sourceText));
         await using FileStream stream = RelatedArtifactReader.Open(path);
-        if (stream.Length > Math.Min(MaximumBytes, maximumBytes)) throw new InvalidDataException("任务 XML 超过 2 MiB 或剩余读取预算。");
+        if (stream.Length > Math.Min(MaximumBytes, maximumBytes)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ReadUnderRootAsync.03"), sourceText => new InvalidDataException(sourceText));
         byte[] bytes = new byte[checked((int)stream.Length)];
         await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
         bytesRead?.Invoke(bytes.Length);
@@ -95,15 +101,15 @@ public static class RelatedTaskSnapshotReader
             MaxCharactersFromEntities = 1024
         });
         XDocument document = XDocument.Load(reader);
-        if (document.Root?.Name.LocalName != "Task") throw new InvalidDataException("不是计划任务 XML。");
+        if (document.Root?.Name.LocalName != "Task") throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ReadUnderRootAsync.04"), sourceText => new InvalidDataException(sourceText));
         XElement[] actions = document.Root.Elements().Where(e => e.Name.LocalName == "Actions")
             .SelectMany(e => e.Elements()).Where(e => e.Name.LocalName == "Exec").Take(65).ToArray();
         if (actions.Any(a => a.Elements().Count(c => c.Name.LocalName == "Command") != 1 ||
-            a.Elements().Count(c => c.Name.LocalName == "Arguments") > 1)) throw new InvalidDataException("任务动作字段重复或不完整。");
+            a.Elements().Count(c => c.Name.LocalName == "Arguments") > 1)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ReadUnderRootAsync.05"), sourceText => new InvalidDataException(sourceText));
         string[] commands = actions
             .Select(e => string.Join(" ", e.Elements().Where(c => c.Name.LocalName is "Command" or "Arguments").Select(c => c.Value))).ToArray();
         if (commands.Length > 64 || commands.Any(c => c.Length > 32768))
-            throw new InvalidDataException("任务动作数量或命令长度超过读取上限。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.ReadUnderRootAsync.06"), sourceText => new InvalidDataException(sourceText));
         string[] invocations = actions.Select(a =>
         {
             string executable = a.Elements().Single(c => c.Name.LocalName == "Command").Value.Trim();

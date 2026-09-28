@@ -1,0 +1,210 @@
+<?xml version='1.0' encoding='utf-8'?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <data name="Message.Unknown" xml:space="preserve">
+    <value>Unrecognized display code: {0}</value>
+  </data>
+  <data name="Preparation.Context" xml:space="preserve">
+    <value>Additional verification records for this batch (may concern other targets in the same batch):</value>
+  </data>
+  <data name="Scan.Unknown" xml:space="preserve">
+    <value>Execution state was not recorded; review the original record</value>
+  </data>
+  <data name="Scan.NotStarted" xml:space="preserve">
+    <value>Not started</value>
+  </data>
+  <data name="Scan.Running" xml:space="preserve">
+    <value>In progress</value>
+  </data>
+  <data name="Scan.Cancelled" xml:space="preserve">
+    <value>Scan cancelled; available results retained</value>
+  </data>
+  <data name="Scan.Failed" xml:space="preserve">
+    <value>Inspection failed; available results retained</value>
+  </data>
+  <data name="Scan.Completed" xml:space="preserve">
+    <value>Scan completed</value>
+  </data>
+  <data name="Scan.CompletedWithGaps" xml:space="preserve">
+    <value>Scan finished; some content was not checked</value>
+  </data>
+  <data name="Target.Unknown" xml:space="preserve">
+    <value>Review required (structured state unavailable)</value>
+  </data>
+  <data name="Target.NotIncluded" xml:space="preserve">
+    <value>Not included</value>
+  </data>
+  <data name="Target.PartiallyIncluded" xml:space="preserve">
+    <value>Partially included</value>
+  </data>
+  <data name="Target.Ready" xml:space="preserve">
+    <value>Ready</value>
+  </data>
+  <data name="Target.NotExecuted" xml:space="preserve">
+    <value>Not executed</value>
+  </data>
+  <data name="Target.Failed" xml:space="preserve">
+    <value>Failed</value>
+  </data>
+  <data name="Target.ReviewRequired" xml:space="preserve">
+    <value>Review required</value>
+  </data>
+  <data name="Target.Completed" xml:space="preserve">
+    <value>Completed</value>
+  </data>
+  <data name="Batch.Targets" xml:space="preserve">
+    <value>{0} targets selected</value>
+  </data>
+  <data name="Batch.Associated" xml:space="preserve">
+    <value>, {0} associated targets added</value>
+  </data>
+  <data name="Batch.Preview" xml:space="preserve">
+    <value>; {0} planned, {1} with omitted actions, {2} batches.</value>
+  </data>
+  <data name="Batch.Results" xml:space="preserve">
+    <value>; {0} completed, {1} requiring review, {2} failed, {3} unfinished.</value>
+  </data>
+  <data name="remediation.plan_ready" xml:space="preserve">
+    <value>Included in the plan; identity will be verified independently before execution.</value>
+  </data>
+  <data name="remediation.actions_not_included" xml:space="preserve">
+    <value>Some or all required actions were omitted; review the verification records.</value>
+  </data>
+  <data name="remediation.evidence_unavailable" xml:space="preserve">
+    <value>Actionable evidence is missing or association verification is incomplete; these actions were not executed.</value>
+  </data>
+  <data name="remediation.target_unavailable" xml:space="preserve">
+    <value>The target is missing, unreadable, or could not be revalidated; these actions were not executed.</value>
+  </data>
+  <data name="remediation.action_failed" xml:space="preserve">
+    <value>Some actions failed; review their individual results.</value>
+  </data>
+  <data name="remediation.waiting_batches" xml:space="preserve">
+    <value>Waiting for subsequent batches; this does not mean completion.</value>
+  </data>
+  <data name="remediation.verification_incomplete" xml:space="preserve">
+    <value>Post-action verification is not confirmed; review is required.</value>
+  </data>
+  <data name="remediation.actions_verified" xml:space="preserve">
+    <value>Selected actions and target verification completed; this does not establish that the entire computer is safe.</value>
+  </data>
+  <data name="remediation.plan_expired" xml:space="preserve">
+    <value>A subsequent plan expired. Execution paused; rescan and confirm a new plan. Identity was not renewed automatically.</value>
+  </data>
+  <data name="remediation.batch_incomplete" xml:space="preserve">
+    <value>This batch has failures, residuals, or unconfirmed results. Subsequent batches paused; review and rescan.</value>
+  </data>
+  <data name="remediation.execution_interrupted" xml:space="preserve">
+    <value>Execution was interrupted; subsequent batches were not executed.</value>
+  </data>
+  <data name="coverage.trust_proxy_incomplete.title" xml:space="preserve">
+    <value>Certificate and proxy diagnostics incomplete</value>
+  </data>
+  <data name="coverage.trust_proxy_incomplete.next" xml:space="preserve">
+    <value>Review the source and read status, rerun certificate and proxy diagnostics, or export the records. A full content scan cannot replace these checks.</value>
+  </data>
+  <data name="coverage.system_incomplete.title" xml:space="preserve">
+    <value>System inspection incomplete</value>
+  </data>
+  <data name="coverage.system_incomplete.next" xml:space="preserve">
+    <value>Available records can be exported. Rerun a scan that includes system inspection; a content-only scan cannot replace it.</value>
+  </data>
+  <data name="coverage.quick_media_structure.title" xml:space="preserve">
+    <value>Video structure checked; full comparison not performed</value>
+  </data>
+  <data name="coverage.quick_media_structure.next" xml:space="preserve">
+    <value>Run a full content scan on the selected scope to hash the entire file.</value>
+  </data>
+  <data name="coverage.quick_content_not_hashed.title" xml:space="preserve">
+    <value>Quick scan did not compare full content</value>
+  </data>
+  <data name="coverage.quick_content_not_hashed.next" xml:space="preserve">
+    <value>Run a full content scan on the selected scope.</value>
+  </data>
+  <data name="coverage.read_budget.title" xml:space="preserve">
+    <value>Read budget reached</value>
+  </data>
+  <data name="coverage.read_budget.next" xml:space="preserve">
+    <value>Adjust the file and total read budgets in scan limits, then run a full content scan on the selected scope.</value>
+  </data>
+  <data name="coverage.engine_size_limit.title" xml:space="preserve">
+    <value>Content engine size limit reached</value>
+  </data>
+  <data name="coverage.engine_size_limit.next" xml:space="preserve">
+    <value>Adjust the string or AMSI per-file size limit and rescan. A larger AMSI limit increases memory use.</value>
+  </data>
+  <data name="coverage.archive_not_expanded.title" xml:space="preserve">
+    <value>Archive content not expanded</value>
+  </data>
+  <data name="coverage.archive_not_expanded.next" xml:space="preserve">
+    <value>Enable archive inspection and run a full content scan on the selected scope. Format and safety limits still apply.</value>
+  </data>
+  <data name="coverage.archive_encrypted.title" xml:space="preserve">
+    <value>Encrypted content not decrypted</value>
+  </data>
+  <data name="coverage.archive_encrypted.next" xml:space="preserve">
+    <value>Provide the correct outer and inner passwords, then run a full content scan or retry undecrypted content.</value>
+  </data>
+  <data name="coverage.resource_limit.title" xml:space="preserve">
+    <value>Inspection safety limit reached</value>
+  </data>
+  <data name="coverage.resource_limit.next" xml:space="preserve">
+    <value>A scan budget or component limit was reached; this does not establish low system memory. Review the limit, adjust the relevant budget, or scan smaller directories. Available results are retained; keep protection enabled.</value>
+  </data>
+  <data name="execution.allocation_failed.title" xml:space="preserve">
+    <value>Scan component memory allocation failed</value>
+  </data>
+  <data name="execution.allocation_failed.next" xml:space="preserve">
+    <value>Export the diagnostic records and scan the remaining content in smaller batches. Available results are retained; keep protection enabled.</value>
+  </data>
+  <data name="coverage.content_not_started.title" xml:space="preserve">
+    <value>Some checks were not performed</value>
+  </data>
+  <data name="coverage.content_not_started.next" xml:space="preserve">
+    <value>Confirm that the scan component is available, then rescan. Available results are retained.</value>
+  </data>
+  <data name="coverage.workshop_selection.title" xml:space="preserve">
+    <value>Workshop scope selection</value>
+  </data>
+  <data name="coverage.workshop_selection.next" xml:space="preserve">
+    <value>Only the selected games were included. Select all local workshop content and rescan to include other games.</value>
+  </data>
+  <data name="coverage.amsi_unavailable.title" xml:space="preserve">
+    <value>Security software assisted inspection unavailable</value>
+  </data>
+  <data name="coverage.amsi_unavailable.next" xml:space="preserve">
+    <value>Check that local security software is enabled and functioning, then retry. A full content scan cannot replace an unavailable security software interface.</value>
+  </data>
+  <data name="coverage.unsafe_path.title" xml:space="preserve">
+    <value>Path could not be safely inspected</value>
+  </data>
+  <data name="coverage.unsafe_path.next" xml:space="preserve">
+    <value>Check for a network path or reparse point. Rescan using a verifiable local path.</value>
+  </data>
+  <data name="coverage.access_denied.title" xml:space="preserve">
+    <value>Access denied</value>
+  </data>
+  <data name="coverage.access_denied.next" xml:space="preserve">
+    <value>Verify read permissions and rescan. Access failure does not establish that a target is safe or malicious.</value>
+  </data>
+  <data name="coverage.read_incomplete.title" xml:space="preserve">
+    <value>Read limitation or other scope information</value>
+  </data>
+  <data name="coverage.read_incomplete.next" xml:space="preserve">
+    <value>Review the details. A full content scan may not resolve access restrictions, corruption, or unsupported formats. Export the report for further review.</value>
+  </data>
+  <data name="Coverage.CurrentScan" xml:space="preserve">
+    <value>This scan</value>
+  </data>
+  <data name="Coverage.Aggregate" xml:space="preserve">
+    <value>{0} incomplete-check records under this root (not a distinct file count). Rescan the entire root; examples are incomplete and may be truncated.</value>
+  </data>
+  <data name="coverage.resource_limit" xml:space="preserve">
+    <value>A verification safety limit was reached; incomplete targets were not included in the plan.</value>
+  </data>
+</root>

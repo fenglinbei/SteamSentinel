@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text.Json;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Utilities;
@@ -26,7 +27,7 @@ internal sealed class BrokerResultChannel : IAsyncDisposable
             !fullPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
             Validation.ContainsReparsePoint(Path.GetDirectoryName(fullPath)!))
         {
-            throw new UnauthorizedAccessException("Broker 结果通道路径无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerResultChannel.Create.01"), sourceText => new UnauthorizedAccessException(sourceText));
         }
 
         return CreateCore(fullPath, requestedBySid, protectAcl: true);
@@ -59,7 +60,7 @@ internal sealed class BrokerResultChannel : IAsyncDisposable
 
     public async Task WriteAsync(RemediationRunResult result, CancellationToken cancellationToken = default)
     {
-        if (_writeAttempted) throw new InvalidOperationException("Broker 结果通道只能写入一次。");
+        if (_writeAttempted) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerResultChannel.WriteAsync.01"), sourceText => new InvalidOperationException(sourceText));
         _writeAttempted = true;
         _stream.Position = 0;
         _stream.SetLength(0);

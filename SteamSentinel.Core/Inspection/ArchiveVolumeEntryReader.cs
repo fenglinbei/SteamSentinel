@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Reflection;
 using SharpCompress.Archives;
 using SharpCompress.Common;
@@ -15,7 +16,7 @@ internal sealed class ArchiveVolumeEntryReader : IReader
     private bool _opened;
     private bool _disposed;
     public ArchiveType Type { get; }
-    public IEntry Entry => _current ?? throw new InvalidOperationException("尚未选择归档成员。");
+    public IEntry Entry => _current ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeEntryReader.Entry.01"), sourceText => new InvalidOperationException(sourceText));
     public bool Cancelled { get; private set; }
     internal bool CanSkipCurrentUnopenedEntry => !_disposed && !Cancelled && !_opened &&
         _current is { IsDirectory: false } && Type == ArchiveType.Zip;
@@ -29,7 +30,7 @@ internal sealed class ArchiveVolumeEntryReader : IReader
         if (Cancelled) return false;
         if (_opened && _completion is { Completed: false })
         {
-            Cancel(); throw new InvalidOperationException("上一成员未读完，不能推进归档遍历。");
+            Cancel(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeEntryReader.MoveToNextEntry.01"), sourceText => new InvalidOperationException(sourceText));
         }
         _entryStream?.Dispose(); _entryStream = null; _completion = null; _opened = false;
         bool moved = _entries.MoveNext(); _current = moved ? _entries.Current : null; return moved;
@@ -38,12 +39,12 @@ internal sealed class ArchiveVolumeEntryReader : IReader
     public EntryStream OpenEntryStream()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (Cancelled || _current is null || _opened) throw new InvalidOperationException("归档成员不能重复打开或在取消后读取。");
+        if (Cancelled || _current is null || _opened) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeEntryReader.OpenEntryStream.01"), sourceText => new InvalidOperationException(sourceText));
         Assembly assembly = typeof(EntryStream).Assembly;
         ConstructorInfo? constructor = typeof(EntryStream).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
             binder: null, types: [typeof(IReader), typeof(Stream)], modifiers: null);
         if (assembly.GetName().Version != new Version(0, 50, 4, 0) || constructor is null)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedLayout, "归档读取接口与锁定依赖版本不一致。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeEntryReader.OpenEntryStream.02"), sourceText => new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedLayout, sourceText));
         _opened = true;
         _completion = new CompletionStream(_current.OpenEntryStream());
         try { return _entryStream = (EntryStream)constructor.Invoke([this, _completion]); }

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Broker;
@@ -26,13 +27,13 @@ internal sealed class BrokerMutationLease : IDisposable
         lease = null;
         string fullPath = Path.GetFullPath(path);
         if (Directory.Exists(fullPath) || Validation.ContainsReparsePoint(Path.GetDirectoryName(fullPath)!))
-            throw new UnauthorizedAccessException("Broker 全局操作锁路径不安全。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerMutationLease.TryAcquireCore.01"), sourceText => new UnauthorizedAccessException(sourceText));
 
         bool existing = File.Exists(fullPath);
         if (existing)
         {
             if (Validation.ContainsReparsePoint(fullPath))
-                throw new UnauthorizedAccessException("Broker 全局操作锁是重解析点。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerMutationLease.TryAcquireCore.02"), sourceText => new UnauthorizedAccessException(sourceText));
             if (protectAcl) MachineStateSecurity.EnsureProtectedPath(fullPath);
         }
 
@@ -47,7 +48,7 @@ internal sealed class BrokerMutationLease : IDisposable
                 bufferSize: 1,
                 existing ? FileOptions.None : FileOptions.WriteThrough);
         }
-        catch (IOException)
+        catch (IOException ex) when (IsContention(ex, creating: !existing))
         {
             return false;
         }
@@ -56,7 +57,7 @@ internal sealed class BrokerMutationLease : IDisposable
         {
             if (protectAcl && !existing) MachineStateSecurity.ProtectBrokerStateFile(fullPath);
             if (Validation.ContainsReparsePoint(fullPath))
-                throw new UnauthorizedAccessException("Broker 全局操作锁在打开时发生重定向。");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerMutationLease.TryAcquireCore.03"), sourceText => new UnauthorizedAccessException(sourceText));
             lease = new BrokerMutationLease(stream);
             return true;
         }
@@ -66,6 +67,12 @@ internal sealed class BrokerMutationLease : IDisposable
             throw;
         }
     }
+
+    internal static bool IsContention(IOException exception, bool creating) =>
+        // Preserve unrelated I/O failures for the error channel; they do not prove
+        // another Broker owns the lease. Compare full HRESULTs, not only low bits.
+        exception.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021) ||
+        creating && (exception.HResult is unchecked((int)0x80070050) or unchecked((int)0x800700B7));
 
     public void Dispose()
     {

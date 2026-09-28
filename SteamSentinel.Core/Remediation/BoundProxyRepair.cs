@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Security.Principal;
 using SteamSentinel.Core.Models;
 
@@ -29,7 +30,7 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
     {
         ValidateTarget(target);
         RequireIdentity(target.TargetUserSid);
-        RequireSnapshot(settings.ReadCurrentUserLan(), target.Before, "LAN 原配置或策略守卫已变化，拒绝准备修复。");
+        RequireSnapshot(settings.ReadCurrentUserLan(), target.Before, MessageText.Create("Backend.Core.BoundProxyRepair.Capture.01"));
         return new()
         {
             TargetUserSid = target.TargetUserSid,
@@ -49,7 +50,7 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
             !SnapshotsEqual(backup.Before, target.Before) || !SnapshotsEqual(backup.After, target.Desired) ||
             !backup.ChangedFields.ToHashSet().SetEquals(target.ChangedFields) ||
             backup.WriteAttempted || backup.MutationState != BoundProxyMutationState.Prepared)
-            throw new InvalidDataException("代理备份与本次精确目标不一致或已尝试写入。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.Apply.01"), sourceText => new InvalidDataException(sourceText));
         RequireBeforeWrite(target.TargetUserSid, target.Before);
         // Journal must already be durable. Any exception after this point can follow an actual write.
         backup.WriteAttempted = true;
@@ -59,19 +60,19 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
             settings.WriteCurrentUserLan(backup.After, backup.ChangedFields);
             backup.WriteSucceeded = true;
             ClassifyReadback(backup, restoring: false);
-            if (!backup.ReadBackMatched) throw new IOException("代理写入后配置不等于精确期望值，保留日志并拒绝宣称成功。");
+            if (!backup.ReadBackMatched) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.Apply.02"), sourceText => new IOException(sourceText));
             settings.NotifySettingsChanged();
             backup.SettingsChangedNotified = true;
             settings.RefreshSettings();
             backup.RefreshNotified = true;
             ClassifyReadback(backup, restoring: false);
-            if (!backup.ReadBackMatched) throw new IOException("代理通知后配置或策略发生变化，修复未通过复核。");
-            backup.Diagnostic = "LAN 配置及策略守卫已重读匹配；未验证应用既有会话或实际网络路径。";
+            if (!backup.ReadBackMatched) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.Apply.03"), sourceText => new IOException(sourceText));
+            backup.DiagnosticText = MessageText.Create("Backend.Core.BoundProxyRepair.Apply.04");
         }
         catch
         {
             TryClassifyReadback(backup, restoring: false);
-            backup.Diagnostic = "代理写入或通知未全部完成；请按记录的实际变更状态复核，不以异常推断未修改。";
+            backup.DiagnosticText = MessageText.Create("Backend.Core.BoundProxyRepair.Apply.05");
             throw;
         }
     }
@@ -80,7 +81,7 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
     {
         ValidateBackup(backup);
         if (!backup.WriteAttempted || backup.MutationState is not (BoundProxyMutationState.Applied or BoundProxyMutationState.Restored))
-            throw new InvalidOperationException("代理变更未被完整确认，拒绝自动回滚。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.Restore.01"), sourceText => new InvalidOperationException(sourceText));
         bool alreadyRestored = backup.MutationState == BoundProxyMutationState.Restored;
         RequireBeforeWrite(backup.TargetUserSid, alreadyRestored ? backup.Before : backup.After);
         backup.RestoreAttempted = true;
@@ -93,19 +94,19 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
                 backup.RestoreWriteSucceeded = true;
             }
             ClassifyReadback(backup, restoring: true);
-            if (!backup.RestoreReadBackMatched) throw new IOException("代理恢复后不等于原配置，未标记回滚完成。");
+            if (!backup.RestoreReadBackMatched) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.Restore.02"), sourceText => new IOException(sourceText));
             settings.NotifySettingsChanged();
             backup.RestoreSettingsChangedNotified = true;
             settings.RefreshSettings();
             backup.RestoreRefreshNotified = true;
             ClassifyReadback(backup, restoring: true);
-            if (!backup.RestoreReadBackMatched) throw new IOException("代理恢复通知后配置发生变化，未标记回滚完成。");
-            backup.Diagnostic = "LAN 原配置及策略守卫已恢复并重读匹配；未验证应用既有会话。";
+            if (!backup.RestoreReadBackMatched) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.Restore.03"), sourceText => new IOException(sourceText));
+            backup.DiagnosticText = MessageText.Create("Backend.Core.BoundProxyRepair.Restore.04");
         }
         catch
         {
             TryClassifyReadback(backup, restoring: true);
-            backup.Diagnostic = "代理回滚或通知未全部完成；保留原值与实际变更状态，未覆盖冲突配置。";
+            backup.DiagnosticText = MessageText.Create("Backend.Core.BoundProxyRepair.Restore.05");
             throw;
         }
     }
@@ -119,14 +120,14 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
             BoundProxySnapshot actual = settings.ReadCurrentUserLan();
             ValidateSnapshot(actual);
             if (!PoliciesEqual(actual.PolicyGuard, target.Desired.PolicyGuard))
-                return State(RemediationVerificationStatus.Unknown, "LAN 策略守卫已变化，不能确认本次目标配置。");
+                return State(RemediationVerificationStatus.Unknown, MessageText.Create("Backend.Core.BoundProxyRepair.Probe.01"));
             return SnapshotsEqual(actual, target.Desired)
-                ? State(RemediationVerificationStatus.Verified, "当前用户 LAN 配置与精确期望值一致；未验证应用既有会话、PAC 内容或实际网络路径。")
-                : State(RemediationVerificationStatus.ResidualDetected, "当前用户 LAN 配置未匹配本次精确期望值。");
+                ? State(RemediationVerificationStatus.Verified, MessageText.Create("Backend.Core.BoundProxyRepair.Probe.02"))
+                : State(RemediationVerificationStatus.ResidualDetected, MessageText.Create("Backend.Core.BoundProxyRepair.Probe.03"));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
-            return State(RemediationVerificationStatus.Unknown, "代理只读复核未完成：" + ex.GetType().Name + "。");
+            return State(RemediationVerificationStatus.Unknown, MessageText.Create("Backend.Core.BoundProxyRepair.Probe.04") + ex.GetType().Name + "。");
         }
     }
 
@@ -134,14 +135,14 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
     {
         ArgumentNullException.ThrowIfNull(target);
         if (target.Source != SupportedSource)
-            throw new NotSupportedException("仅支持当前用户 WinINet 默认/LAN；机器、策略、WinHTTP 及命名 RAS/VPN 作用域不支持自动修复。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateTarget.01"), sourceText => new NotSupportedException(sourceText));
         ValidateSid(target.TargetUserSid);
         ValidateSnapshot(target.Before);
         ValidateSnapshot(target.Desired);
         if (!PoliciesEqual(target.Before.PolicyGuard, target.Desired.PolicyGuard))
-            throw new InvalidDataException("代理修复不能更改策略守卫。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateTarget.02"), sourceText => new InvalidDataException(sourceText));
         if (((target.Before.Flags ^ target.Desired.Flags) & ~KnownFlags) != 0)
-            throw new InvalidDataException("代理修复不得改变未知连接标志位。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateTarget.03"), sourceText => new InvalidDataException(sourceText));
         List<BoundProxyField> difference = [];
         if (target.Before.Flags != target.Desired.Flags) difference.Add(BoundProxyField.Flags);
         if (!StringsEqual(target.Before.ProxyServer, target.Desired.ProxyServer)) difference.Add(BoundProxyField.ProxyServer);
@@ -151,7 +152,7 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
             target.ChangedFields.Any(field => !Enum.IsDefined(field)) ||
             target.ChangedFields.Distinct().Count() != target.ChangedFields.Count ||
             !target.ChangedFields.ToHashSet().SetEquals(difference))
-            throw new InvalidDataException("代理变更字段必须准确等于原值与期望值的差异且不能重复。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateTarget.04"), sourceText => new InvalidDataException(sourceText));
     }
 
     public static void ValidateSnapshot(BoundProxySnapshot snapshot)
@@ -162,13 +163,14 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
         ValidateString(snapshot.AutoConfigUrl);
         if ((long)(snapshot.ProxyServer.Value?.Length ?? 0) + (snapshot.ProxyBypass.Value?.Length ?? 0) +
             (snapshot.AutoConfigUrl.Value?.Length ?? 0) > MaximumSnapshotCharacters)
-            throw new InvalidDataException("代理配置总长度超过修复预算。");
-        BoundProxyPolicyGuard guard = snapshot.PolicyGuard ?? throw new InvalidDataException("代理策略守卫缺失。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateSnapshot.01"), sourceText => new InvalidDataException(sourceText));
+        BoundProxyPolicyGuard guard = snapshot.PolicyGuard ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateSnapshot.02"), sourceText => new InvalidDataException(sourceText));
+        guard.DetailMessage?.Validate();
         if (guard.Status != BoundProxyPolicyStatus.Unmanaged)
-            throw new NotSupportedException("代理策略读取未完成或配置已受策略/机器作用域控制，不支持自动修改。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateSnapshot.03"), sourceText => new NotSupportedException(sourceText));
         if (guard.Fingerprint is null || guard.Fingerprint.Length != 64 || !guard.Fingerprint.All(Uri.IsHexDigit) ||
             guard.Detail is null || guard.Detail.Length > 512)
-            throw new InvalidDataException("代理策略守卫指纹或说明无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateSnapshot.04"), sourceText => new InvalidDataException(sourceText));
     }
 
     public static bool SnapshotsEqual(BoundProxySnapshot? left, BoundProxySnapshot? right) =>
@@ -185,7 +187,7 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
     {
         if (value is null || value.Present != (value.Value is not null) || value.Value is { Length: > MaximumStringCharacters } ||
             value.Value?.Contains('\0') == true || value.Value is { } text && !HasValidUtf16(text))
-            throw new InvalidDataException("代理字符串缺失状态、长度或 UTF-16 格式无效。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateString.01"), sourceText => new InvalidDataException(sourceText));
     }
     private static bool HasValidUtf16(string value)
     {
@@ -202,31 +204,32 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
     }
     private static void ValidateSid(string sid)
     {
-        if (string.IsNullOrEmpty(sid) || sid.Length > 184) throw new InvalidDataException("代理目标 SID 缺失或超限。");
-        try { if (new SecurityIdentifier(sid).Value != sid) throw new InvalidDataException("代理目标 SID 非规范格式。"); }
-        catch (ArgumentException ex) { throw new InvalidDataException("代理目标 SID 无效。", ex); }
+        if (string.IsNullOrEmpty(sid) || sid.Length > 184) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateSid.01"), sourceText => new InvalidDataException(sourceText));
+        try { if (new SecurityIdentifier(sid).Value != sid) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateSid.02"), sourceText => new InvalidDataException(sourceText)); }
+        catch (ArgumentException ex) { throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateSid.03"), sourceText => new InvalidDataException(sourceText, ex)); }
     }
     private void RequireIdentity(string targetSid)
     {
         if (!string.Equals(currentSid(), targetSid, StringComparison.Ordinal))
-            throw new UnauthorizedAccessException("代理目标 SID 与当前令牌不一致，拒绝跨用户操作。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.RequireIdentity.01"), sourceText => new UnauthorizedAccessException(sourceText));
     }
     private void RequireBeforeWrite(string sid, BoundProxySnapshot expected)
     {
         RequireIdentity(sid);
-        RequireSnapshot(settings.ReadCurrentUserLan(), expected, "代理原值或策略已变化，拒绝覆盖当前配置。");
+        RequireSnapshot(settings.ReadCurrentUserLan(), expected, MessageText.Create("Backend.Core.BoundProxyRepair.RequireBeforeWrite.01"));
         RequireIdentity(sid);
-        RequireSnapshot(settings.ReadCurrentUserLan(), expected, "代理在临写复核期间变化，拒绝覆盖当前配置。");
+        RequireSnapshot(settings.ReadCurrentUserLan(), expected, MessageText.Create("Backend.Core.BoundProxyRepair.RequireBeforeWrite.02"));
         RequireIdentity(sid);
     }
-    private static void RequireSnapshot(BoundProxySnapshot actual, BoundProxySnapshot expected, string error)
+    private static void RequireSnapshot(BoundProxySnapshot actual, BoundProxySnapshot expected, MessageText error)
     {
         ValidateSnapshot(actual);
-        if (!SnapshotsEqual(actual, expected)) throw new IOException(error);
+        if (!SnapshotsEqual(actual, expected)) throw MessageExceptions.Create(error, text => new IOException(text));
     }
     public static void ValidateBackup(BoundProxyBackup backup)
     {
         ArgumentNullException.ThrowIfNull(backup);
+        backup.DiagnosticMessage?.Validate();
         ValidateTarget(new()
         {
             TargetUserSid = backup.TargetUserSid,
@@ -235,7 +238,7 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
             Desired = backup.After,
             ChangedFields = backup.ChangedFields
         });
-        if (!Enum.IsDefined(backup.MutationState)) throw new InvalidDataException("代理日志状态无效。");
+        if (!Enum.IsDefined(backup.MutationState)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundProxyRepair.ValidateBackup.01"), sourceText => new InvalidDataException(sourceText));
     }
     private void ClassifyReadback(BoundProxyBackup backup, bool restoring)
     {
@@ -259,6 +262,6 @@ public sealed class BoundProxyRepair(IBoundProxySettings settings, Func<string> 
             else backup.ReadBackMatched = false;
         }
     }
-    private static RemediationVerificationObservation State(RemediationVerificationStatus status, string message) =>
-        new() { Status = status, Message = message };
+    private static RemediationVerificationObservation State(RemediationVerificationStatus status, MessageText message) =>
+        new() { Status = status, MessageText = message };
 }

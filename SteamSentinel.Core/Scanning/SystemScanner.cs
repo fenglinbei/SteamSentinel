@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -36,20 +37,20 @@ public sealed partial class SystemScanner
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        progress?.Report(new ScanProgress("系统扫描", "活动进程", 0, null, "检查进程映像与已知哈希"));
+        progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.SystemScanner.ScanAsync.01"), MessageText.Create("Backend.Core.SystemScanner.ScanAsync.02"), 0, null, MessageText.Create("Backend.Core.SystemScanner.ScanAsync.03")));
         await ScanProcessesAsync(report, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
-        progress?.Report(new ScanProgress("系统扫描", "已知落地点", 0, null, "检查本机落地路径"));
+        progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.SystemScanner.ScanAsync.04"), MessageText.Create("Backend.Core.SystemScanner.ScanAsync.05"), 0, null, MessageText.Create("Backend.Core.SystemScanner.ScanAsync.06")));
         await ScanKnownPathsAsync(report, cancellationToken);
         ScanRandomProgramDirectories(report, cancellationToken);
 
-        progress?.Report(new ScanProgress("系统扫描", "自启动与任务", 0, null, "检查 Run、任务和服务"));
+        progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.SystemScanner.ScanAsync.07"), MessageText.Create("Backend.Core.SystemScanner.ScanAsync.08"), 0, null, MessageText.Create("Backend.Core.SystemScanner.ScanAsync.09")));
         ScanRunKeys(report);
         await ScanTaskFilesAsync(report, cancellationToken);
         ScanServiceRegistry(report);
 
-        progress?.Report(new ScanProgress("系统扫描", "安全与网络配置", 0, null, "检查代理、hosts、Defender 和防火墙"));
+        progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.SystemScanner.ScanAsync.10"), MessageText.Create("Backend.Core.SystemScanner.ScanAsync.11"), 0, null, MessageText.Create("Backend.Core.SystemScanner.ScanAsync.12")));
         new TrustProxyDiagnosticScanner().Collect(report, progress, cancellationToken);
         ScanHosts(report);
         await ScanSecurityControlsAsync(report, cancellationToken);
@@ -89,10 +90,10 @@ public sealed partial class SystemScanner
                         Category = FindingCategory.Process,
                         Severity = confirmed ? FindingSeverity.Critical : FindingSeverity.Medium,
                         Score = confirmed ? 100 : 45,
-                        Title = confirmed ? "已确认恶意进程正在运行" : "进程名称需要哈希复核",
-                        Description = hashRule?.Label ?? "进程名称与已知样本相同，但名称也可能被正常程序复用。未命中确认哈希时不会自动处置。",
+                        TitleText = confirmed ? MessageText.Create("Backend.Core.SystemScanner.ScanProcessesAsync.01") : MessageText.Create("Backend.Core.SystemScanner.ScanProcessesAsync.02"),
+                        DescriptionText = hashRule?.LabelText ?? MessageText.Create("Backend.Core.SystemScanner.ScanProcessesAsync.03"),
                         Target = path ?? processName,
-                        Evidence = $"PID {process.Id}；映像：{path ?? "无法读取"}",
+                        EvidenceText = MessageText.Create("Backend.Core.SystemScanner.ScanProcessesAsync.04", process.Id, path is null ? MessageText.Create("Backend.Core.SystemScanner.ScanProcessesAsync.05") : (MessageText)path),
                         Sha256 = sha256,
                         ProcessId = process.Id,
                         ProcessStartedAtUtc = process.StartTime.ToUniversalTime(),
@@ -139,14 +140,14 @@ public sealed partial class SystemScanner
                 Category = FindingCategory.File,
                 Severity = known ? FindingSeverity.Critical : FindingSeverity.High,
                 Score = known ? 100 : 70,
-                Title = known ? "已确认恶意落地点仍然存在" : "已知落地点路径需要哈希复核",
-                Description = known
-                    ? "路径与精确恶意哈希同时命中。"
+                TitleText = known ? MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.01") : MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.02"),
+                DescriptionText = known
+                    ? MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.03")
                     : Directory.Exists(path)
-                        ? "目录路径与已知事件相同，仅凭目录名不能判断是否有毒。请进一步检查其中的实际文件，目录存在不等于病毒仍在运行。"
-                        : "路径与已知事件相同，但没有命中精确恶意哈希。路径名可能被其他软件复用，请进一步检查实际内容。",
+                        ? MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.04")
+                        : MessageText.Create("Backend.Core.SystemScanner.ScanKnownPathsAsync.05"),
                 Target = path,
-                Evidence = template,
+                EvidenceText = template,
                 Sha256 = sha256,
                 IsKnownMalware = known,
                 CanRemediate = known && File.Exists(path),
@@ -172,7 +173,7 @@ public sealed partial class SystemScanner
                 cancellationToken.ThrowIfCancellationRequested();
                 if (++visitedDirectories > MaximumRandomProgramDirectories)
                 {
-                    AddCoverage(report, $"随机样式程序目录枚举达到 {MaximumRandomProgramDirectories} 项上限。", programs);
+                    AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanRandomProgramDirectories.01", (MaximumRandomProgramDirectories)), programs);
                     break;
                 }
                 if (!ContentDiscovery.IsLocalSafePath(directory))
@@ -184,11 +185,11 @@ public sealed partial class SystemScanner
                 string name = Path.GetFileName(directory);
                 if (!RandomDirectoryNameRegex().IsMatch(name)) continue;
                 int score = 10;
-                List<string> evidence = ["随机样式目录名"];
+                List<MessageText> evidence = [MessageText.Create("Backend.Core.SystemScanner.ScanRandomProgramDirectories.02")];
                 if (File.Exists(Path.Combine(directory, "WindowsUpdatem.exe"))) { score += 45; evidence.Add("WindowsUpdatem.exe"); }
                 RandomProgramStructure structure = InspectRandomProgramDirectory(directory, cancellationToken);
                 if (structure.CoverageNote is not null) AddCoverage(report, structure.CoverageNote, directory);
-                if (structure.HasPython) { score += 15; evidence.Add("内嵌 Python"); }
+                if (structure.HasPython) { score += 15; evidence.Add(MessageText.Create("Backend.Core.SystemScanner.ScanRandomProgramDirectories.03")); }
                 if (structure.HasPymem) { score += 20; evidence.Add("pymem"); }
                 if (structure.HasWin32Crypt) { score += 15; evidence.Add("win32crypt"); }
                 if (score < 45) continue;
@@ -199,10 +200,10 @@ public sealed partial class SystemScanner
                     Category = FindingCategory.File,
                     Severity = score >= 80 ? FindingSeverity.Critical : FindingSeverity.High,
                     Score = Math.Min(score, 100),
-                    Title = "随机程序目录符合 Steam 窃密加载器结构",
-                    Description = string.Join("、", evidence),
+                    TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanRandomProgramDirectories.04"),
+                    DescriptionText = MessageText.List(evidence),
                     Target = directory,
-                    Evidence = "多项结构证据关联命中，处置前请查看目录清单。",
+                    EvidenceText = MessageText.Create("Backend.Core.SystemScanner.ScanRandomProgramDirectories.05"),
                     IsKnownMalware = false,
                     CanRemediate = false,
                     SuggestedActions = [SuggestedActionKind.ReviewOnly]
@@ -211,17 +212,17 @@ public sealed partial class SystemScanner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            AddCoverage(report, $"随机样式程序目录未完整读取：{ex.Message}", programs);
+            AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanRandomProgramDirectories.06", (MessageExceptions.Describe(ex))), programs);
         }
         if (skippedDirectories > 0)
-            AddCoverage(report, $"随机样式程序目录检查跳过 {skippedDirectories:N0} 个重解析点或非本地路径，示例：{skippedExample}", programs);
+            AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanRandomProgramDirectories.07", (System.FormattableString.Invariant($"{skippedDirectories:N0}")), (skippedExample)), programs);
     }
 
     private static RandomProgramStructure InspectRandomProgramDirectory(
         string root, CancellationToken cancellationToken)
     {
         bool python = false, pymem = false, win32Crypt = false;
-        string? coverageNote = null;
+        MessageText? coverageNote = null;
         int visited = 0;
         Stack<(string Path, int Depth)> pending = new();
         pending.Push((root, 0));
@@ -236,13 +237,13 @@ public sealed partial class SystemScanner
                     cancellationToken.ThrowIfCancellationRequested();
                     if (++visited > MaximumRandomProgramEntries)
                     {
-                        coverageNote ??= $"随机样式程序目录内部枚举达到 {MaximumRandomProgramEntries} 项上限。";
+                        coverageNote ??= MessageText.Create("Backend.Core.SystemScanner.InspectRandomProgramDirectory.01", (MaximumRandomProgramEntries));
                         return new(python, pymem, win32Crypt, coverageNote);
                     }
                     FileAttributes attributes = File.GetAttributes(entry);
                     if ((attributes & FileAttributes.ReparsePoint) != 0)
                     {
-                        coverageNote ??= $"随机样式程序目录检查跳过重解析点：{entry}";
+                        coverageNote ??= MessageText.Create("Backend.Core.SystemScanner.InspectRandomProgramDirectory.02", (entry));
                         continue;
                     }
                     string name = Path.GetFileName(entry);
@@ -250,7 +251,7 @@ public sealed partial class SystemScanner
                     {
                         if (name.Equals("pymem", StringComparison.OrdinalIgnoreCase)) pymem = true;
                         if (current.Depth >= MaximumRandomProgramDepth)
-                            coverageNote ??= $"随机样式程序目录达到 {MaximumRandomProgramDepth} 层深度上限：{entry}";
+                            coverageNote ??= MessageText.Create("Backend.Core.SystemScanner.InspectRandomProgramDirectory.03", (MaximumRandomProgramDepth), (entry));
                         else pending.Push((entry, current.Depth + 1));
                     }
                     else
@@ -264,13 +265,13 @@ public sealed partial class SystemScanner
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                coverageNote ??= $"随机样式程序目录未完整读取：{current.Path}，{ex.Message}";
+                coverageNote ??= MessageText.Create("Backend.Core.SystemScanner.InspectRandomProgramDirectory.04", (current.Path), (MessageExceptions.Describe(ex)));
             }
         }
         return new(python, pymem, win32Crypt, coverageNote);
     }
 
-    private sealed record RandomProgramStructure(bool HasPython, bool HasPymem, bool HasWin32Crypt, string? CoverageNote);
+    private sealed record RandomProgramStructure(bool HasPython, bool HasPymem, bool HasWin32Crypt, MessageText? CoverageNote);
 
     private void ScanRunKeys(ScanReport report)
     {
@@ -309,10 +310,10 @@ public sealed partial class SystemScanner
                             Category = FindingCategory.Persistence,
                             Severity = confirmed ? FindingSeverity.Critical : FindingSeverity.High,
                             Score = confirmed ? 100 : 75,
-                            Title = "命中假红信家族自启动项",
-                            Description = $"{hiveName}\\{keyPath}\\{valueName}",
+                            TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanRunKeys.01"),
+                            DescriptionText = $"{hiveName}\\{keyPath}\\{valueName}",
                             Target = value,
-                            Evidence = value,
+                            EvidenceText = value,
                             RegistryHive = hiveName.StartsWith("HKCU", StringComparison.Ordinal) ? "HKCU" : "HKLM",
                             RegistryView = view.ToString(),
                             RegistryKey = keyPath,
@@ -336,7 +337,7 @@ public sealed partial class SystemScanner
     {
         string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "Tasks");
         if (!Directory.Exists(root)) return;
-        List<string> discoveryNotes = [];
+        MessageTextCollection discoveryNotes = [];
         try
         {
             foreach (string file in ContentDiscovery.Files(root, discoveryNotes, 100_000, 32, cancellationToken))
@@ -374,10 +375,10 @@ public sealed partial class SystemScanner
                     Category = FindingCategory.Persistence,
                     Severity = knownName ? FindingSeverity.Critical : FindingSeverity.High,
                     Score = knownName ? 95 : 70,
-                    Title = "计划任务包含已知假红信家族指标",
-                    Description = knownName ? "任务名称与已确认家族一致，处置前仍应核对实际启动目标。" : "任务内容出现相关指标，需要进一步检查实际启动文件。",
+                    TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanTaskFilesAsync.01"),
+                    DescriptionText = knownName ? MessageText.Create("Backend.Core.SystemScanner.ScanTaskFilesAsync.02") : MessageText.Create("Backend.Core.SystemScanner.ScanTaskFilesAsync.03"),
                     Target = taskName,
-                    Evidence = file,
+                    EvidenceText = file,
                     Sha256 = taskSha256,
                     ConfigurationSnapshot = TaskCommandSnapshot(text),
                     IsKnownMalware = knownName,
@@ -390,11 +391,11 @@ public sealed partial class SystemScanner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            AddCoverage(report, $"无法完整读取计划任务：{ex.Message}", root);
+            AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanTaskFilesAsync.04", (MessageExceptions.Describe(ex))), root);
         }
-        foreach (string note in discoveryNotes.Distinct().Take(16)) AddCoverage(report, note, root);
+        foreach (MessageText note in discoveryNotes.Texts.DistinctBy(n => n.OriginalText).Take(16)) AddCoverage(report, note, root);
         if (discoveryNotes.Count > 16)
-            AddCoverage(report, $"计划任务发现阶段另有 {discoveryNotes.Count - 16:N0} 条受限路径说明未逐条列出。", root);
+            AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanTaskFilesAsync.05", (System.FormattableString.Invariant($"{discoveryNotes.Count - 16:N0}"))), root);
     }
 
     private static string? TaskCommandSnapshot(string text)
@@ -430,10 +431,10 @@ public sealed partial class SystemScanner
                     Category = FindingCategory.Persistence,
                     Severity = FindingSeverity.High,
                     Score = 75,
-                    Title = "服务项包含已知假红信家族指标",
-                    Description = serviceName,
+                    TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanServiceRegistry.01"),
+                    DescriptionText = serviceName,
                     Target = imagePath,
-                    Evidence = imagePath,
+                    EvidenceText = imagePath,
                     CanRemediate = false,
                     SuggestedActions = [SuggestedActionKind.ReviewOnly]
                 });
@@ -476,10 +477,10 @@ public sealed partial class SystemScanner
                     Category = FindingCategory.Network,
                     Severity = FindingSeverity.Information,
                     Score = 0,
-                    Title = "已知 C2 已在 hosts 中阻断",
-                    Description = string.Join("、", blocked.Distinct(StringComparer.OrdinalIgnoreCase)),
+                    TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanHosts.01"),
+                    DescriptionText = string.Join("、", blocked.Distinct(StringComparer.OrdinalIgnoreCase)),
                     Target = hosts,
-                    Evidence = "防御性配置，无需删除。",
+                    EvidenceText = MessageText.Create("Backend.Core.SystemScanner.ScanHosts.02"),
                     CanRemediate = false,
                     SuggestedActions = [SuggestedActionKind.None]
                 });
@@ -493,10 +494,10 @@ public sealed partial class SystemScanner
                     Category = FindingCategory.Network,
                     Severity = FindingSeverity.High,
                     Score = 70,
-                    Title = "已知 C2 域名被重定向到非阻断地址",
-                    Description = string.Join("；", redirected),
+                    TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanHosts.03"),
+                    DescriptionText = string.Join("；", redirected),
                     Target = hosts,
-                    Evidence = "需要人工核对 hosts。",
+                    EvidenceText = MessageText.Create("Backend.Core.SystemScanner.ScanHosts.04"),
                     CanRemediate = true,
                     SuggestedActions = [SuggestedActionKind.BlockKnownDomains]
                 });
@@ -504,7 +505,7 @@ public sealed partial class SystemScanner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            AddCoverage(report, $"无法读取 hosts：{ex.Message}", hosts);
+            AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanHosts.05", (MessageExceptions.Describe(ex))), hosts);
         }
     }
 
@@ -514,7 +515,7 @@ public sealed partial class SystemScanner
         using JsonDocument? document = await PowerShellProbe.RunJsonAsync(script, TimeSpan.FromSeconds(15), cancellationToken);
         if (document is null)
         {
-            AddCoverage(report, "无法通过系统接口读取 Defender/防火墙状态。", "Windows Security");
+            AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.01"), "Windows Security");
             return;
         }
 
@@ -543,10 +544,10 @@ public sealed partial class SystemScanner
                 Category = FindingCategory.SecurityControl,
                 Severity = FindingSeverity.High,
                 Score = 80,
-                Title = "Windows 安全防护未完全开启",
-                Description = $"Antivirus={antivirus}; RealTime={realtime}; Behavior={behavior}; FirewallDisabled={string.Join(',', disabledProfiles)}",
+                TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.02"),
+                DescriptionText = $"Antivirus={antivirus}; RealTime={realtime}; Behavior={behavior}; FirewallDisabled={string.Join(',', disabledProfiles)}",
                 Target = "Windows Security",
-                Evidence = "可由受控管理员 Broker 恢复基础安全开关。",
+                EvidenceText = MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.03"),
                 CanRemediate = true,
                 SuggestedActions = [SuggestedActionKind.RestoreSecurityControls]
             });
@@ -575,10 +576,10 @@ public sealed partial class SystemScanner
                     Category = FindingCategory.SecurityControl,
                     Severity = FindingSeverity.High,
                     Score = 80,
-                    Title = "Defender 排除项指向已知恶意落地点",
-                    Description = "排除项可能使恶意目录逃避实时扫描。",
+                    TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.04"),
+                    DescriptionText = MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.05"),
                     Target = expanded,
-                    Evidence = exclusion,
+                    EvidenceText = exclusion,
                     CanRemediate = true,
                     SuggestedActions = [SuggestedActionKind.RemoveDefenderExclusion]
                 });
@@ -672,18 +673,18 @@ public sealed partial class SystemScanner
         }
     }
 
-    private static void AddCoverage(ScanReport report, string message, string target)
+    private static void AddCoverage(ScanReport report, MessageText message, string target)
     {
         report.Coverage = ScanCoverage.Partial;
-        report.CoverageNotes.Add(message);
+        report.AddCoverageNote(message);
         report.Findings.Add(new Finding
         {
             RuleId = "SYSTEM-SCAN-PARTIAL",
             Category = FindingCategory.Coverage,
             Severity = FindingSeverity.Medium,
             Score = 30,
-            Title = "系统扫描未完整",
-            Description = message,
+            TitleText = MessageText.Create("Backend.Core.SystemScanner.AddCoverage.01"),
+            DescriptionText = message,
             Target = target,
             CanRemediate = false,
             SuggestedActions = [SuggestedActionKind.ReviewOnly]

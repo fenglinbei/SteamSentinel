@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -23,7 +24,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
     private static readonly string[] SettingNames = ["ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL", "AutoDetect"];
     private static readonly string[] PolicyNames = [.. SettingNames, "ProxySettingsPerUser"];
     private static readonly string[] ControlNames = ["Proxy", "AutoConfig"];
-    private const string ScopeNotice = "仅记录此来源的本地配置，不代表 Steam 会话实际采用的代理；不解析 PAC、不执行 WPAD 或 DNS。";
+    private static readonly MessageText ScopeNotice = MessageText.Create("Backend.Core.ProxyConfigurationScanner.ScopeNotice.01");
 
     public void Collect(TrustProxyDiagnosticReport diagnostic, DiagnosticScanLimits limits, CancellationToken token = default)
     {
@@ -33,7 +34,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
         int characterLimit = Math.Clamp(limits.MaximumProxyValueCharacters, 0, 65536);
         RegistryView view = Environment.Is64BitOperatingSystem ? RegistryView.Registry64 : RegistryView.Registry32;
         DiagnosticReadStatus identityStatus = DiagnosticReadStatus.Complete;
-        string identityDetail;
+        MessageText identityDetail;
         try
         {
             token.ThrowIfCancellationRequested();
@@ -42,15 +43,15 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
             bool matches = !string.IsNullOrWhiteSpace(currentSid) &&
                            string.Equals(currentSid, diagnostic.TargetUserSid, StringComparison.OrdinalIgnoreCase);
             identityStatus = matches ? DiagnosticReadStatus.Complete : DiagnosticReadStatus.NotChecked;
-            identityDetail = matches ? "当前安全令牌 SID 与目标 SID 一致；用户注册表读取显式绑定该 SID。" :
-                "当前安全令牌 SID 未能匹配目标 SID，已拒绝读取当前用户注册表与当前用户 WinINet 配置。";
+            identityDetail = matches ? MessageText.Create("Backend.Core.ProxyConfigurationScanner.Collect.01") :
+                MessageText.Create("Backend.Core.ProxyConfigurationScanner.Collect.02");
         }
         catch (Exception ex) when (IsReadException(ex))
         {
             identityStatus = StatusFor(ex);
             identityDetail = Describe(ex);
         }
-        diagnostic.Checks.Add(new DiagnosticCheck { Name = "Proxy.TargetUserIdentity", Status = identityStatus, Detail = identityDetail });
+        diagnostic.Checks.Add(new DiagnosticCheck { Name = "Proxy.TargetUserIdentity", Status = identityStatus, DetailText = identityDetail });
 
         void ReadSource(string source, string scope, string location, bool userSource, IReadOnlyList<string> names,
             Func<ProxySourceRead> read)
@@ -59,7 +60,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
             DiagnosticReadStatus? stopped = token.IsCancellationRequested ? DiagnosticReadStatus.Cancelled :
                 elapsed.Elapsed >= limits.MaximumDuration || characterLimit == 0 ? DiagnosticReadStatus.LimitReached : null;
             if (stopped is not null)
-                result = Unread(names, stopped.Value, "采集已取消或达到时间/长度预算，此来源未开始读取。");
+                result = Unread(names, stopped.Value, MessageText.Create("Backend.Core.ProxyConfigurationScanner.Collect.03"));
             else if (userSource && identityStatus != DiagnosticReadStatus.Complete)
                 result = Unread(names, identityStatus, identityDetail);
             else
@@ -71,13 +72,13 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
                         result = result with
                         {
                             Status = token.IsCancellationRequested ? DiagnosticReadStatus.Cancelled : DiagnosticReadStatus.LimitReached,
-                            Detail = result.Detail + " 同步读取返回后已取消或超出时间预算，后续来源停止读取。"
+                            DetailText = result.DetailText + MessageText.Create("Backend.Core.ProxyConfigurationScanner.Collect.04")
                         };
                 }
                 catch (Exception ex) when (IsReadException(ex)) { result = Unread(names, StatusFor(ex), Describe(ex)); }
             }
             if (result.Status != DiagnosticReadStatus.Complete && result.Values.Count == 0)
-                result = Unread(names, result.Status, result.Detail);
+                result = Unread(names, result.Status, result.DetailText);
             ProxyConfigurationObservation observation = ConvertObservation(source, scope, location,
                 userSource ? diagnostic.TargetUserSid : null, result, characterLimit);
             diagnostic.Proxies.Add(observation);
@@ -86,7 +87,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
                 Name = "Proxy." + source + "." + scope,
                 ObservationId = observation.Id,
                 Status = observation.Status,
-                Detail = observation.Detail
+                DetailText = observation.DetailText
             });
         }
 
@@ -113,9 +114,9 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
             Name = "Proxy.CollectionBoundary",
             Required = false,
             Status = DiagnosticReadStatus.Complete,
-            Detail = $"固定读取 8 个本地来源；每值上限 {characterLimit} 字符；只读注册表视图 {view}。" +
-                "每个来源和注册表值前检查取消，来源返回后检查耗时。Windows 同步查询不能在调用内部强制中断；" +
-                "WinHTTP 默认配置不包含当前应用会话覆盖，WinINet 查询只反映当前连接的已保存配置。" + ScopeNotice
+            DetailText = MessageText.Create("Backend.Core.ProxyConfigurationScanner.Collect.05", (characterLimit), (view)) +
+                MessageText.Create("Backend.Core.ProxyConfigurationScanner.Collect.06") +
+                MessageText.Create("Backend.Core.ProxyConfigurationScanner.Collect.07") + ScopeNotice
         });
     }
 
@@ -123,7 +124,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
         string? sid, ProxySourceRead result, int limit)
     {
         List<DiagnosticConfigurationValue> values = [];
-        List<string> details = [result.Detail, ScopeNotice];
+        List<MessageText> details = [result.DetailText, ScopeNotice];
         DiagnosticReadStatus status = result.Status;
         // A reader returns only the fixed requested values. Bound injected/custom providers as well.
         if (result.Values.Count > 16) status = Combine(status, DiagnosticReadStatus.LimitReached);
@@ -132,25 +133,26 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
             status = Combine(status, value.Status);
             string? raw = value.Value;
             string? hash = null;
-            string? text = null;
+            MessageText? text = null;
             bool redacted = false;
             if (raw is not null)
             {
                 if (raw.Length > limit)
                 {
                     status = Combine(status, DiagnosticReadStatus.LimitReached);
-                    details.Add(value.Name + "：值超出字符预算，未保留部分内容或计算哈希。");
+                    details.Add(value.Name + MessageText.Create("Backend.Core.ProxyConfigurationScanner.ConvertObservation.01"));
                 }
                 else
                 {
                     hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
                     text = RedactValue(raw, value.Kind);
-                    redacted = !string.Equals(raw, text, StringComparison.Ordinal);
-                    if (redacted) details.Add(value.Name + "：已隐藏凭据或敏感内容；SHA256 对应脱敏前值的 UTF-8 表示。");
+                    redacted = !string.Equals(raw, text?.OriginalText, StringComparison.Ordinal);
+                    if (redacted) details.Add(value.Name + MessageText.Create("Backend.Core.ProxyConfigurationScanner.ConvertObservation.02"));
                 }
             }
-            values.Add(new DiagnosticConfigurationValue(value.Name, value.Kind, text, value.Present, hash, redacted, value.Status));
-            details.Add(value.Name + "=" + value.Status + (value.Detail is null ? "" : " (" + value.Detail + ")"));
+            values.Add(new DiagnosticConfigurationValue(value.Name, value.Kind, text?.OriginalText, value.Present, hash, redacted, value.Status) { ValueMessage = text?.Message });
+            details.Add(value.Detail is null ? (MessageText)(value.Name + "=" + value.Status) :
+                MessageText.Create("Backend.Core.ProxyConfigurationScanner.ValueDetail", value.Name, value.Status, value.DetailText));
         }
 
         ProxyValueRead? Raw(string name) => result.Values.Take(16).FirstOrDefault(v => v.Name == name && v.Status == DiagnosticReadStatus.Complete && v.Present && v.Value?.Length <= limit);
@@ -162,7 +164,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
                     NumberStyles.Integer, CultureInfo.InvariantCulture, out int nativeBoolean)) return nativeBoolean != 0;
             if (value.Kind == expected && value.Value is "0" or "1") return value.Value == "1";
             status = Combine(status, DiagnosticReadStatus.Failed);
-            details.Add(name + "：类型或数值不符合 0/1 的 " + expected + "，保留原值但不转换为布尔值。");
+            details.Add(name + MessageText.Create("Backend.Core.ProxyConfigurationScanner.ConvertObservation.03") + expected + MessageText.Create("Backend.Core.ProxyConfigurationScanner.ConvertObservation.04"));
             return null;
         }
         string? StringValue(string name)
@@ -171,7 +173,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
             if (value is null) return null;
             if (value.Kind is "REG_SZ" or "REG_EXPAND_SZ" or "LPWSTR") return values.First(v => v.Name == name).Value;
             status = Combine(status, DiagnosticReadStatus.Failed);
-            details.Add(name + "：不是字符串类型，保留原值但不转换为代理字段。");
+            details.Add(name + MessageText.Create("Backend.Core.ProxyConfigurationScanner.ConvertObservation.05"));
             return null;
         }
         bool? enabled = Boolean("ProxyEnable");
@@ -182,7 +184,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
         if (access is not null)
         {
             if (access.Kind == "DWORD" && access.Value is "1" or "3") enabled = access.Value == "3";
-            else { status = Combine(status, DiagnosticReadStatus.Failed); details.Add("AccessType：未识别的 WinHTTP 访问类型，未推断代理启用状态。"); }
+            else { status = Combine(status, DiagnosticReadStatus.Failed); details.Add(MessageText.Create("Backend.Core.ProxyConfigurationScanner.ConvertObservation.06")); }
         }
         string? server = StringValue("ProxyServer");
         string? bypass = StringValue("ProxyOverride");
@@ -194,21 +196,24 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
             UserSid = sid,
             Location = location,
             Status = status,
-            Detail = string.Join(" ", details.Where(d => !string.IsNullOrWhiteSpace(d))),
+            DetailText = MessageText.Join(" ", details.Where(d => !string.IsNullOrWhiteSpace(d.OriginalText))),
             Values = values,
             ProxyEnabled = enabled,
             AutoDetect = autoDetect,
             ProxyServer = server,
+            ProxyServerMessage = values.FirstOrDefault(v => v.Name == "ProxyServer")?.ValueMessage,
             ProxyBypass = bypass,
-            AutoConfigUrl = pac
+            ProxyBypassMessage = values.FirstOrDefault(v => v.Name == "ProxyOverride")?.ValueMessage,
+            AutoConfigUrl = pac,
+            AutoConfigUrlMessage = values.FirstOrDefault(v => v.Name == "AutoConfigURL")?.ValueMessage
         };
     }
 
-    private static string RedactValue(string value, string kind)
+    private static MessageText RedactValue(string value, string kind)
     {
         // Unexpected binary types may encode secrets; retain only their pre-redaction digest.
         if (kind is "REG_BINARY" or "REG_NONE" || kind.StartsWith("REG_UNKNOWN", StringComparison.Ordinal))
-            return "[REDACTED: 非文本代理配置，仅保留类型与原值摘要]";
+            return MessageText.Create("Backend.Core.ProxyConfigurationScanner.RedactValue.01");
         if (value.Contains('@'))
         {
             if (Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) && !string.IsNullOrEmpty(uri.Host) && !string.IsNullOrEmpty(uri.UserInfo))
@@ -217,9 +222,10 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
                 int end = value.IndexOfAny(['/', '?', '#'], start);
                 if (end < 0) end = value.Length;
                 int at = value.LastIndexOf('@', end - 1, end - start);
-                value = at >= start ? value[..start] + "[REDACTED]@" + value[(at + 1)..] : "[REDACTED: 代理凭据]";
+                if (at < start) return MessageText.Create("Backend.Core.ProxyConfigurationScanner.RedactValue.02");
+                value = value[..start] + "[REDACTED]@" + value[(at + 1)..];
             }
-            else value = "[REDACTED: 代理字段包含凭据或用户标识]";
+            else return MessageText.Create("Backend.Core.ProxyConfigurationScanner.RedactValue.03");
         }
         return ScriptSignals.RedactSecrets(value);
     }
@@ -241,7 +247,7 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
         return Rank(second) > Rank(first) ? second : first;
     }
 
-    private static ProxySourceRead Unread(IReadOnlyList<string> names, DiagnosticReadStatus status, string detail) =>
+    private static ProxySourceRead Unread(IReadOnlyList<string> names, DiagnosticReadStatus status, MessageText detail) =>
         new(status, detail, names.Select(name => new ProxyValueRead(name, "NotRead", null, status, false)).ToArray());
     internal static bool IsReadException(Exception ex) => ex is UnauthorizedAccessException or SecurityException or IOException or
         Win32Exception or OperationCanceledException or PlatformNotSupportedException or DllNotFoundException or EntryPointNotFoundException or ProxyReadLimitException;
@@ -254,8 +260,8 @@ public sealed class ProxyConfigurationScanner(IProxyConfigurationReader? reader 
         PlatformNotSupportedException or DllNotFoundException or EntryPointNotFoundException => DiagnosticReadStatus.NotChecked,
         _ => DiagnosticReadStatus.Failed
     };
-    internal static string Describe(Exception ex) => ex is Win32Exception native
-        ? $"本地配置读取失败：Win32 {native.NativeErrorCode}。" : "本地配置读取未完成：" + ex.GetType().Name + "。";
+    internal static MessageText Describe(Exception ex) => ex is Win32Exception native
+        ? MessageText.Create("Backend.Core.ProxyConfigurationScanner.Describe.01", (native.NativeErrorCode)) : MessageText.Create("Backend.Core.ProxyConfigurationScanner.Describe.02") + ex.GetType().Name + "。";
 }
 
 /// <summary>Only these read operations are available to the scanner; injectable for harmless fixtures.</summary>
@@ -266,10 +272,50 @@ public interface IProxyConfigurationReader
     ProxySourceRead ReadWinHttpDefault(int maximumCharacters, CancellationToken token);
     ProxySourceRead ReadWinInetCurrentUser(int maximumCharacters, CancellationToken token);
 }
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record ProxyValueRead(string Name, string Kind, string? Value, DiagnosticReadStatus Status, bool Present = true, string? Detail = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
 
-public sealed record ProxyValueRead(string Name, string Kind, string? Value, DiagnosticReadStatus Status,
-    bool Present = true, string? Detail = null);
-public sealed record ProxySourceRead(DiagnosticReadStatus Status, string Detail, IReadOnlyList<ProxyValueRead> Values);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public ProxyValueRead(string Name, string Kind, string? Value, DiagnosticReadStatus Status, SteamSentinel.Core.Reporting.MessageText Detail, bool Present = true) : this(Name, Kind, Value, Status, Present, Detail.OriginalText)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record ProxySourceRead(DiagnosticReadStatus Status, string Detail, IReadOnlyList<ProxyValueRead> Values)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public ProxySourceRead(DiagnosticReadStatus Status, SteamSentinel.Core.Reporting.MessageText Detail, IReadOnlyList<ProxyValueRead> Values) : this(Status, Detail.OriginalText, Values)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
 internal sealed class ProxyReadLimitException : Exception { }
 
 internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReader
@@ -287,7 +333,7 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
         token.ThrowIfCancellationRequested();
         using RegistryKey root = RegistryKey.OpenBaseKey(hive, view);
         using RegistryKey? key = root.OpenSubKey(subkey, writable: false);
-        if (key is null) return new ProxySourceRead(DiagnosticReadStatus.NotPresent, "注册表键不存在。",
+        if (key is null) return new ProxySourceRead(DiagnosticReadStatus.NotPresent, MessageText.Create("Backend.Core.ProxyConfigurationScanner.ReadRegistry.01"),
             names.Select(n => new ProxyValueRead(n, "Missing", null, DiagnosticReadStatus.NotPresent, false)).ToArray());
         List<ProxyValueRead> values = [];
         DiagnosticReadStatus status = DiagnosticReadStatus.Complete;
@@ -298,7 +344,7 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
             values.Add(value);
             status = ProxyConfigurationScanner.Combine(status, value.Status);
         }
-        return new ProxySourceRead(status, "只读固定值名；REG_EXPAND_SZ 不展开环境变量，策略值也不推断应用最终优先级。", values);
+        return new ProxySourceRead(status, MessageText.Create("Backend.Core.ProxyConfigurationScanner.ReadRegistry.02"), values);
     }
 
     private static ProxyValueRead ReadRegistryValue(SafeRegistryHandle key, string name, int maximumCharacters)
@@ -310,11 +356,11 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
         // Query length before allocating or reading. No unbounded RegistryKey.GetValue allocation.
         uint byteLimit = (uint)((maximumCharacters + 1) * 2);
         if (size > byteLimit || (type is 0 or 3 or > 11) && size * 2UL > (ulong)maximumCharacters)
-            return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.LimitReached, Detail: "注册表值长度超出预算，未读取内容。");
+            return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.LimitReached, Detail: MessageText.Create("Backend.Core.ProxyConfigurationScanner.ReadRegistryValue.01"));
         byte[] bytes = new byte[size];
         error = RegQueryValueExW(key, name, IntPtr.Zero, out type, bytes, ref size);
         if (error != 0) return RegistryFailure(name, type, error);
-        if (size > bytes.Length) return new ProxyValueRead(name, RegistryKind(type), null, DiagnosticReadStatus.LimitReached, Detail: "值在读取期间增长。");
+        if (size > bytes.Length) return new ProxyValueRead(name, RegistryKind(type), null, DiagnosticReadStatus.LimitReached, Detail: MessageText.Create("Backend.Core.ProxyConfigurationScanner.ReadRegistryValue.02"));
         return DecodeRegistryValue(name, type, bytes.AsSpan(0, (int)size), maximumCharacters);
     }
 
@@ -324,21 +370,21 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
         string raw;
         if (type is 1 or 2 or 7)
         {
-            if (bytes.Length % 2 != 0) return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.Failed, Detail: "UTF-16 值长度无效。");
+            if (bytes.Length % 2 != 0) return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.Failed, Detail: MessageText.Create("Backend.Core.ProxyConfigurationScanner.DecodeRegistryValue.01"));
             try { raw = StrictUnicode.GetString(bytes); }
             catch (DecoderFallbackException)
             {
-                return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.Failed, Detail: "UTF-16 值包含无效代理字符，未进行有损转换。");
+                return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.Failed, Detail: MessageText.Create("Backend.Core.ProxyConfigurationScanner.DecodeRegistryValue.02"));
             }
             if (raw.EndsWith('\0')) raw = raw[..^1];
         }
         else if (type == 4 && bytes.Length == 4) raw = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(bytes).ToString(CultureInfo.InvariantCulture);
         else if (type == 5 && bytes.Length == 4) raw = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes).ToString(CultureInfo.InvariantCulture);
         else if (type == 11 && bytes.Length == 8) raw = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(bytes).ToString(CultureInfo.InvariantCulture);
-        else if (type is 4 or 5 or 11) return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.Failed, Detail: "整数类型字节长度无效。");
+        else if (type is 4 or 5 or 11) return new ProxyValueRead(name, kind, null, DiagnosticReadStatus.Failed, Detail: MessageText.Create("Backend.Core.ProxyConfigurationScanner.DecodeRegistryValue.03"));
         else raw = Convert.ToHexString(bytes);
         return raw.Length > maximumCharacters
-            ? new ProxyValueRead(name, kind, null, DiagnosticReadStatus.LimitReached, Detail: "转换后的原值超出字符预算。")
+            ? new ProxyValueRead(name, kind, null, DiagnosticReadStatus.LimitReached, Detail: MessageText.Create("Backend.Core.ProxyConfigurationScanner.DecodeRegistryValue.04"))
             : new ProxyValueRead(name, kind, raw, DiagnosticReadStatus.Complete);
     }
 
@@ -380,7 +426,7 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
                 ReadNativeString("ProxyServer", info.Proxy, maximumCharacters),
                 ReadNativeString("ProxyOverride", info.Bypass, maximumCharacters)
             ];
-            return new ProxySourceRead(DiagnosticReadStatus.Complete, "WinHTTP 注册表默认配置，不含调用方会话覆盖或现代每用户高级配置。", values);
+            return new ProxySourceRead(DiagnosticReadStatus.Complete, MessageText.Create("Backend.Core.ProxyConfigurationScanner.ReadWinHttpDefault.01"), values);
         }
         finally { Free(info.Proxy); Free(info.Bypass); }
     }
@@ -399,7 +445,7 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
                 ReadNativeString("ProxyServer", info.Proxy, maximumCharacters),
                 ReadNativeString("ProxyOverride", info.Bypass, maximumCharacters)
             ];
-            return new ProxySourceRead(DiagnosticReadStatus.Complete, "当前用户活动连接的 WinINet 配置（可能为 LAN、拨号或 VPN）；不枚举其他连接。API 不返回独立的 ProxyEnable 位。", values);
+            return new ProxySourceRead(DiagnosticReadStatus.Complete, MessageText.Create("Backend.Core.ProxyConfigurationScanner.ReadWinInetCurrentUser.01"), values);
         }
         finally { Free(info.AutoConfigUrl); Free(info.Proxy); Free(info.Bypass); }
     }
@@ -411,7 +457,7 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
         for (int length = 0; length <= maximumCharacters; length++)
             if (Marshal.ReadInt16(value, length * 2) == 0)
                 return new ProxyValueRead(name, "LPWSTR", Marshal.PtrToStringUni(value, length), DiagnosticReadStatus.Complete);
-        return new ProxyValueRead(name, "LPWSTR", null, DiagnosticReadStatus.LimitReached, Detail: "Windows 返回的字符串超出预算，未保留部分内容。");
+        return new ProxyValueRead(name, "LPWSTR", null, DiagnosticReadStatus.LimitReached, Detail: MessageText.Create("Backend.Core.ProxyConfigurationScanner.ReadNativeString.01"));
     }
 
     private static ProxySourceRead NativeFailure(int error) => new(error switch
@@ -419,7 +465,7 @@ internal sealed class WindowsProxyConfigurationReader : IProxyConfigurationReade
         2 => DiagnosticReadStatus.NotPresent,
         5 => DiagnosticReadStatus.AccessDenied,
         _ => DiagnosticReadStatus.Failed
-    }, "Windows 配置查询返回 Win32 " + error + "。", []);
+    }, MessageText.Create("Backend.Core.ProxyConfigurationScanner.NativeFailure.01") + error + "。", []);
     private static void Free(IntPtr pointer) { if (pointer != IntPtr.Zero) _ = GlobalFree(pointer); }
 
     [StructLayout(LayoutKind.Sequential)]

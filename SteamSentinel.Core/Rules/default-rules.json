@@ -1,49 +1,846 @@
 {
   "schemaVersion": "1",
-  "version": "2026.09.04.2",
-  "publishedAtUtc": "2026-09-04T00:00:00Z",
+  "version": "2026.09.20.1",
+  "publishedAtUtc": "2026-09-20T00:00:00Z",
   "knownHashes": [
-    {"id":"STEAMRED-DUCKOV-LOADER-001","sha256":"FA00800B88631999E53071FA299932DD38865DD1D2F0B30FF66BD4260D338B59","label":"已确认的恶意 MOD 加载入口","severity":"Critical","malware":true,"evidence":"精确样本的 ModBehaviour.Awake 将 CalcBridge.Calculator.Open 排入线程池，构成 SteamCFyinxiao 恶意加载链，不泛指同名正常 MOD。"},
-    {"id":"STEAMRED-DUCKOV-BRIDGE-001","sha256":"EB637A6B7DDCD1312B1B619F06E5234191A5C7376AA57DBE0EB269FA60DE3255","label":"已确认的恶意 MOD 桥接组件","severity":"Critical","malware":true,"evidence":"精确样本的 Open 方法从同目录加载 SteamCFyinxiao.dll 并调用对应导出函数，已通过只读 IL 检查确认。"},
-    {"id":"CLICKFIX-DEPLOYMENT-TEXT-001","sha256":"066656C5B9569AA3A8083F68DDD90AADC87CE275AA1B0371461E334AEB49416E","label":"假验证码多阶段部署脚本资料","severity":"High","malware":false,"remediable":true,"evidence":"所保存文本包含下载执行、恶意 steamprocess 部署、安全排除项与防火墙放行修改，作为研究副本只提供人工核对后的隔离。"},
-    {"id":"STEAMRED-PAYLOAD-002","sha256":"4FB2B5E6572049F85FA7DEC725F3F6B79B91D42F8959EAA3362A556BF91E926C","label":"已确认的 Steam 凭据窃取加密载荷","severity":"Critical","malware":true,"remediable":false,"evidence":"使用同包密钥数据静态解密后，发现 Steam 内存凭据读取、CryptUnprotectData 与 torionexa.org 上报链，未执行载荷。"},
-    {"id":"STEAMRED-BYTECODE-002","sha256":"F5CB367663A3A4F3CDDA1203E883C1396AAD2B9A4426C5BFFCAD92619C1A777F","label":"已确认的 ServiceApp 凭据窃取字节码","severity":"Critical","malware":true,"remediable":false,"evidence":"字节码同时包含 Steam 进程凭据读取、CryptUnprotectData、家族密钥与 syseaa.org 下载及外传端点。"},
-    {"id":"STEAMRED-NOTIFY-024","sha256":"3E44DEA0EECE9A2089A6A8FA6F9D5BAD48AB720E2FF4F62CE5399D290DFE965A","label":"已确认的假红信通知程序","severity":"Critical","malware":true,"remediable":false,"evidence":"程序包含通知桥标记、固定家族互斥体和指向第三方的 Steam 客服链接。"},
-    {"id":"STEAMRED-BRIDGE-024","sha256":"81D135E49D7BD5166583A2BB78E443458BE67095DBA787CB93050125225A77C2","label":"已确认的假红信通知桥","severity":"Critical","malware":true,"remediable":false,"evidence":"与假红信通知程序配套的桥接 DLL，包含 Steam 客服路由修改特征。"},
-    {"id":"STEAMRED-NOTIFY-029","sha256":"9C06BDFCCA7B42CB9B045970F1C704984676FDB0A911D1059F67D8CD39558516","label":"已确认的 Steam 提醒与客服路由篡改程序","severity":"Critical","malware":true,"remediable":false,"evidence":"程序包含账户提醒强制显示、客服路由替换、steam.cfg 改写及 clyveron.org 接收端点。"},
-    {"id":"STEAMRED-NEXUS-001","sha256":"0703CFEF89514BF9156BF243C38CE6293F154458DFEA3E18AD1D0840A3682F53","label":"已确认的 NexusTech 假红信组件","severity":"Critical","malware":true,"remediable":false,"evidence":"与已确认假红信链一致的通知及第三方客服引导组件，改名不改变内容判定。"},
-    {"id":"STEAMRED-LOCALE-001","sha256":"0EB6D096FFC43971C98D444B83B33ABE9FCF7D67B33A11099B88051DEAE0E4A8","label":"已确认的 Steam 客服路由篡改 DLL","severity":"Critical","malware":true,"remediable":false,"evidence":"同时包含 SupportMessages 路由替换、假红信入口、账户提醒标记、Steam 禁更与反复重试写入逻辑。"},
-    {"id":"STEAMRED-DUCKOV-001","sha256":"A413FF6010241C8A80D098EB620C1796247F01D3F41F18042D4D52BC1B0E29D7","label":"已确认的 MOD 内 Steam 篡改组件","severity":"Critical","malware":true,"remediable":false,"evidence":"SteamCFyinxiao 组件包含 Steam 客服路由替换、第三方 gate/notify 端点及 steamui 写入逻辑，未将音效素材或通用 MOD 依赖判为病毒。"},
-    {"id":"STEAMRED-PLUGIN-LUA-001","sha256":"0BE00202A0427A85A772B95092FCE44F4E653023092E7A3BC7FBAC7FC7624604","label":"已确认的恶意 Steam 插件后端","severity":"Critical","malware":true,"remediable":false,"evidence":"插件拦截账户与客服页面，维护虚假账户状态，并向 proconnector.cfd 的插件接收端点通信。"},
-    {"id":"STEAMRED-PLUGIN-LUA-002","sha256":"237CD3203DF4BB073819F16EDDF41B611294F7926CBAA226CA8D07ED69D4034D","label":"已确认的恶意 Steam 插件后端变体","severity":"Critical","malware":true,"remediable":false,"evidence":"同源插件包含登录拦截、验证资料处理与第三方通信逻辑，不代表 Millennium 本身恶意。"},
-    {"id":"STEAMRED-PLUGIN-JS-001","sha256":"2AB2396A9813A28E639C866BAEF54A3167AB3A7A6085298920F9AE685DE2DED4","label":"已确认的恶意 Steam 插件前端","severity":"Critical","malware":true,"remediable":false,"evidence":"同源插件前端包含假账户提示、凭据/验证资料收集与第三方通信逻辑。"},
-    {"id":"STEAMRED-PLUGIN-JS-002","sha256":"90193D45F64F584155C998B1ED55B2A67323A8AE383201474444CFA2EE35F010","label":"已确认的恶意 Steam 插件前端变体","severity":"Critical","malware":true,"remediable":false,"evidence":"同源插件前端包含假账户提示、凭据/验证资料收集与第三方通信逻辑。"},
-    {"id":"STEAMRED-PLUGIN-WEB-001","sha256":"0602BD40642476F2D6D3C5452299F558C607DF97FEA5D39BB0633D88EE90B130","label":"已确认的恶意 Steam 网页注入组件","severity":"Critical","malware":true,"remediable":false,"evidence":"与已确认恶意插件配套的网页注入脚本，修改用户看到的 Steam 页面与账户信息。"},
-    {"id":"STEAMRED-PLUGIN-WEB-002","sha256":"DDA70CEB38BB8A87810EA236114379B0613E802B383AA1B0FB20E0675C35B404","label":"已确认的恶意 Steam 网页注入组件变体","severity":"Critical","malware":true,"remediable":false,"evidence":"与已确认恶意插件配套的网页注入脚本，修改用户看到的 Steam 页面与账户信息。"},
-    {"id":"REVIEW-LOADER-PYC-001","sha256":"E0FB7CA2930B06A401B46DB4736EF5D694D9C0FD4AD367A0D5920C96EF04A450","label":"已复核的隐藏载荷加载器","severity":"High","malware":false,"remediable":true,"evidence":"读取随机索引，组合密钥，AES-CTR 解密并加载字节码，最终载荷尚未完整还原，可在复核后隔离。"},
-    {"id":"REVIEW-MSI-001","sha256":"5126F4C04C21F04F97515155875D6F8B409632BD9FF6B07F59EE4401FA8B654C","label":"已复核的可疑脚本安装包","severity":"High","malware":false,"remediable":true,"evidence":"只读安装数据库显示安装动作调用静默 wscript，内含字符编码混淆的 VBScript，启动本地随机目录中的程序与数据文件，最终行为未确认。"},
-    {"id":"REVIEW-MSI-002","sha256":"FEA69292AA450BA8ACEF2FD92B4C6695978D4B66C1AC6536A36AEF48F8B9E228","label":"已复核的可疑打包安装程序","severity":"High","malware":false,"remediable":true,"evidence":"只读数据库显示自动启动改名的 VLC 可执行文件，并携带随机名临时数据与 debug-trace.conf，包装来源需复核，不将其中签名运行库判为恶意。"},
-    {"id":"REVIEW-DECOMPILED-PY-001","sha256":"716F789EA505E4B93400F2FAAC7D15AB035FFBECA62050A2C2440B09915C467E","label":"反编译源码含 Steam 凭据窃取逻辑","severity":"High","malware":false,"remediable":true,"evidence":"这是反编译分析副本，包含凭据读取和外传逻辑，不说明其已运行，可手动隔离。"},
-    {"id":"REVIEW-DECOMPILED-PY-002","sha256":"8523792495222F73F75A39DD9B62DC0D6A3C9B1CCC91A9F46CD0021F07FCAE80","label":"反编译源码含假红信相关逻辑","severity":"High","malware":false,"remediable":true,"evidence":"这是反编译分析副本，需要与可执行载荷区分，可在复核后手动隔离。"},
-    {"id":"REVIEW-DEOBFUSCATED-JS-001","sha256":"2AE52B427C79C2F674642D1EC8233B2258E14E6D5BEDBE9AA11C94473B1454BD","label":"反混淆脚本含登录拦截与外传逻辑","severity":"High","malware":false,"remediable":true,"evidence":"分析副本中直接可见验证资料保存、密码字段、发送队列与第三方接收端点，可手动隔离。"},
-    {"id":"REVIEW-DEOBFUSCATED-JS-002","sha256":"AEA5AFF98C9A5BC138644EE7FAF80CA398F1B5528EE76DD8FCBD682410B93B3D","label":"反混淆脚本含 Steam 页面注入逻辑","severity":"High","malware":false,"remediable":true,"evidence":"这是恶意插件的反混淆分析副本，不说明本机已加载该插件，可手动隔离。"},
-    {"id":"LOCAL-AV-SAMPLE-001","sha256":"73EEED455BF3AC00F858C5EFCA57C40EE06F2E4FBA3999C7E0432A9F39EAC24F","label":"本地安全引擎检出的安装程序样本","severity":"Critical","malware":true,"remediable":false,"evidence":"该精确 SHA-256 的解包文件被本机 Defender 检测为 Ransom:Win32/Filecoder!MSR，判定只针对这份内容，不泛指同名软件。"},
-    { "id": "STEAMRED-EXE-001", "sha256": "015D7391062205C3D5FAF06771E51C49989CF394411957541DDC9CE62771568B", "label": "WindowsUpdatem.exe Steam 定向窃密加载器", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-SERVICEAPP-EXE-001", "sha256": "B0F17D38174E22DCB175663A7B904C3C532BDC9AA93531F988DE3F19DDEE2B7A", "label": "已确认 Wallpaper Workshop 假红信 ServiceApp.exe", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-RAR-001", "sha256": "A3831841D59F5B0EB8F6A99C7B63D0B408559A97D4F80A9C3B41617A7C1C813C", "label": "已确认恶意 WindowsUpdatem.rar", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-DATA-001", "sha256": "A4C415AD3E72149017E2B2B4F290D90CAB92D19636D14CDB33B41E70112EF015", "label": "已确认高熵加密载荷 f63ae3f4.bin", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-IDX-001", "sha256": "84CF643C0EFD98F80D8A101BED0409BCA604DAC8CD5228549FB70011AB48A4E5", "label": "已确认载荷索引 f55c0dcf.idx", "severity": "High", "malware": true },
-    { "id": "STEAMRED-BAT-001", "sha256": "288E499F8E7619A597B9FC783E49F2CAA167C20BA05C2520BA6A125C74888AC2", "label": "已确认 ServiceApp 启动批处理", "severity": "Critical", "malware": true },
-    { "id": "CLICKFIX-PS-001", "sha256": "603690268F17D25DBFB6AE51B33FDBDA8569DD16689D88C429E69498E60B15BF", "label": "ClickFix 恶意 PowerShell 脚本", "severity": "Critical", "malware": true },
-    { "id": "CLICKFIX-BAT-001", "sha256": "F91FE1D33906E8AC43FD5D7F7B64ACB48E1FADD2B37B7734BB01743E98CD8044", "label": "ClickFix _svc_launch.bat", "severity": "Critical", "malware": true },
-    { "id": "CLICKFIX-EXE-001", "sha256": "B755042136001A235F6A5D03A8BCAFCD31D0586D32611A872926B83A7242262F", "label": "ClickFix Telegramx64.exe", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-DESKTOPNOTIFY-EXE-001", "sha256": "8AAABE3F1039D3525D08BF2311A0A9A6D2AE75BCB84FA3C6499D4DE52C86F63F", "label": "已确认假红信 DesktopNotify.exe", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-NOTIFYBRIDGE-DLL-001", "sha256": "439E72A88B48A6B303B0DED2F85CAB07D180700C6DAC3D2D6A5F3BFB8BC31714", "label": "已确认假红信 notify_bridge.dll", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-SVCBAT-002", "sha256": "449DC31A62C915233365A743EA6C45D661FB93AB105895E3CC4ECD40BFC45401", "label": "已确认 SilentFrontier 启动批处理", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-STEAMUI-JS-001", "sha256": "AB3EEBF86F59EA0F1E597647D3DE097C5BB36A596512F2D858AAAB613FCFAC77", "label": "已确认被篡改 steamui chunk", "severity": "Critical", "malware": true },
-    { "id": "STEAMRED-STEAMCFG-001", "sha256": "C9799659EC6E3E786F68D73EEC26E7EB1190708CAAD875711096C98F1AAC4E24", "label": "本次样本的 Steam 禁更配置", "severity": "High", "malware": false }
+    {
+      "id": "STEAMRED-VPET-WRAPPER-001",
+      "sha256": "DF0F952428FCA45E07443DDF7A582B4470705047E794D2307800D7E0B7224601",
+      "label": "已确认的 VPet 恶意插件外壳",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的 LoadPlugin 保留原插件调用，同时将 PxBridge.RunNear 排入线程池并调用配套 native 加载器；依据 2026-09-19 只读 IL 与组件关系核验。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-WRAPPER-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-WRAPPER-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-CREDENTIAL-001",
+      "sha256": "92AF8AA27FA192187F6E9DEC03FD2F4B9F6015C0E352CFD10133F33134BDD772",
+      "label": "已确认的 VPet 内 Steam 凭据窃取载荷",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的数据区静态还原后包含 Steam 内存/缓存凭据读取、CryptUnprotectData 与上传代码；依据 2026-09-19 静态分析，命中不证明已运行或已外传。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-CREDENTIAL-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-CREDENTIAL-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-LOADER-001",
+      "sha256": "3454551B2FD85F64CDFA336799635034A3B0BD4411FDD50C18DE2CE0A6B40DFA",
+      "label": "已确认的 VPet 恶意原生加载器",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件通过序号 1 导出还原配套载荷数据区并手工映射 PE；依据 2026-09-19 反汇编和静态数据还原，不依赖组件文件名。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-LOADER-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-LOADER-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-STEAMUI-001",
+      "sha256": "A6B8D19099935345C4C9A5AF741BD306F8499B255A1F8D36ED323286A7303E23",
+      "label": "已确认的 VPet 内 Steam 界面篡改载荷",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的数据区静态还原后包含 Steam 客服路由替换、PX 开关及 HTML/JS/CSS 修改代码；依据 2026-09-19 静态分析，未执行载荷。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-STEAMUI-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-STEAMUI-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-ARCHIVE-001",
+      "sha256": "1B274DDC6769206CADB145D7750AE931D480C2D761A5F804B0EDA7B259347B43",
+      "label": "包含已确认恶意组件的 VPet MOD 压缩包",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "2026-09-19 静态核验的原始 ZIP，包含恶意插件外壳、加载器、Steam 界面篡改及凭据载荷。包内命中仅证明含恶意内容，不代表本机已感染；合法依赖和原插件不因同包自动判毒。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-ARCHIVE-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-ARCHIVE-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-STEAMUI-002",
+      "sha256": "992230FE215FB684EA5D8079CB8D303F55C92EDE4314094D3BD2D80870F8217E",
+      "label": "已确认的 VPet 内 Steam 界面篡改载荷",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的数据区静态还原后包含 Steam 客服路由替换、PX 开关及 HTML/JS/CSS 修改代码；依据 2026-09-19 静态分析，未执行载荷。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-STEAMUI-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-STEAMUI-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-LOADER-002",
+      "sha256": "00FDDCE89E481C1997336B0A33105914CD88F3691F9252F218CB61E0659ABDB8",
+      "label": "已确认的 VPet 恶意原生加载器",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件通过序号 1 导出还原配套载荷数据区并手工映射 PE；依据 2026-09-19 反汇编和静态数据还原，不依赖组件文件名。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-LOADER-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-LOADER-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-WRAPPER-002",
+      "sha256": "167B17F9AB024FCDD7E776B4BC58233A7DEA66724C2F66659F0D101A405E92AF",
+      "label": "已确认的 VPet 恶意插件外壳",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的 LoadPlugin 保留原插件调用，同时将 PxBridge.RunNear 排入线程池并调用配套 native 加载器；依据 2026-09-19 只读 IL 与组件关系核验。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-WRAPPER-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-WRAPPER-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-CREDENTIAL-002",
+      "sha256": "AE2719B116F1227157342F52A48F1119091B82F9A0FABC8DD0C9C76FA299F0D8",
+      "label": "已确认的 VPet 内 Steam 凭据窃取载荷",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的数据区静态还原后包含 Steam 内存/缓存凭据读取、CryptUnprotectData 与上传代码；依据 2026-09-19 静态分析，命中不证明已运行或已外传。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-CREDENTIAL-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-CREDENTIAL-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-ARCHIVE-002",
+      "sha256": "B03B1E9F4C18E7E4C1F381ACFA52939459DF766EBCE679C170D383545EC37F27",
+      "label": "包含已确认恶意组件的 VPet MOD 压缩包",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "2026-09-19 静态核验的原始 ZIP，包含恶意插件外壳、加载器、Steam 界面篡改及凭据载荷。包内命中仅证明含恶意内容，不代表本机已感染；合法依赖和原插件不因同包自动判毒。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-ARCHIVE-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-ARCHIVE-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-LOADER-003",
+      "sha256": "FDAD4CB139AD9D0E90C3C792502D3B471EE5D2DD86C61FC113DF1BD63171C181",
+      "label": "已确认的 VPet 恶意原生加载器",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件通过序号 1 导出还原配套载荷数据区并手工映射 PE；依据 2026-09-19 反汇编和静态数据还原，不依赖组件文件名。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-LOADER-003.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-LOADER-003.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-STEAMUI-003",
+      "sha256": "1D7B4E03AD1CADB430981A43D015E455CF36E69350984236205A8D80A32D52E9",
+      "label": "已确认的 VPet 内 Steam 界面篡改载荷",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的数据区静态还原后包含 Steam 客服路由替换、PX 开关及 HTML/JS/CSS 修改代码；依据 2026-09-19 静态分析，未执行载荷。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-STEAMUI-003.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-STEAMUI-003.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-CREDENTIAL-003",
+      "sha256": "EC83B7E95CE6311FEEB4C1A991A9DD68DF2AD359C3AF0808DF5E4551367FB4BE",
+      "label": "已确认的 VPet 内 Steam 凭据窃取载荷",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的数据区静态还原后包含 Steam 内存/缓存凭据读取、CryptUnprotectData 与上传代码；依据 2026-09-19 静态分析，命中不证明已运行或已外传。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-CREDENTIAL-003.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-CREDENTIAL-003.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-WRAPPER-003",
+      "sha256": "80741F064CC493F6BCFB13A1C9C96176FE160077750343335D5EA7769F4220BC",
+      "label": "已确认的 VPet 恶意插件外壳",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确原件的 LoadPlugin 保留原插件调用，同时将 PxBridge.RunNear 排入线程池并调用配套 native 加载器；依据 2026-09-19 只读 IL 与组件关系核验。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-WRAPPER-003.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-WRAPPER-003.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-VPET-ARCHIVE-003",
+      "sha256": "97B17B1747C37AB3BAE2CB4AC7D8EC75A50EAB5DECA438DDABAD2744AD3FF7B4",
+      "label": "包含已确认恶意组件的 VPet MOD 压缩包",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "2026-09-19 静态核验的原始 ZIP，包含恶意插件外壳、加载器、Steam 界面篡改及凭据载荷。包内命中仅证明含恶意内容，不代表本机已感染；合法依赖和原插件不因同包自动判毒。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-ARCHIVE-003.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-VPET-ARCHIVE-003.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-DUCKOV-LOADER-001",
+      "sha256": "FA00800B88631999E53071FA299932DD38865DD1D2F0B30FF66BD4260D338B59",
+      "label": "已确认的恶意 MOD 加载入口",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确样本的 ModBehaviour.Awake 将 CalcBridge.Calculator.Open 排入线程池，构成 SteamCFyinxiao 恶意加载链，不泛指同名正常 MOD。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-DUCKOV-LOADER-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-DUCKOV-LOADER-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-DUCKOV-BRIDGE-001",
+      "sha256": "EB637A6B7DDCD1312B1B619F06E5234191A5C7376AA57DBE0EB269FA60DE3255",
+      "label": "已确认的恶意 MOD 桥接组件",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确样本的 Open 方法从同目录加载 SteamCFyinxiao.dll 并调用对应导出函数，已通过只读 IL 检查确认。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-DUCKOV-BRIDGE-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-DUCKOV-BRIDGE-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "CLICKFIX-DEPLOYMENT-TEXT-001",
+      "sha256": "066656C5B9569AA3A8083F68DDD90AADC87CE275AA1B0371461E334AEB49416E",
+      "label": "假验证码多阶段部署脚本资料",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "所保存文本包含下载执行、恶意 steamprocess 部署、安全排除项与防火墙放行修改，作为研究副本只提供人工核对后的隔离。",
+      "labelMessage": {
+        "MessageId": "Rule.CLICKFIX-DEPLOYMENT-TEXT-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.CLICKFIX-DEPLOYMENT-TEXT-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-PAYLOAD-002",
+      "sha256": "4FB2B5E6572049F85FA7DEC725F3F6B79B91D42F8959EAA3362A556BF91E926C",
+      "label": "已确认的 Steam 凭据窃取加密载荷",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "使用同包密钥数据静态解密后，发现 Steam 内存凭据读取、CryptUnprotectData 与 torionexa.org 上报链，未执行载荷。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-PAYLOAD-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-PAYLOAD-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-BYTECODE-002",
+      "sha256": "F5CB367663A3A4F3CDDA1203E883C1396AAD2B9A4426C5BFFCAD92619C1A777F",
+      "label": "已确认的 ServiceApp 凭据窃取字节码",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "字节码同时包含 Steam 进程凭据读取、CryptUnprotectData、家族密钥与 syseaa.org 下载及外传端点。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-BYTECODE-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-BYTECODE-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-NOTIFY-024",
+      "sha256": "3E44DEA0EECE9A2089A6A8FA6F9D5BAD48AB720E2FF4F62CE5399D290DFE965A",
+      "label": "已确认的假红信通知程序",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "程序包含通知桥标记、固定家族互斥体和指向第三方的 Steam 客服链接。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-NOTIFY-024.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-NOTIFY-024.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-BRIDGE-024",
+      "sha256": "81D135E49D7BD5166583A2BB78E443458BE67095DBA787CB93050125225A77C2",
+      "label": "已确认的假红信通知桥",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "与假红信通知程序配套的桥接 DLL，包含 Steam 客服路由修改特征。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-BRIDGE-024.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-BRIDGE-024.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-NOTIFY-029",
+      "sha256": "9C06BDFCCA7B42CB9B045970F1C704984676FDB0A911D1059F67D8CD39558516",
+      "label": "已确认的 Steam 提醒与客服路由篡改程序",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "程序包含账户提醒强制显示、客服路由替换、steam.cfg 改写及 clyveron.org 接收端点。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-NOTIFY-029.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-NOTIFY-029.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-NEXUS-001",
+      "sha256": "0703CFEF89514BF9156BF243C38CE6293F154458DFEA3E18AD1D0840A3682F53",
+      "label": "已确认的 NexusTech 假红信组件",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "与已确认假红信链一致的通知及第三方客服引导组件，改名不改变内容判定。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-NEXUS-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-NEXUS-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-LOCALE-001",
+      "sha256": "0EB6D096FFC43971C98D444B83B33ABE9FCF7D67B33A11099B88051DEAE0E4A8",
+      "label": "已确认的 Steam 客服路由篡改 DLL",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "同时包含 SupportMessages 路由替换、假红信入口、账户提醒标记、Steam 禁更与反复重试写入逻辑。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-LOCALE-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-LOCALE-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-DUCKOV-001",
+      "sha256": "A413FF6010241C8A80D098EB620C1796247F01D3F41F18042D4D52BC1B0E29D7",
+      "label": "已确认的 MOD 内 Steam 篡改组件",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "SteamCFyinxiao 组件包含 Steam 客服路由替换、第三方 gate/notify 端点及 steamui 写入逻辑，未将音效素材或通用 MOD 依赖判为病毒。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-DUCKOV-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-DUCKOV-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-PLUGIN-LUA-001",
+      "sha256": "0BE00202A0427A85A772B95092FCE44F4E653023092E7A3BC7FBAC7FC7624604",
+      "label": "已确认的恶意 Steam 插件后端",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "插件拦截账户与客服页面，维护虚假账户状态，并向 proconnector.cfd 的插件接收端点通信。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-LUA-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-LUA-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-PLUGIN-LUA-002",
+      "sha256": "237CD3203DF4BB073819F16EDDF41B611294F7926CBAA226CA8D07ED69D4034D",
+      "label": "已确认的恶意 Steam 插件后端变体",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "同源插件包含登录拦截、验证资料处理与第三方通信逻辑，不代表 Millennium 本身恶意。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-LUA-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-LUA-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-PLUGIN-JS-001",
+      "sha256": "2AB2396A9813A28E639C866BAEF54A3167AB3A7A6085298920F9AE685DE2DED4",
+      "label": "已确认的恶意 Steam 插件前端",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "同源插件前端包含假账户提示、凭据/验证资料收集与第三方通信逻辑。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-JS-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-JS-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-PLUGIN-JS-002",
+      "sha256": "90193D45F64F584155C998B1ED55B2A67323A8AE383201474444CFA2EE35F010",
+      "label": "已确认的恶意 Steam 插件前端变体",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "同源插件前端包含假账户提示、凭据/验证资料收集与第三方通信逻辑。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-JS-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-JS-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-PLUGIN-WEB-001",
+      "sha256": "0602BD40642476F2D6D3C5452299F558C607DF97FEA5D39BB0633D88EE90B130",
+      "label": "已确认的恶意 Steam 网页注入组件",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "与已确认恶意插件配套的网页注入脚本，修改用户看到的 Steam 页面与账户信息。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-WEB-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-WEB-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-PLUGIN-WEB-002",
+      "sha256": "DDA70CEB38BB8A87810EA236114379B0613E802B383AA1B0FB20E0675C35B404",
+      "label": "已确认的恶意 Steam 网页注入组件变体",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "与已确认恶意插件配套的网页注入脚本，修改用户看到的 Steam 页面与账户信息。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-WEB-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMRED-PLUGIN-WEB-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "REVIEW-LOADER-PYC-001",
+      "sha256": "E0FB7CA2930B06A401B46DB4736EF5D694D9C0FD4AD367A0D5920C96EF04A450",
+      "label": "已复核的隐藏载荷加载器",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "读取随机索引，组合密钥，AES-CTR 解密并加载字节码，最终载荷尚未完整还原，可在复核后隔离。",
+      "labelMessage": {
+        "MessageId": "Rule.REVIEW-LOADER-PYC-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.REVIEW-LOADER-PYC-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "REVIEW-MSI-001",
+      "sha256": "5126F4C04C21F04F97515155875D6F8B409632BD9FF6B07F59EE4401FA8B654C",
+      "label": "已复核的可疑脚本安装包",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "只读安装数据库显示安装动作调用静默 wscript，内含字符编码混淆的 VBScript，启动本地随机目录中的程序与数据文件，最终行为未确认。",
+      "labelMessage": {
+        "MessageId": "Rule.REVIEW-MSI-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.REVIEW-MSI-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "REVIEW-MSI-002",
+      "sha256": "FEA69292AA450BA8ACEF2FD92B4C6695978D4B66C1AC6536A36AEF48F8B9E228",
+      "label": "已复核的可疑打包安装程序",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "只读数据库显示自动启动改名的 VLC 可执行文件，并携带随机名临时数据与 debug-trace.conf，包装来源需复核，不将其中签名运行库判为恶意。",
+      "labelMessage": {
+        "MessageId": "Rule.REVIEW-MSI-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.REVIEW-MSI-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "REVIEW-DECOMPILED-PY-001",
+      "sha256": "716F789EA505E4B93400F2FAAC7D15AB035FFBECA62050A2C2440B09915C467E",
+      "label": "反编译源码含 Steam 凭据窃取逻辑",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "这是反编译分析副本，包含凭据读取和外传逻辑，不说明其已运行，可手动隔离。",
+      "labelMessage": {
+        "MessageId": "Rule.REVIEW-DECOMPILED-PY-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.REVIEW-DECOMPILED-PY-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "REVIEW-DECOMPILED-PY-002",
+      "sha256": "8523792495222F73F75A39DD9B62DC0D6A3C9B1CCC91A9F46CD0021F07FCAE80",
+      "label": "反编译源码含假红信相关逻辑",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "这是反编译分析副本，需要与可执行载荷区分，可在复核后手动隔离。",
+      "labelMessage": {
+        "MessageId": "Rule.REVIEW-DECOMPILED-PY-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.REVIEW-DECOMPILED-PY-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "REVIEW-DEOBFUSCATED-JS-001",
+      "sha256": "2AE52B427C79C2F674642D1EC8233B2258E14E6D5BEDBE9AA11C94473B1454BD",
+      "label": "反混淆脚本含登录拦截与外传逻辑",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "分析副本中直接可见验证资料保存、密码字段、发送队列与第三方接收端点，可手动隔离。",
+      "labelMessage": {
+        "MessageId": "Rule.REVIEW-DEOBFUSCATED-JS-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.REVIEW-DEOBFUSCATED-JS-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "REVIEW-DEOBFUSCATED-JS-002",
+      "sha256": "AEA5AFF98C9A5BC138644EE7FAF80CA398F1B5528EE76DD8FCBD682410B93B3D",
+      "label": "反混淆脚本含 Steam 页面注入逻辑",
+      "severity": "High",
+      "malware": false,
+      "remediable": true,
+      "evidence": "这是恶意插件的反混淆分析副本，不说明本机已加载该插件，可手动隔离。",
+      "labelMessage": {
+        "MessageId": "Rule.REVIEW-DEOBFUSCATED-JS-002.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.REVIEW-DEOBFUSCATED-JS-002.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "LOCAL-AV-SAMPLE-001",
+      "sha256": "73EEED455BF3AC00F858C5EFCA57C40EE06F2E4FBA3999C7E0432A9F39EAC24F",
+      "label": "本地安全引擎检出的安装程序样本",
+      "severity": "Critical",
+      "malware": true,
+      "remediable": false,
+      "evidence": "该精确 SHA-256 的解包文件被本机 Defender 检测为 Ransom:Win32/Filecoder!MSR，判定只针对这份内容，不泛指同名软件。",
+      "labelMessage": {
+        "MessageId": "Rule.LOCAL-AV-SAMPLE-001.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.LOCAL-AV-SAMPLE-001.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-EXE-001",
+      "sha256": "015D7391062205C3D5FAF06771E51C49989CF394411957541DDC9CE62771568B",
+      "label": "WindowsUpdatem.exe Steam 定向窃密加载器",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-EXE-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-SERVICEAPP-EXE-001",
+      "sha256": "B0F17D38174E22DCB175663A7B904C3C532BDC9AA93531F988DE3F19DDEE2B7A",
+      "label": "已确认 Wallpaper Workshop 假红信 ServiceApp.exe",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-SERVICEAPP-EXE-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-RAR-001",
+      "sha256": "A3831841D59F5B0EB8F6A99C7B63D0B408559A97D4F80A9C3B41617A7C1C813C",
+      "label": "已确认恶意 WindowsUpdatem.rar",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-RAR-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-DATA-001",
+      "sha256": "A4C415AD3E72149017E2B2B4F290D90CAB92D19636D14CDB33B41E70112EF015",
+      "label": "已确认高熵加密载荷 f63ae3f4.bin",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-DATA-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-IDX-001",
+      "sha256": "84CF643C0EFD98F80D8A101BED0409BCA604DAC8CD5228549FB70011AB48A4E5",
+      "label": "已确认载荷索引 f55c0dcf.idx",
+      "severity": "High",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-IDX-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-BAT-001",
+      "sha256": "288E499F8E7619A597B9FC783E49F2CAA167C20BA05C2520BA6A125C74888AC2",
+      "label": "已确认 ServiceApp 启动批处理",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-BAT-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "CLICKFIX-PS-001",
+      "sha256": "603690268F17D25DBFB6AE51B33FDBDA8569DD16689D88C429E69498E60B15BF",
+      "label": "ClickFix 恶意 PowerShell 脚本",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.CLICKFIX-PS-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "CLICKFIX-BAT-001",
+      "sha256": "F91FE1D33906E8AC43FD5D7F7B64ACB48E1FADD2B37B7734BB01743E98CD8044",
+      "label": "ClickFix _svc_launch.bat",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.CLICKFIX-BAT-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "CLICKFIX-EXE-001",
+      "sha256": "B755042136001A235F6A5D03A8BCAFCD31D0586D32611A872926B83A7242262F",
+      "label": "ClickFix Telegramx64.exe",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.CLICKFIX-EXE-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-DESKTOPNOTIFY-EXE-001",
+      "sha256": "8AAABE3F1039D3525D08BF2311A0A9A6D2AE75BCB84FA3C6499D4DE52C86F63F",
+      "label": "已确认假红信 DesktopNotify.exe",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-DESKTOPNOTIFY-EXE-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-NOTIFYBRIDGE-DLL-001",
+      "sha256": "439E72A88B48A6B303B0DED2F85CAB07D180700C6DAC3D2D6A5F3BFB8BC31714",
+      "label": "已确认假红信 notify_bridge.dll",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-NOTIFYBRIDGE-DLL-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-SVCBAT-002",
+      "sha256": "449DC31A62C915233365A743EA6C45D661FB93AB105895E3CC4ECD40BFC45401",
+      "label": "已确认 SilentFrontier 启动批处理",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-SVCBAT-002.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STEAMUI-JS-001",
+      "sha256": "AB3EEBF86F59EA0F1E597647D3DE097C5BB36A596512F2D858AAAB613FCFAC77",
+      "label": "已确认被篡改 steamui chunk",
+      "severity": "Critical",
+      "malware": true,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STEAMUI-JS-001.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STEAMCFG-001",
+      "sha256": "C9799659EC6E3E786F68D73EEC26E7EB1190708CAAD875711096C98F1AAC4E24",
+      "label": "本次样本的 Steam 禁更配置",
+      "severity": "High",
+      "malware": false,
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STEAMCFG-001.label",
+        "Arguments": []
+      }
+    }
   ],
   "knownDomains": [
+    "bvdpp.top",
+    "skylinemediaworld.top",
+    "ultracloudmarket.top",
+    "advancedwebfactory.top",
+    "fastdigitalcenter.top",
+    "veloriquantica.top",
+    "quantumservernode.top",
+    "zentravolix.top",
+    "toralumivent.top",
+    "vexorandria.top",
+    "yywuxfll.top",
+    "ufyyekkl.top",
+    "uuyyywuul.top",
+    "llxzpfsj.top",
+    "fwqoop.org",
+    "fufjxzl.org",
+    "fuuewq.org",
+    "vorqube.com",
+    "zentryxful.icu",
     "syseaa.org",
     "clyveron.org",
     "proconnector.cfd",
@@ -55,9 +852,19 @@
     "verifyni.cfd",
     "luminovastella.top"
   ],
-  "knownProcessNames": ["WindowsUpdatem.exe", "Telegramx64.exe", "DesktopNotify.exe", "SilentFrontier.exe", "ServiceApp.exe"],
-  "knownRunValueNames": ["ServiceAppMscopiAuto"],
-  "knownTaskNames": ["ServiceApp360GuardLogon"],
+  "knownProcessNames": [
+    "WindowsUpdatem.exe",
+    "Telegramx64.exe",
+    "DesktopNotify.exe",
+    "SilentFrontier.exe",
+    "ServiceApp.exe"
+  ],
+  "knownRunValueNames": [
+    "ServiceAppMscopiAuto"
+  ],
+  "knownTaskNames": [
+    "ServiceApp360GuardLogon"
+  ],
   "knownPathTemplates": [
     "%LOCALAPPDATA%\\Programs\\7jf417vr4lxkf0mo",
     "%LOCALAPPDATA%\\Programs\\0h27iaygdd05zm45",
@@ -65,14 +872,86 @@
     "%LOCALAPPDATA%\\Programs\\w50s71hel96ab3g0"
   ],
   "suspiciousStrings": [
-    { "id": "STEAMRED-STR-KEY", "value": "SteamKey20260310", "score": 70, "label": "已确认通信密钥字符串" },
-    { "id": "STEAMRED-STR-MUTEX", "value": "Global\\SteamProtectInstall", "score": 60, "label": "ClickFix 安装互斥体" },
-    { "id": "STEAMRED-STR-LOG", "value": "匹配成功----下载失败----未执行", "score": 45, "label": "已确认下载状态日志" },
-    { "id": "STEAMRED-STR-ENDPOINT", "value": "/downloadlog/", "score": 25, "label": "家族日志上报端点" },
-    { "id": "STEAMRED-STR-TOAST", "value": "<!--STEAMTOAST:", "score": 35, "label": "假红信通知桥标记" },
-    { "id": "STEAMRED-STR-MUTEX2", "value": "Global\\VqDesktopNotifyHost_Mutex", "score": 55, "label": "DesktopNotify 互斥体" },
-    { "id": "STEAMRED-STR-NOTIFYAPI", "value": "steamhelper/api/last-msg?", "score": 45, "label": "假红信消息接口" },
-    { "id": "STEAMRED-STR-BRIDGE", "value": "notify_bridge.dll", "score": 25, "label": "假红信桥接 DLL 名称" }
+    {
+      "id": "STEAMRED-STR-KEY",
+      "value": "SteamKey20260310",
+      "score": 70,
+      "label": "已确认通信密钥字符串",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-KEY.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STR-MUTEX",
+      "value": "Global\\SteamProtectInstall",
+      "score": 60,
+      "label": "ClickFix 安装互斥体",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-MUTEX.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STR-LOG",
+      "value": "匹配成功----下载失败----未执行",
+      "score": 45,
+      "label": "已确认下载状态日志",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-LOG.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STR-ENDPOINT",
+      "value": "/downloadlog/",
+      "score": 25,
+      "label": "家族日志上报端点",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-ENDPOINT.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STR-TOAST",
+      "value": "<!--STEAMTOAST:",
+      "score": 35,
+      "label": "假红信通知桥标记",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-TOAST.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STR-MUTEX2",
+      "value": "Global\\VqDesktopNotifyHost_Mutex",
+      "score": 55,
+      "label": "DesktopNotify 互斥体",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-MUTEX2.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STR-NOTIFYAPI",
+      "value": "steamhelper/api/last-msg?",
+      "score": 45,
+      "label": "假红信消息接口",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-NOTIFYAPI.label",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMRED-STR-BRIDGE",
+      "value": "notify_bridge.dll",
+      "score": 25,
+      "label": "假红信桥接 DLL 名称",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMRED-STR-BRIDGE.label",
+        "Arguments": []
+      }
+    }
   ],
   "steamInjectionNames": [
     "wsock32.dll",
@@ -81,9 +960,38 @@
     "steam.cfg"
   ],
   "dangerousExtensions": [
-    ".exe", ".com", ".scr", ".dll", ".msi", ".msp", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".cpl"
+    ".exe",
+    ".com",
+    ".scr",
+    ".dll",
+    ".msi",
+    ".msp",
+    ".bat",
+    ".cmd",
+    ".ps1",
+    ".vbs",
+    ".vbe",
+    ".js",
+    ".jse",
+    ".wsf",
+    ".wsh",
+    ".hta",
+    ".lnk",
+    ".url",
+    ".reg",
+    ".cpl"
   ],
   "archiveExtensions": [
-    ".zip", ".zipx", ".rar", ".7z", ".tar", ".gz", ".gzip", ".bz2", ".xz", ".zst", ".tgz"
+    ".zip",
+    ".zipx",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".gzip",
+    ".bz2",
+    ".xz",
+    ".zst",
+    ".tgz"
   ]
 }

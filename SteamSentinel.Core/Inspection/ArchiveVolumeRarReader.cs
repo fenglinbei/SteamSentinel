@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 /*
  * RAR password/checksum adaptation includes logic derived from UnRAR
  * (copyright Alexander Roshal): CryptData::SetKey30, sha1_process_rar29,
@@ -47,7 +48,7 @@ internal sealed class ArchiveVolumeRarReader : IReader
     public bool Cancelled { get; private set; }
     public IEntry Entry => _position >= 0 && _position < _index.Entries.Count
         ? new RarIndexedEntry(_index.Entries[_position], _options)
-        : throw new InvalidOperationException("RAR 读取器尚未定位到成员。");
+        : throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Entry.01"), sourceText => new InvalidOperationException(sourceText));
 
     internal ArchiveVolumeRarReader(ArchiveRarIntegrityIndex index, string? password, CancellationToken token)
     {
@@ -62,7 +63,7 @@ internal sealed class ArchiveVolumeRarReader : IReader
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _token.ThrowIfCancellationRequested();
-        if (Cancelled) throw new OperationCanceledException("RAR 读取已经取消。");
+        if (Cancelled) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.CheckActive.01"), sourceText => new OperationCanceledException(sourceText));
     }
 
     public bool MoveToNextEntry()
@@ -71,7 +72,7 @@ internal sealed class ArchiveVolumeRarReader : IReader
         if (_position >= 0 && _position < _index.Entries.Count && !_index.Entries[_position].IsDirectory &&
             ((_currentStream is not null && !_currentStream.Completed) || (_index.IsSolid && !_opened)))
             throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity,
-                "固实或已打开的 RAR 成员必须在预算内完整读取后才能继续。");
+                MessageText.Create("Backend.Core.ArchiveVolumeRarReader.MoveToNextEntry.01"));
         _currentStream?.Dispose();
         _currentStream = null; _opened = false;
         if (_position >= _index.Entries.Count) return false;
@@ -82,17 +83,17 @@ internal sealed class ArchiveVolumeRarReader : IReader
     public EntryStream OpenEntryStream()
     {
         CheckActive();
-        if (_opened) throw new InvalidOperationException("RAR 当前成员流已经打开。");
+        if (_opened) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.OpenEntryStream.01"), sourceText => new InvalidOperationException(sourceText));
         ArchiveRarEntryChecksum metadata = _index.Match(Entry);
-        if (metadata.IsDirectory) throw new InvalidOperationException("RAR 目录没有内容流。");
+        if (metadata.IsDirectory) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.OpenEntryStream.02"), sourceText => new InvalidOperationException(sourceText));
         object header = metadata.FirstHeader;
         uint dictionarySize = RarIntegrityReflection.Property<uint>(header, "WindowSize");
         if (dictionarySize > 128u * 1024 * 1024)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 压缩字典超出工作进程预算。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeRarReader.OpenEntryStream.03"));
         byte algorithm = RarIntegrityReflection.Property<byte>(header, "CompressionAlgorithm");
         bool legacy = algorithm is 15 or 20 or 26 or 29 or 36;
         if (!legacy && algorithm != 50)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR 压缩算法版本不受锁定解码器支持。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, MessageText.Create("Backend.Core.ArchiveVolumeRarReader.OpenEntryStream.04"));
         object unpack = legacy ? (_legacyUnpack ??= CreateUnpack(true)) : (_modernUnpack ??= CreateUnpack(false));
         Stream packed = new RarPackedMemberStream(metadata.PackedParts, CheckActive);
         Stream? decoded = null;
@@ -106,14 +107,14 @@ internal sealed class ArchiveVolumeRarReader : IReader
                 RequiredType("SharpCompress.Compressors.Rar.IRarUnpack"),
                 RequiredType("SharpCompress.Common.Rar.Headers.FileHeader"), typeof(Stream)]);
             if (decoderCtor is null)
-                throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR 解码器构造接口已改变。");
+                throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, MessageText.Create("Backend.Core.ArchiveVolumeRarReader.OpenEntryStream.05"));
             decoded = (Stream)decoderCtor.Invoke([unpack, header, packed]);
             var content = new RarDecodedContentStream(decoded, metadata.ExpectedHash.Length == 32, CheckActive);
             ConstructorInfo? entryCtor = typeof(EntryStream).GetConstructor(
                 BindingFlags.Instance | BindingFlags.NonPublic, binder: null,
                 types: [typeof(IReader), typeof(Stream)], modifiers: null);
             if (entryCtor is null)
-                throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR 条目流构造接口已改变。");
+                throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, MessageText.Create("Backend.Core.ArchiveVolumeRarReader.OpenEntryStream.06"));
             EntryStream result = (EntryStream)entryCtor.Invoke([this, content]);
             _currentStream = content; _opened = true;
             return result;
@@ -127,7 +128,7 @@ internal sealed class ArchiveVolumeRarReader : IReader
     }
 
     private Type RequiredType(string name) => _assembly.GetType(name, throwOnError: false)
-        ?? throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "锁定的 RAR 解码类型不可用。");
+        ?? throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, MessageText.Create("Backend.Core.ArchiveVolumeRarReader.RequiredType.01"));
 
     private object CreateUnpack(bool legacy)
     {
@@ -135,11 +136,11 @@ internal sealed class ArchiveVolumeRarReader : IReader
             "SharpCompress.Compressors.Rar.UnpackV2017.Unpack");
         ConstructorInfo? ctor = type.GetConstructor(System.Type.EmptyTypes);
         return ctor?.Invoke(null) ?? throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity,
-            "锁定的 RAR 解码器初始化接口不可用。");
+            MessageText.Create("Backend.Core.ArchiveVolumeRarReader.CreateUnpack.01"));
     }
 
     public void WriteEntryTo(Stream writableStream) =>
-        throw new NotSupportedException("受控 RAR 读取器要求通过 OpenEntryStream 执行有预算的拷贝与完整性校验。");
+        throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.WriteEntryTo.01"), sourceText => new NotSupportedException(sourceText));
 
     public void Dispose()
     {
@@ -200,7 +201,7 @@ internal sealed class RarPackedMemberStream(IReadOnlyList<ArchiveRarPackedPart> 
                 part.Source.Position = checked(part.Offset + _within);
                 read = part.Source.Read(buffer[..wanted]);
             }
-            if (read == 0) throw RarIntegrityReflection.Invalid("RAR 压缩数据区被截断。");
+            if (read == 0) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Read.01"));
             _within += read; _position += read; total += read; buffer = buffer[read..];
             checkActive();
         }
@@ -223,11 +224,11 @@ internal static class RarContinuousCrypto
         CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        if (password is null) throw new SharpCompress.Common.CryptographicException("RAR 成员需要密码。");
+        if (password is null) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Open.01"), sourceText => new SharpCompress.Common.CryptographicException(sourceText));
         if (password.Length > 256)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 密码长度超出格式适配预算。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Open.02"));
         if (ciphertext.Length % 16 != 0)
-            throw RarIntegrityReflection.Invalid("RAR 加密数据长度不是完整 AES 分组。");
+            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Open.03"));
         byte[] key, iv;
         if (metadata.Rar5)
         {
@@ -247,7 +248,7 @@ internal static class RarContinuousCrypto
                     for (int i = 0; i < checkHash.Length; i++) check[i & 7] ^= checkHash[i];
                     bool matches = storedCheck.Length == 8 && CryptographicOperations.FixedTimeEquals(check, storedCheck);
                     CryptographicOperations.ZeroMemory(checkHash); CryptographicOperations.ZeroMemory(check);
-                    if (!matches) throw new SharpCompress.Common.CryptographicException("RAR 密码校验不匹配。");
+                    if (!matches) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Open.04"), sourceText => new SharpCompress.Common.CryptographicException(sourceText));
                 }
                 key = Rfc2898DeriveBytes.Pbkdf2(passwordBytes, metadata.Salt, 1 << metadata.KdfLog2, HashAlgorithmName.SHA256, 32);
             }
@@ -256,13 +257,13 @@ internal static class RarContinuousCrypto
         else
         {
             byte[] salt = RarIntegrityReflection.NullableBytes(metadata.FirstHeader, "R4Salt") ?? [];
-            if (salt.Length != 8) throw RarIntegrityReflection.Invalid("RAR4 加密 salt 长度不合法。");
+            if (salt.Length != 8) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Open.05"));
             (key, iv) = DeriveRar4(password, salt, token);
         }
         try
         {
             token.ThrowIfCancellationRequested();
-            if (iv.Length != 16) throw RarIntegrityReflection.Invalid("RAR AES 初始化向量长度不合法。");
+            if (iv.Length != 16) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Open.06"));
             using Aes aes = Aes.Create();
             aes.Mode = CipherMode.CBC; aes.Padding = PaddingMode.None;
             aes.Key = key; aes.IV = iv;
@@ -339,14 +340,14 @@ internal sealed class RarStoredLengthStream(Stream source, long length) : Stream
     {
         if (buffer.IsEmpty || _position == length) return 0;
         int read = source.Read(buffer[..(int)Math.Min(buffer.Length, length - _position)]);
-        if (read == 0) throw RarIntegrityReflection.Invalid("RAR 存储成员数据被截断。");
+        if (read == 0) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Read.02"));
         _position += read; return read;
     }
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         if (buffer.IsEmpty || _position == length) return 0;
         int read = await source.ReadAsync(buffer[..(int)Math.Min(buffer.Length, length - _position)], cancellationToken).ConfigureAwait(false);
-        if (read == 0) throw RarIntegrityReflection.Invalid("RAR 存储成员数据被截断。");
+        if (read == 0) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.ReadAsync.01"));
         _position += read; return read;
     }
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
@@ -366,7 +367,7 @@ internal sealed class RarDecodedContentStream(Stream source, bool useBlake, Acti
     internal bool Completed { get; private set; }
     internal byte[] GetCompletedBlake()
     {
-        if (!Completed || _digest is null) throw RarIntegrityReflection.Invalid("RAR BLAKE2sp 流尚未完整读取。");
+        if (!Completed || _digest is null) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.GetCompletedBlake.01"));
         return _digest.ToArray();
     }
     private int Observe(ReadOnlySpan<byte> bytes, int requested)
@@ -415,7 +416,7 @@ internal sealed class RarBlake2sp
     private bool _finished;
     internal void Update(ReadOnlySpan<byte> bytes)
     {
-        if (_finished) throw new InvalidOperationException("BLAKE2sp 已结束。");
+        if (_finished) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Update.01"), sourceText => new InvalidOperationException(sourceText));
         while (!bytes.IsEmpty)
         {
             int count = Math.Min(bytes.Length, 64 - (_stripe & 63));
@@ -425,7 +426,7 @@ internal sealed class RarBlake2sp
     }
     internal byte[] Finish()
     {
-        if (_finished) throw new InvalidOperationException("BLAKE2sp 已结束。");
+        if (_finished) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeRarReader.Finish.01"), sourceText => new InvalidOperationException(sourceText));
         _finished = true;
         var root = new Blake2sNode(0, true, true);
         foreach (Blake2sNode leaf in _leaves)

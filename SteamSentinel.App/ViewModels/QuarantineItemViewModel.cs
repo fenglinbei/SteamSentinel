@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 
 namespace SteamSentinel.App.ViewModels;
@@ -11,7 +12,7 @@ public sealed class QuarantineItemViewModel
     public string Created => Manifest.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public int ItemCount => Manifest.Records.Count;
     public int ActiveCount => Manifest.Records.Count(record => !record.RolledBack);
-    public string Status => ReadError ?? (ActiveCount == 0 ? "已回滚/仅记录" : $"隔离中：{ActiveCount} 项");
+    public string Status => ReadError ?? (ActiveCount == 0 ? DisplayText.Get("QuarantineItemViewModel.Status.01") : DisplayText.Format("QuarantineItemViewModel.Status.02", (ActiveCount)));
     public bool RebootObserved
     {
         get

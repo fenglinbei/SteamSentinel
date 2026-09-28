@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers;
 using System.Security.Cryptography;
 using SharpCompress.Common;
@@ -16,7 +17,7 @@ public sealed partial class ContentScanner
     {
         node.Integrity = ContainerStageStatus.UnsupportedIntegrity;
         node.DirectoryRead = ContainerStageStatus.Pending;
-        node.Details.Add("此单流格式可以受限展开，但尚无独立完整性验证，结果保留为部分完成。");
+        node.AddDetail(MessageText.Create("Backend.Core.ContentScanner.OtherArchives.ScanOtherContainerArchiveAsync.01"));
         using ContainerTemporaryStore temporary = new(context.Budget);
         List<(ContainerTemporaryFile File, string Display, string Hash)> staged = [];
         source.Position = 0;
@@ -28,15 +29,17 @@ public sealed partial class ContentScanner
                 {
                     context.Budget.ChargeMetadata();
                     if (!reader.MoveToNextEntry()) break;
-                    if (context.Report.Metrics.ArchiveEntriesVisited >= context.Budget.Limits.MaximumEntries)
-                        throw new ScanResourceLimitException("归档条目数量达到本轮上限。");
+                    if (context.Report.Metrics.ArchiveEntriesVisited >= context.Budget.Limits.MaximumEntries &&
+                        !ScanResourceSession.Allow("ContainerLimits.MaximumEntries", context.Report.Metrics.ArchiveEntriesVisited + 1, context.Report.Metrics.ArchiveEntriesVisited, known: false))
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.OtherArchives.ScanOtherContainerArchiveAsync.02"), sourceText => new ScanResourceLimitException(sourceText));
                     context.Report.Metrics.ArchiveEntriesVisited++;
                     IEntry entry = reader.Entry;
-                    if (entry.IsEncrypted) throw new NotSupportedException("此单流格式的加密方案尚不支持。");
+                    if (entry.IsEncrypted) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.OtherArchives.ScanOtherContainerArchiveAsync.03"), sourceText => new NotSupportedException(sourceText));
                     if (entry.IsDirectory) continue;
-                    if (entry.Size < 0 || entry.Size > context.Budget.Limits.MaximumEntryBytes ||
-                        entry.CompressedSize > 0 && entry.Size / (double)entry.CompressedSize > context.Budget.Limits.MaximumCompressionRatio)
-                        throw new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", "单流成员声明大小或压缩比超过单项上限，已停止此归档。");
+                    if (entry.Size < 0 || entry.Size > context.Budget.Limits.MaximumEntryBytes && !ScanResourceSession.Allow("ContainerLimits.MaximumEntryBytes", entry.Size) ||
+                        entry.CompressedSize > 0 && entry.Size / (double)entry.CompressedSize > context.Budget.Limits.MaximumCompressionRatio &&
+                        !ScanResourceSession.Allow("ContainerLimits.MaximumCompressionRatio", checked((long)Math.Ceiling(entry.Size / (double)entry.CompressedSize))))
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.OtherArchives.ScanOtherContainerArchiveAsync.04"), sourceText => new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", sourceText));
                     string display = node.DisplayPath + "!/" + SanitizeEntryDisplayName(entry.Key);
                     if (IsUnsafeArchiveName(entry.Key))
                     {
@@ -59,9 +62,10 @@ public sealed partial class ContentScanner
                                     int count = await input.ReadAsync(buffer.AsMemory(0, requested), context.Token);
                                     if (count == 0) break;
                                     context.Budget.ChargeDecoded(count); copied = checked(copied + count);
-                                    if (copied > context.Budget.Limits.MaximumEntryBytes || entry.Size > 0 && copied > entry.Size ||
-                                        entry.CompressedSize > 0 && copied / (double)entry.CompressedSize > context.Budget.Limits.MaximumCompressionRatio)
-                                        throw new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", "单流成员实际展开大小或压缩比超过单项上限，已停止此归档。");
+                                    if (copied > context.Budget.Limits.MaximumEntryBytes && !ScanResourceSession.Allow("ContainerLimits.MaximumEntryBytes", copied, copied - count, known: false) || entry.Size > 0 && copied > entry.Size ||
+                                        entry.CompressedSize > 0 && copied / (double)entry.CompressedSize > context.Budget.Limits.MaximumCompressionRatio &&
+                                        !ScanResourceSession.Allow("ContainerLimits.MaximumCompressionRatio", checked((long)Math.Ceiling(copied / (double)entry.CompressedSize)), known: false))
+                                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.OtherArchives.ScanOtherContainerArchiveAsync.05"), sourceText => new ContainerEntryLimitException("ARCHIVE-SIZE-LIMIT", sourceText));
                                     context.Budget.AcceptExpansion(count);
                                     hash.AppendData(buffer, 0, count);
                                     await output.WriteAsync(buffer.AsMemory(0, count), context.Token);
@@ -71,7 +75,7 @@ public sealed partial class ContentScanner
                         }
                         catch { reader.Cancel(); throw; }
                     }
-                    if (entry.Size > 0 && copied != entry.Size) throw new InvalidDataException("单流成员实际长度与声明不一致。");
+                    if (entry.Size > 0 && copied != entry.Size) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.OtherArchives.ScanOtherContainerArchiveAsync.06"), sourceText => new InvalidDataException(sourceText));
                     await output.SealAsync(context.Token);
                     context.Report.Metrics.ArchiveBytesExpanded += copied;
                     staged.Add((output, display, Convert.ToHexString(hash.GetHashAndReset())));

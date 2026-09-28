@@ -31,15 +31,16 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
     public string HandlingLabel => Handling.Label;
     public string HandlingReason => Handling.Reason;
     public string HandlingNextStep => Handling.NextStep;
-    public string HandlingDetails => Handling.Label + "：" + Handling.Reason + "\n" + Handling.NextStep;
+    public string HandlingDetails => DisplayText.Format("Common.LabelValue", Handling.Label, Handling.Reason) + "\n" + Handling.NextStep;
     public bool IsTrustProxyFinding => FindingHandlingPresentation.IsTrustProxyFinding(Finding);
     public string Severity => ReportExporter.SeverityLabel(Finding.Severity);
     public string Category => ReportExporter.CategoryLabel(Finding.Category);
     public int Score => Finding.Score;
-    public string Title => Finding.Title;
+    public string Title => Finding.TitleText.Display;
     public string Target => Finding.Target;
-    public string Evidence => Finding.Evidence;
-    public string Description => Finding.Description;
+    public string TargetDisplay => Finding.TargetText.Display;
+    public string Evidence => Finding.EvidenceDisplay;
+    public string Description => Finding.DescriptionText.Display;
     public string Sha256 => Finding.Sha256 ?? string.Empty;
     public string WorkshopId => Finding.AppId is { Length: > 0 } ? $"{Finding.AppId} / {Finding.WorkshopId ?? "—"}" : Finding.WorkshopId ?? string.Empty;
 

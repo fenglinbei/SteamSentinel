@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
@@ -39,16 +40,16 @@ internal static class TrustProxyDiagnosticFragments
     internal static IReadOnlyList<TrustProxyDiagnosticFragment> Create(TrustProxyDiagnosticReport source)
     {
         if (source.Proxies is null || source.CertificateStores is null || source.Certificates is null || source.Checks is null || source.Relations is null)
-            throw Invalid("诊断集合不能为空。");
+            throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Create.01"));
         TrustProxyDiagnosticCounts counts = new(source.Proxies.Count, source.CertificateStores.Count,
             source.Certificates.Count, source.Checks.Count, source.Relations.Count, 0);
         ValidateCounts(counts);
         long bytes = 0;
         foreach (CertificateObservation certificate in source.Certificates)
         {
-            if (certificate is null) throw Invalid("证书记录不能为空。");
+            if (certificate is null) throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Create.02"));
             bytes += DecodeStandardDer(certificate.DerBase64).Length;
-            if (bytes > MaximumDerBytes) throw Invalid("诊断 DER 累计字节超限。");
+            if (bytes > MaximumDerBytes) throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Create.03"));
         }
         TrustProxyDiagnosticMetadata metadata = new(source.SchemaVersion, source.StartedAtUtc,
             source.CompletedAtUtc, source.TargetUserSid, counts with { DerBytes = bytes });
@@ -125,7 +126,7 @@ internal static class TrustProxyDiagnosticFragments
         public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
         public override void Write(ReadOnlySpan<byte> buffer)
         {
-            if (buffer.Length > maximumBytes - _length) throw Invalid("诊断结果帧超过 1 MiB 通信上限。");
+            if (buffer.Length > maximumBytes - _length) throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Write.01"));
             _length += buffer.Length;
         }
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
@@ -137,7 +138,7 @@ internal static class TrustProxyDiagnosticFragments
     {
         if (metadata is null || metadata.Counts is null || metadata.SchemaVersion != 1 || metadata.TargetUserSid is null ||
             metadata.StartedAtUtc == default || metadata.CompletedAtUtc < metadata.StartedAtUtc)
-            throw Invalid("诊断元数据无效或版本不支持。");
+            throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.ValidateMetadata.01"));
         ValidateSid(metadata.TargetUserSid, allowEmpty: true);
         ValidateCounts(metadata.Counts);
     }
@@ -147,26 +148,26 @@ internal static class TrustProxyDiagnosticFragments
         if (counts.Proxies is < 0 or > MaximumProxies || counts.Stores is < 0 or > MaximumStores ||
             counts.Certificates is < 0 or > MaximumCertificates || counts.Checks is < 0 or > MaximumChecks ||
             counts.Relations is < 0 or > MaximumRelations || counts.DerBytes is < 0 or > MaximumDerBytes)
-            throw Invalid("诊断累计数量或字节预算超限。");
+            throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.ValidateCounts.01"));
     }
 
     internal static void ValidateSid(string? sid, bool allowEmpty = false)
     {
         if (allowEmpty && sid == "") return;
-        if (string.IsNullOrWhiteSpace(sid) || sid.Length > 184) throw Invalid("诊断用户 SID 无效。");
+        if (string.IsNullOrWhiteSpace(sid) || sid.Length > 184) throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.ValidateSid.01"));
         try { _ = new SecurityIdentifier(sid); }
-        catch (ArgumentException) { throw Invalid("诊断用户 SID 无效。"); }
+        catch (ArgumentException) { throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.ValidateSid.02")); }
     }
 
     internal static byte[] DecodeStandardDer(string? encoded)
     {
         if (encoded is null || encoded.Length == 0 || encoded.Length > ((MaximumCertificateBytes + 2) / 3) * 4)
-            throw Invalid("证书 DER 编码长度超限。");
+            throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.DecodeStandardDer.01"));
         byte[] der;
         try { der = Convert.FromBase64String(encoded); }
-        catch (FormatException) { throw Invalid("证书 DER Base64 编码无效。"); }
+        catch (FormatException) { throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.DecodeStandardDer.02")); }
         if (der.Length == 0 || der.Length > MaximumCertificateBytes || Convert.ToBase64String(der) != encoded)
-            throw Invalid("证书 DER 编码不规范或字节超限。");
+            throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.DecodeStandardDer.03"));
         return der;
     }
 
@@ -174,13 +175,13 @@ internal static class TrustProxyDiagnosticFragments
     {
         if (encoded is null || encoded.Length == 0 || encoded.Length > ((MaximumCertificateBytes + 2) / 3) * 4 ||
             encoded.Any(c => !(c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '-' or '_')))
-            throw Invalid("证书 DER Base64Url 编码无效或过长。");
+            throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.DecodeUrlDer.01"));
         string standard = encoded.Replace('-', '+').Replace('_', '/');
         int padding = (4 - standard.Length % 4) % 4;
-        if (padding == 3) throw Invalid("证书 DER Base64Url 编码长度无效。");
+        if (padding == 3) throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.DecodeUrlDer.02"));
         byte[] der = DecodeStandardDer(standard + new string('=', padding));
         if (Convert.ToBase64String(der).TrimEnd('=').Replace('+', '-').Replace('/', '_') != encoded)
-            throw Invalid("证书 DER Base64Url 编码不规范。");
+            throw Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.DecodeUrlDer.03"));
         return der;
     }
 
@@ -207,10 +208,11 @@ internal static class TrustProxyDiagnosticFragments
         ChainScope = value.ChainScope,
         ChainFlags = value.ChainFlags is null ? null! : [.. value.ChainFlags],
         ChainCertificateSha256 = value.ChainCertificateSha256 is null ? null! : [.. value.ChainCertificateSha256],
-        ChainDetail = value.ChainDetail
+        ChainDetailText = value.ChainDetailText
     };
 
-    internal static InvalidDataException Invalid(string reason) => new("诊断分片被拒绝：" + reason);
+    internal static InvalidDataException Invalid(MessageText reason) => MessageExceptions.Create(
+        MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Invalid.01") + reason, text => new InvalidDataException(text));
 }
 
 /// <summary>Prepare is read-only. Commit is called only after all ordinary batch ranges also validate.</summary>
@@ -227,52 +229,52 @@ internal sealed class TrustProxyDiagnosticAssembly
     {
         if (fragment is null || fragment.Offsets is null || fragment.Proxies is null || fragment.Stores is null ||
             fragment.Certificates is null || fragment.Checks is null || fragment.Relations is null)
-            throw TrustProxyDiagnosticFragments.Invalid("分片结构缺失。");
-        if (IsComplete) throw TrustProxyDiagnosticFragments.Invalid("完成后的诊断不能追加分片。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.01"));
+        if (IsComplete) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.02"));
         TrustProxyDiagnosticFragments.ValidateMetadata(fragment.Metadata);
         if (_metadata is not null && _metadata != fragment.Metadata)
-            throw TrustProxyDiagnosticFragments.Invalid("分片元数据或总数量发生变化。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.03"));
         TrustProxyDiagnosticCounts totals = fragment.Metadata.Counts;
         TrustProxyDiagnosticOffsets offsets = fragment.Offsets;
         if (offsets.Proxies != (Report?.Proxies.Count ?? 0) || offsets.Stores != (Report?.CertificateStores.Count ?? 0) ||
             offsets.Certificates != (Report?.Certificates.Count ?? 0) || offsets.Checks != (Report?.Checks.Count ?? 0) || offsets.Relations != (Report?.Relations.Count ?? 0))
-            throw TrustProxyDiagnosticFragments.Invalid("分片偏移不连续。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.04"));
         if (fragment.Proxies.Count > 1 || fragment.Certificates.Count > 1 || fragment.Stores.Count > TrustProxyDiagnosticFragments.SmallBatchSize ||
             fragment.Checks.Count > TrustProxyDiagnosticFragments.SmallBatchSize || fragment.Relations.Count > TrustProxyDiagnosticFragments.RelationBatchSize)
-            throw TrustProxyDiagnosticFragments.Invalid("单片记录数量超限。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.05"));
         int tables = (fragment.Proxies.Count > 0 ? 1 : 0) + (fragment.Stores.Count > 0 ? 1 : 0) +
             (fragment.Certificates.Count > 0 ? 1 : 0) + (fragment.Checks.Count > 0 ? 1 : 0) + (fragment.Relations.Count > 0 ? 1 : 0);
-        if (tables > 1) throw TrustProxyDiagnosticFragments.Invalid("单片只能携带一种诊断表。");
+        if (tables > 1) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.06"));
         int proxies = offsets.Proxies + fragment.Proxies.Count, stores = offsets.Stores + fragment.Stores.Count,
             certificates = offsets.Certificates + fragment.Certificates.Count, checks = offsets.Checks + fragment.Checks.Count,
             relations = offsets.Relations + fragment.Relations.Count;
         if (proxies > totals.Proxies || stores > totals.Stores || certificates > totals.Certificates || checks > totals.Checks || relations > totals.Relations)
-            throw TrustProxyDiagnosticFragments.Invalid("分片超过声明的总数量。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.07"));
         bool allReceived = proxies == totals.Proxies && stores == totals.Stores && certificates == totals.Certificates && checks == totals.Checks && relations == totals.Relations;
         if (fragment.IsFinal != allReceived || tables == 0 && (!allReceived || Report is not null))
-            throw TrustProxyDiagnosticFragments.Invalid("结束标记与声明的总数量不一致。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.08"));
 
         HashSet<string> newIds = new(StringComparer.Ordinal);
         long text = 0, derBytes = 0;
         void Id(string? id)
         {
             Field(id, 128, required: true);
-            if (_ids.Contains(id!) || !newIds.Add(id!)) throw TrustProxyDiagnosticFragments.Invalid("观察或检查 ID 重复。");
+            if (_ids.Contains(id!) || !newIds.Add(id!)) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.09"));
         }
         void Reference(string? id)
         {
             Field(id, 128, required: true);
-            if (!_ids.Contains(id!) && !newIds.Contains(id!)) throw TrustProxyDiagnosticFragments.Invalid("引用的观察 ID 尚未接收。");
+            if (!_ids.Contains(id!) && !newIds.Contains(id!)) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.10"));
         }
         void Field(string? value, int maximum, bool required = false)
         {
             if (required && string.IsNullOrWhiteSpace(value) || value?.Length > maximum)
-                throw TrustProxyDiagnosticFragments.Invalid("诊断字段缺失或长度超限。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.11"));
             text += value?.Length ?? 0;
         }
         static void Status(DiagnosticReadStatus status)
         {
-            if (!Enum.IsDefined(status)) throw TrustProxyDiagnosticFragments.Invalid("读取状态无效。");
+            if (!Enum.IsDefined(status)) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.12"));
         }
         void Scope(string scope, string? sid)
         {
@@ -280,54 +282,55 @@ internal sealed class TrustProxyDiagnosticAssembly
             if (scope == "CurrentUser")
             {
                 TrustProxyDiagnosticFragments.ValidateSid(sid);
-                if (sid != fragment.Metadata.TargetUserSid) throw TrustProxyDiagnosticFragments.Invalid("用户来源与目标 SID 不符。");
+                if (sid != fragment.Metadata.TargetUserSid) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.13"));
             }
             else if (scope != "LocalMachine" || !string.IsNullOrEmpty(sid))
-                throw TrustProxyDiagnosticFragments.Invalid("诊断来源作用域无效。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.14"));
             Field(sid, 184);
         }
         void TextList(IReadOnlyList<string>? values, int maximumCount, int maximumCharacters, bool hashes = false)
         {
-            if (values is null || values.Count > maximumCount) throw TrustProxyDiagnosticFragments.Invalid("证书字段列表超限。");
+            if (values is null || values.Count > maximumCount) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.15"));
             foreach (string value in values) { Field(value, maximumCharacters, required: true); if (hashes) Hash(value, 64); }
         }
 
         foreach (CertificateStoreObservation store in fragment.Stores)
         {
-            if (store is null) throw TrustProxyDiagnosticFragments.Invalid("存储记录为空。");
-            Id(store.Id); Scope(store.Scope, store.UserSid); Field(store.StoreName, 128, required: true);
+            if (store is null) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.16"));
+            text += store.ValidateDisplayMessages(); Id(store.Id); Scope(store.Scope, store.UserSid); Field(store.StoreName, 128, required: true);
             Field(store.Provider, 256, required: true); Field(store.Detail, 8192); Status(store.Status);
             if (store.CertificatesRead is < 0 or > TrustProxyDiagnosticFragments.MaximumCertificates)
-                throw TrustProxyDiagnosticFragments.Invalid("存储证书计数无效。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.17"));
         }
         foreach (ProxyConfigurationObservation proxy in fragment.Proxies)
         {
-            if (proxy is null || proxy.Values is null || proxy.Values.Count > 16) throw TrustProxyDiagnosticFragments.Invalid("代理记录为空或字段数量超限。");
+            if (proxy is null || proxy.Values is null || proxy.Values.Count > 16) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.18"));
             long before = text;
-            Id(proxy.Id); Scope(proxy.Scope, proxy.UserSid); Status(proxy.Status);
+            text += proxy.ValidateDisplayMessages(); Id(proxy.Id); Scope(proxy.Scope, proxy.UserSid); Status(proxy.Status);
             Field(proxy.Source, 256, required: true); Field(proxy.Location, 4096, required: true); Field(proxy.Detail, 65536);
             Field(proxy.ProxyServer, 65536); Field(proxy.ProxyBypass, 65536); Field(proxy.AutoConfigUrl, 65536);
             HashSet<string> valueNames = new(StringComparer.OrdinalIgnoreCase);
             foreach (DiagnosticConfigurationValue value in proxy.Values)
             {
-                if (value is null) throw TrustProxyDiagnosticFragments.Invalid("代理原值记录为空。");
+                if (value is null) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.19"));
+                text += value.ValueMessage?.Validate() ?? 0;
                 Field(value.Name, 128, required: true); Field(value.Kind, 128, required: true); Field(value.Value, 65536);
-                if (!valueNames.Add(value.Name)) throw TrustProxyDiagnosticFragments.Invalid("代理原值名称重复。");
+                if (!valueNames.Add(value.Name)) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.20"));
                 Status(value.ReadStatus); if (value.Sha256 is not null) Hash(value.Sha256, 64);
                 Field(value.Sha256, 64);
             }
             if (text - before > TrustProxyDiagnosticFragments.MaximumObservationTextCharacters)
-                throw TrustProxyDiagnosticFragments.Invalid("代理记录文本总量超限。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.21"));
         }
         List<CertificateObservation> decoded = [];
         foreach (TrustProxyCertificateFragment wrapped in fragment.Certificates)
         {
             if (wrapped?.Data is not { } certificate || certificate.DerBase64 != "")
-                throw TrustProxyDiagnosticFragments.Invalid("证书元数据不得嵌入完整 DER。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.22"));
             long before = text;
-            Id(certificate.Id); Field(certificate.StoreObservationId, 128, required: true);
+            text += certificate.ValidateDisplayMessages(); Id(certificate.Id); Field(certificate.StoreObservationId, 128, required: true);
             if (Report?.CertificateStores.Any(s => s.Id == certificate.StoreObservationId) != true)
-                throw TrustProxyDiagnosticFragments.Invalid("证书引用的真实存储尚未接收。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.23"));
             Hash(certificate.DerSha256, 64); Hash(certificate.Sha1Thumbprint, 40);
             Field(certificate.DerSha256, 64); Field(certificate.Sha1Thumbprint, 40);
             Field(certificate.Subject, 65536); Field(certificate.Issuer, 65536); Field(certificate.KeyUsage, 1024);
@@ -335,35 +338,37 @@ internal sealed class TrustProxyDiagnosticAssembly
             TextList(certificate.EnhancedKeyUsages, 256, 256); TextList(certificate.ChainFlags, 256, 256);
             TextList(certificate.ChainCertificateSha256, 256, 64, hashes: true);
             if (text - before > TrustProxyDiagnosticFragments.MaximumObservationTextCharacters)
-                throw TrustProxyDiagnosticFragments.Invalid("证书元数据文本总量超限。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.24"));
             byte[] der = TrustProxyDiagnosticFragments.DecodeUrlDer(wrapped.DerBase64Url);
             if (!Convert.ToHexString(SHA256.HashData(der)).Equals(certificate.DerSha256, StringComparison.OrdinalIgnoreCase) ||
                 !Convert.ToHexString(SHA1.HashData(der)).Equals(certificate.Sha1Thumbprint, StringComparison.OrdinalIgnoreCase))
-                throw TrustProxyDiagnosticFragments.Invalid("证书 DER 与摘要不一致。");
+                throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.25"));
             derBytes += der.Length;
             decoded.Add(TrustProxyDiagnosticFragments.CopyCertificate(certificate, Convert.ToBase64String(der)));
         }
         foreach (DiagnosticCheck check in fragment.Checks)
         {
-            if (check is null) throw TrustProxyDiagnosticFragments.Invalid("检查记录为空。");
-            Id(check.Id); Field(check.Name, 512, required: true); Field(check.Detail, 8192); Status(check.Status);
+            if (check is null) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.26"));
+            text += check.ValidateDisplayMessages(); Id(check.Id); Field(check.Name, 512, required: true); Field(check.Detail, 8192); Status(check.Status);
+            Field(check.CheckCode, 96);
+            if (check.CheckCode is not null && !ReasonCodes.IsValid(check.CheckCode)) throw new InvalidDataException("Invalid diagnostic check code.");
             if (check.ObservationId is not null) Reference(check.ObservationId);
         }
         foreach (DiagnosticRelation relation in fragment.Relations)
         {
-            if (relation is null) throw TrustProxyDiagnosticFragments.Invalid("关系记录为空。");
-            Reference(relation.FromId); Reference(relation.ToId); Field(relation.Kind, 128, required: true); Field(relation.Evidence, 4096);
+            if (relation is null) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.27"));
+            Reference(relation.FromId); Reference(relation.ToId); Field(relation.Kind, 128, required: true); Field(relation.Evidence, 4096); text += relation.EvidenceMessage?.Validate() ?? 0;
         }
         if (_derBytes + derBytes > totals.DerBytes || _derBytes + derBytes > TrustProxyDiagnosticFragments.MaximumDerBytes ||
             _textCharacters + text > TrustProxyDiagnosticFragments.MaximumTextCharacters)
-            throw TrustProxyDiagnosticFragments.Invalid("诊断累计 DER 或文本预算超限。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.28"));
         if (fragment.IsFinal)
         {
-            if (_derBytes + derBytes != totals.DerBytes) throw TrustProxyDiagnosticFragments.Invalid("最终 DER 总量与声明不一致。");
+            if (_derBytes + derBytes != totals.DerBytes) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.29"));
             foreach (CertificateStoreObservation store in (Report?.CertificateStores ?? []).Concat(fragment.Stores))
             {
                 int read = _certificatesPerStore.GetValueOrDefault(store.Id) + decoded.Count(c => c.StoreObservationId == store.Id);
-                if (store.CertificatesRead != read) throw TrustProxyDiagnosticFragments.Invalid("存储声明计数与证书记录不一致。");
+                if (store.CertificatesRead != read) throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Prepare.30"));
             }
         }
         return new(fragment, decoded, newIds, derBytes, text);
@@ -372,7 +377,7 @@ internal sealed class TrustProxyDiagnosticAssembly
     private static void Hash(string? value, int length)
     {
         if (value is null || value.Length != length || value.Any(c => !Uri.IsHexDigit(c)))
-            throw TrustProxyDiagnosticFragments.Invalid("诊断摘要格式无效。");
+            throw TrustProxyDiagnosticFragments.Invalid(MessageText.Create("Backend.Core.TrustProxyDiagnosticFragments.Hash.01"));
     }
 
     internal void Commit(PreparedTrustProxyFragment prepared)

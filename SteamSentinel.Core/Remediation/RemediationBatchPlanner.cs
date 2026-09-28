@@ -3,6 +3,7 @@ using System.Text.Json;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Scanning;
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
@@ -19,7 +20,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         IProgress<ScanProgress>? progress = null, CancellationToken token = default)
     {
         Finding[] selected = selection.Where(f => f.CanRemediate).Take(MaximumSelectedFindings + 1).ToArray();
-        if (selected.Length > MaximumSelectedFindings) throw new InvalidDataException("所选发现超过 20000 条，没有生成处置计划，请缩小范围。");
+        if (selected.Length > MaximumSelectedFindings) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.01"), sourceText => new InvalidDataException(sourceText));
         RemediationBatchSession session = new()
         {
             SelectedFindingCount = selected.Length,
@@ -33,12 +34,21 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             }).ToList()
         };
         List<Finding> verified = [];
-        List<string> notes = [];
-        List<Finding[]> batches = PackSelection(selected, notes);
+        MessageTextCollection notes = [];
+        void Record(IEnumerable<Finding> findings, IEnumerable<MessageText> details, string reason)
+        {
+            MessageText[] captured = details.ToArray();
+            foreach (MessageText detail in captured) notes.AddText(detail);
+            foreach (Finding finding in findings)
+                foreach (MessageText detail in captured.Take(5))
+                    if (session.PreparationNotes.Count < 4096)
+                        session.PreparationNotes.Add(new(finding.Target, reason, detail));
+        }
+        List<Finding[]> batches = PackSelection(selected, notes, session.PreparationNotes);
         for (int index = 0; index < batches.Count; index++)
         {
             token.ThrowIfCancellationRequested();
-            progress?.Report(new("核对处置方案", $"第 {index + 1}/{batches.Count} 批", index, batches.Count, "只读核验，尚未开始处置"));
+            progress?.Report(new(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.02"), MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.03", (index + 1), (batches.Count)), index, batches.Count, MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.04")));
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
             timeout.CancelAfter(TimeSpan.FromMinutes(3));
             try
@@ -49,32 +59,35 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                     ScanReport additional = await inspectCandidates(expansion.CandidatePaths, timeout.Token);
                     ScanReport combined = ScanReportMerger.Merge(original, additional);
                     expansion = await new RelatedArtifactScanner(rules).ExpandAsync(batches[index], combined, timeout.Token);
-                    notes.AddRange(additional.CoverageNotes);
+                    Record(batches[index], additional.CoverageTexts, ReasonCodes.EvidenceUnavailable);
                 }
                 verified.AddRange(expansion.Findings);
-                notes.AddRange(expansion.Notes);
+                Record(batches[index], expansion.NoteTexts, ReasonCodes.EvidenceUnavailable);
             }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)
-            { foreach (Finding f in batches[index]) notes.Add("本批核验超过 3 分钟，未纳入：" + f.Target); }
+            { Record(batches[index], [MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.05")], ReasonCodes.ResourceLimit); }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception)
-            { foreach (Finding f in batches[index]) notes.Add("本批核验未完成，未纳入：" + f.Target + "，" + ex.Message); }
+            { Record(batches[index], [MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.06") + MessageExceptions.Describe(ex)], ReasonCodes.EvidenceUnavailable); }
         }
         token.ThrowIfCancellationRequested();
         // Live discovery may connect initial batches through a shared host/entry. Regroup ALL verified edges before packing actions.
         List<List<RemediationAction>> actionGroups = [];
         bool needDomains = blockDomains;
+        RemediationPlanBuilder planBuilder = new(rules);
         foreach (Finding[] group in DependencyGroups(verified.Where(f => f.CanRemediate).ToArray()))
         {
             token.ThrowIfCancellationRequested();
             try
             {
-                RemediationPlan plan = await new RemediationPlanBuilder(rules).BuildAsync(Coalesce(group), false, token, allFindings: group);
+                RemediationPlan plan = await planBuilder.BuildAsync(Coalesce(group), false, token, allFindings: group);
                 needDomains |= plan.Actions.Any(a => a.Type == RemediationActionType.BlockKnownDomains);
                 List<RemediationAction> actions = plan.Actions.Where(a => a.Type != RemediationActionType.BlockKnownDomains).ToList();
                 if (actions.Count > 0) actionGroups.Add(actions);
             }
+            catch (FileRemediationScopeException ex)
+            { Record(group, [MessageExceptions.Describe(ex)], ReasonCodes.ActionsNotIncluded); }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception)
-            { foreach (Finding f in group) notes.Add("关联组未纳入处置，未拆开执行：" + f.Target + "，" + ex.Message); }
+            { Record(group, [MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.07") + MessageExceptions.Describe(ex)], ReasonCodes.EvidenceUnavailable); }
         }
         session.Plans.AddRange(PackActions(actionGroups));
         if (session.Plans.Count > 0 && needDomains && rules.KnownDomains.Count > 0)
@@ -83,7 +96,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             {
                 Type = RemediationActionType.BlockKnownDomains,
                 Target = "hosts",
-                DisplayName = "在 hosts 中阻断已知 C2 域名",
+                DisplayNameText = MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.08"),
                 Domains = [.. rules.KnownDomains],
                 IsKnownMalware = true,
                 ConfidenceScore = 100
@@ -91,8 +104,8 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             if (session.Plans[0].Actions.Count == 64) session.Plans.Insert(0, new() { Actions = [block] });
             else { session.Plans[0].Actions.Add(block); RemediationPlanBuilder.OrderActionsForSafeExecution(session.Plans[0].Actions); }
         }
-        session.Notes.AddRange(notes.Distinct().Take(4096));
-        if (notes.Distinct().Skip(4096).Any()) session.Notes.Add("补充说明超过显示上限，未纳入目标仍逐项列出。");
+        foreach (MessageText note in notes.Texts.DistinctBy(n => n.OriginalText).Take(4096)) session.AddNote(note);
+        if (notes.Distinct().Skip(4096).Any()) session.AddNote(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.09"));
         HashSet<string> goalKeys = session.Targets.Select(t => t.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         HashSet<string> plannedKeys = session.Plans.SelectMany(p => p.Actions).Select(ActionKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var group in verified.Where(f => f.CanRemediate).GroupBy(GoalKey, StringComparer.OrdinalIgnoreCase))
@@ -146,7 +159,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         }), StringComparer.Ordinal)
         .Select(g => g.OrderByDescending(f => f.Score).ThenByDescending(f => f.IsKnownMalware).First()).ToArray();
 
-    internal static List<Finding[]> PackSelection(Finding[] selected, List<string> notes)
+    internal static List<Finding[]> PackSelection(Finding[] selected, List<string> notes, List<RemediationPreparationNote>? preparationNotes = null)
     {
         List<Finding[]> batches = []; List<Finding> current = []; long size = 0; int paths = 0;
         foreach (Finding[] rawGroup in DependencyGroups(selected))
@@ -155,7 +168,15 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             string[] files = group.SelectMany(FileKeys).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             long bytes = files.Sum(FileBytes);
             if (group.Length > 256 || files.Length > 64 || bytes > RelatedArtifactScanner.MaximumVerificationBytes)
-            { foreach (Finding f in rawGroup) notes.Add("单个关联组超过本批安全上限，未拆开执行：" + f.Target); continue; }
+            {
+                foreach (Finding f in rawGroup)
+                {
+                    MessageText detail = MessageText.Create("Backend.Core.RemediationBatchPlanner.PackSelection.01") + f.Target;
+                    if (notes is MessageTextCollection localized) localized.AddText(detail); else notes.Add(detail.OriginalText);
+                    if (preparationNotes is { Count: < 4096 }) preparationNotes.Add(new(f.Target, ReasonCodes.ResourceLimit, detail));
+                }
+                continue;
+            }
             if (current.Count > 0 && (current.Count + group.Length > 256 || paths + files.Length > 32 || size + bytes > PreparationBatchBytes))
             { batches.Add(current.ToArray()); current.Clear(); size = 0; paths = 0; }
             current.AddRange(group); size += bytes; paths += files.Length;
@@ -169,7 +190,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         List<RemediationPlan> plans = []; RemediationPlan current = new(); long bytes = 0;
         foreach (List<RemediationAction> group in groups)
         {
-            if (group.Count > 64) throw new InvalidDataException("单个关联组超过 64 个动作，不能拆开执行。");
+            if (group.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PackActions.01"), sourceText => new InvalidDataException(sourceText));
             long groupBytes = group.Select(a => a.RelatedFilePath ?? a.Target).Distinct(StringComparer.OrdinalIgnoreCase).Sum(FileBytes);
             if (current.Actions.Count > 0 && (current.Actions.Count + group.Count > 64 || bytes + groupBytes > PreparationBatchBytes))
             { RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions); plans.Add(current); current = new(); bytes = 0; }
@@ -245,11 +266,16 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                 if (matches.Length == 0) target.MissingActions.Add(key);
                 else foreach (var match in matches) { target.ActionIds.Add(match.Action.ActionId); if (!target.Batches.Contains(match.Batch)) target.Batches.Add(match.Batch); }
             }
-            target.Status = target.ActionIds.Count == 0 ? "未处理" : target.MissingActions.Count > 0 ? "部分纳入" : "待执行";
-            target.Reason = target.MissingActions.Count > 0 || target.ActionIds.Count == 0
-                ? string.Join("\n", session.Notes.Where(n => n.Contains(target.Target, StringComparison.OrdinalIgnoreCase)).Take(5)) : "已纳入方案，执行前还会独立核验身份。";
-            if (string.IsNullOrWhiteSpace(target.Reason)) target.Reason = File.Exists(target.Target) || Directory.Exists(target.Target)
-                ? "缺少可执行证据，或关联核验未完成，没有执行这些动作。请进一步检查。" : "目标已不存在、无法读取或未能重新验证，没有执行这些动作。";
+            RemediationTargetState state = target.ActionIds.Count == 0 ? RemediationTargetState.NotIncluded
+                : target.MissingActions.Count > 0 ? RemediationTargetState.PartiallyIncluded : RemediationTargetState.Ready;
+            RemediationPreparationNote[] relevant = session.PreparationNotes
+                .Where(n => n.Target.Equals(target.Target, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(n => n.ReasonCode == ReasonCodes.ActionsNotIncluded ? 0 : 1).Take(5).ToArray();
+            string reason = state == RemediationTargetState.Ready ? ReasonCodes.PlanReady
+                : relevant.Length > 0 ? relevant[0].ReasonCode
+                : File.Exists(target.Target) || Directory.Exists(target.Target) ? ReasonCodes.EvidenceUnavailable : ReasonCodes.TargetUnavailable;
+            target.SetState(state, reason, state == RemediationTargetState.Ready || relevant.Length == 0 ? null
+                : MessageText.Status("Preparation.Context") + "\n" + MessageText.Join("\n", relevant.Select(n => n.DetailText)));
         }
     }
 
@@ -259,19 +285,22 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         foreach (RemediationTargetOutcome target in session.Targets.Where(t => t.ActionIds.Count > 0))
         {
             var executed = target.ActionIds.Where(results.ContainsKey).Select(id => results[id]).ToArray();
-            if (executed.Any(a => !a.Success)) { target.Status = "未完成"; target.Reason = string.Join("\n", executed.Where(a => !a.Success).Select(a => a.Message)); }
-            else if (target.MissingActions.Count > 0) { target.Status = "部分纳入"; }
-            else if (executed.Length < target.ActionIds.Count) { target.Status = "尚未执行"; target.Reason = session.Interruption ?? "等待后续批次，不表示已完成。"; }
+            if (executed.Any(a => !a.Success))
+                target.SetState(RemediationTargetState.Failed, ReasonCodes.ActionFailed, MessageText.Join("\n", executed.Where(a => !a.Success).Select(a => a.MessageText)));
+            else if (target.MissingActions.Count > 0)
+                target.SetState(RemediationTargetState.PartiallyIncluded, ReasonCodes.ActionsNotIncluded, target.ReasonDetailsText);
+            else if (executed.Length < target.ActionIds.Count)
+                target.SetState(RemediationTargetState.NotExecuted, session.InterruptionReasonCode ?? ReasonCodes.WaitingBatches, session.InterruptionText);
             else if (executed.Any(a => a.VerificationStatus is not (RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual)))
-            { target.Status = "需复核"; target.Reason = string.Join("\n", executed.Select(a => a.VerificationSummary)); }
-            else { target.Status = "已完成"; target.Reason = "所选动作已执行并完成目标核验，不代表整台电脑安全。"; }
+                target.SetState(RemediationTargetState.ReviewRequired, ReasonCodes.VerificationIncomplete, MessageText.Join("\n", executed.Select(a => a.VerificationSummaryText)));
+            else target.SetState(RemediationTargetState.Completed, ReasonCodes.ActionsVerified);
         }
     }
 
     public static async Task ExecuteAsync(RemediationBatchSession session,
         Func<RemediationPlan, Task<RemediationRunResult>> execute, IProgress<ScanProgress>? progress = null)
     {
-        if (session.ExecutionStarted) throw new InvalidOperationException("此批次会话已开始执行，请重新扫描，不能重复提交。");
+        if (session.ExecutionStarted) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.ExecuteAsync.01"), sourceText => new InvalidOperationException(sourceText));
         session.ExecutionStarted = true;
         RefreshOutcomes(session);
         try
@@ -279,22 +308,22 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             for (int i = 0; i < session.Plans.Count; i++)
             {
                 RemediationPlan plan = session.Plans[i];
-                if (plan.ExpiresAtUtc <= DateTimeOffset.UtcNow) { session.Interruption = "后续方案已过期，已暂停，需重新扫描并确认，未自动更新身份。"; break; }
-                progress?.Report(new("正在分批处置", $"第 {i + 1}/{session.Plans.Count} 批", i, session.Plans.Count, session.Summary));
+                if (plan.ExpiresAtUtc <= DateTimeOffset.UtcNow) { session.InterruptionReasonCode = ReasonCodes.PlanExpired; session.InterruptionText = MessageText.Status(ReasonCodes.PlanExpired); break; }
+                progress?.Report(new(MessageText.Create("Backend.Core.RemediationBatchPlanner.ExecuteAsync.02"), MessageText.Create("Backend.Core.RemediationBatchPlanner.ExecuteAsync.03", (i + 1), (session.Plans.Count)), i, session.Plans.Count, StatusPresentation.BatchText(session)));
                 RemediationRunResult result = await execute(plan);
-                if (result.PlanId != plan.PlanId) throw new InvalidDataException("批次结果与计划不匹配，后续批次已暂停。");
+                if (result.PlanId != plan.PlanId) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.ExecuteAsync.04"), sourceText => new InvalidDataException(sourceText));
                 if (result.Actions.Select(a => a.ActionId).Distinct().Count() != result.Actions.Count ||
                     result.Actions.Any(r => !plan.Actions.Any(a => a.ActionId == r.ActionId && r.Type == a.Type && r.Target == a.Target)))
-                    throw new InvalidDataException("批次返回了重复或不匹配的动作，结果不可作为成功依据，后续批次已暂停。");
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.ExecuteAsync.05"), sourceText => new InvalidDataException(sourceText));
                 session.Results.Add(result);
                 if (!result.Success || result.Actions.Count != plan.Actions.Count ||
                     result.Errors.Count > 0 || result.Actions.Any(a => !a.Success || a.VerificationStatus is not (RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual)) ||
                     result.VerificationStatus is not (RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual))
-                { session.Interruption = "本批存在失败、残留或尚未确认的结果，后续批次已暂停，请查看逐项结果后重新扫描。"; break; }
+                { session.InterruptionReasonCode = ReasonCodes.BatchIncomplete; session.InterruptionText = MessageText.Status(ReasonCodes.BatchIncomplete); break; }
                 RefreshOutcomes(session);
             }
         }
-        catch (Exception ex) { session.Interruption = "处置中断，后续批次未执行：" + ex.Message; }
+        catch (Exception ex) { session.InterruptionReasonCode = ReasonCodes.ExecutionInterrupted; session.InterruptionText = MessageText.Status(ReasonCodes.ExecutionInterrupted) + "\n" + MessageExceptions.Describe(ex); }
         finally { session.ExecutionFinished = true; RefreshOutcomes(session); }
     }
 }

@@ -13,12 +13,12 @@ public partial class RemediationPreviewWindow : Window
         InitializeComponent();
         DialogLayout.ConstrainToWorkArea(this);
         Plan = plan;
-        PlanNotes = notes is { Count: > 0 } ? string.Join("\n", notes.Take(12)) + (notes.Count > 12 ? "\n更多说明请查看导出记录。" : "") : "已核对关联目标，下面列出本次实际将执行的动作。";
+        PlanNotes = notes is { Count: > 0 } ? string.Join("\n", notes.Take(12)) + (notes.Count > 12 ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.Constructor.01") : "") : DisplayText.Get("Ui.RemediationPreviewWindow.xaml.Constructor.02");
         Actions = plan.Actions
             .Select(action => new RemediationActionDisplayItem(
                 ReportExporter.ActionLabel(action.Type),
                 ConfidenceLabel(action),
-                action.DisplayName,
+                action.DisplayNameText.Display,
                 action.Target,
                 RemediationCasePresentation.ActionIdentity(action),
                 action.RelatedFilePath ?? action.Target))
@@ -29,12 +29,12 @@ public partial class RemediationPreviewWindow : Window
 
     public RemediationPlan Plan { get; }
     public RemediationPreviewWindow(RemediationBatchSession batch) : this(new RemediationPlan
-    { Actions = batch.Plans.SelectMany(p => p.Actions).ToList() }, batch.Notes)
+    { Actions = batch.Plans.SelectMany(p => p.Actions).ToList() }, batch.NoteTexts.Select(note => note.Display).ToArray())
     {
-        Summary = batch.Summary + " 下面列出全部批次，一次确认后依次执行。Windows 可能逐批请求授权，取消或失败时暂停后续批次。";
+        Summary = batch.Summary + DisplayText.Get("Ui.RemediationPreviewWindow.xaml.Constructor.03");
         OmittedTargets = batch.Targets.Where(t => t.MissingActions.Count > 0 || t.ActionIds.Count == 0).ToArray();
         Actions = batch.Plans.SelectMany((p, i) => p.Actions.Select(action => new RemediationActionDisplayItem(
-            ReportExporter.ActionLabel(action.Type), ConfidenceLabel(action), action.DisplayName, action.Target,
+            ReportExporter.ActionLabel(action.Type), ConfidenceLabel(action), action.DisplayNameText.Display, action.Target,
             RemediationCasePresentation.ActionIdentity(action),
             action.RelatedFilePath ?? action.Target, i + 1))).ToArray();
         GroupedActions = CollectionViewSource.GetDefaultView(Actions);
@@ -42,7 +42,7 @@ public partial class RemediationPreviewWindow : Window
         if (OmittedTargets.Count > 0) PreviewTabs.SelectedIndex = 1;
     }
 
-    public string Summary { get; } = "请核对本次列出的处置动作；未纳入方案的动作不会执行。";
+    public string Summary { get; } = DisplayText.Get("Ui.RemediationPreviewWindow.xaml.Summary.01");
     public IReadOnlyList<RemediationTargetOutcome> OmittedTargets { get; } = [];
     public string PlanNotes { get; }
     public IReadOnlyList<RemediationActionDisplayItem> Actions { get; }
@@ -64,8 +64,8 @@ public partial class RemediationPreviewWindow : Window
     private static string ConfidenceLabel(RemediationAction action) => action.Type switch
     {
         RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory =>
-            action.IsKnownMalware ? "已知恶意" : $"启发式 {action.ConfidenceScore}",
-        _ => action.IsKnownMalware ? "已知关联" : action.RelatedFilePath is not null ? $"启发式关联 {action.ConfidenceScore}" : "配置处置"
+            action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.01") : DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.02", (action.ConfidenceScore)),
+        _ => action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.03") : action.RelatedFilePath is not null ? DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.04", (action.ConfidenceScore)) : DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.05")
     };
 }
 

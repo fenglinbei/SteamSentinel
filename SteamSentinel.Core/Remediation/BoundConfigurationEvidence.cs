@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -33,11 +34,11 @@ public sealed class BoundConfigurationEvidenceCatalog
                 string.IsNullOrWhiteSpace(r.EvidenceReference) || r.EvidenceReference.Length > 2048 ||
                 r.ActionType is not (RemediationActionType.RemoveBoundCertificate or RemediationActionType.RestoreBoundProxyConfiguration) ||
                 r.ConfirmedWriterSha256 is not null && !Validation.IsHexSha256(r.ConfirmedWriterSha256)))
-            throw new InvalidDataException("配置处置规则缺少已核验的精确身份或证据来源。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Constructor.01"), sourceText => new InvalidDataException(sourceText));
     }
 
     public int Count => _rules.Length;
-    public const string MissingEvidenceMessage = "尚无经样本或受控实验确认的精确配置处置规则；PAC、证书名称、自签状态与同机文件不能单独授权修复。";
+    public static readonly MessageText MissingEvidenceMessage = MessageText.Create("Backend.Core.BoundConfigurationEvidence.MissingEvidenceMessage.01");
 
     public BoundConfigurationEvidenceRule Authorize(RemediationAction action)
     {
@@ -48,13 +49,13 @@ public sealed class BoundConfigurationEvidenceCatalog
         string identity = IdentityFingerprint(action);
         BoundConfigurationEvidenceRule? rule = _rules.FirstOrDefault(r => r.Id == action.ConfigurationEvidenceRuleId &&
             r.ActionType == action.Type && r.TargetIdentitySha256.Equals(identity, StringComparison.OrdinalIgnoreCase));
-        if (rule is null) throw new UnauthorizedAccessException(MissingEvidenceMessage);
+        if (rule is null) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(MissingEvidenceMessage, sourceText => new UnauthorizedAccessException(sourceText));
         if (rule.ConfirmedWriterSha256 is { } writer &&
             (!writer.Equals(action.RelatedFileSha256, StringComparison.OrdinalIgnoreCase) ||
              string.IsNullOrWhiteSpace(action.RelatedFilePath) || !Path.IsPathFullyQualified(action.RelatedFilePath)))
-            throw new UnauthorizedAccessException("配置处置缺少规则绑定的已确认写入组件。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Authorize.01"), sourceText => new UnauthorizedAccessException(sourceText));
         if (rule.ConfirmedWriterSha256 is null && (action.RelatedFilePath is not null || action.RelatedFileSha256 is not null))
-            throw new UnauthorizedAccessException("此规则没有确认写入来源，不能用客户端关联字段声明写入者。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Authorize.02"), sourceText => new UnauthorizedAccessException(sourceText));
         return rule;
     }
 
@@ -71,14 +72,24 @@ public sealed class BoundConfigurationEvidenceCatalog
         else if (action.Type == RemediationActionType.RestoreBoundProxyConfiguration && action.BoundProxy is { } proxy && action.BoundCertificate is null)
         {
             node = JsonSerializer.SerializeToNode(proxy, JsonFile.Options)!;
+            RemoveProxyDisplayMetadata(node);
             // User identity is checked against the process token separately; it is not a malware indicator.
             if (node is JsonObject obj)
                 foreach (string key in obj.Select(p => p.Key).Where(k => k.Equals("TargetUserSid", StringComparison.OrdinalIgnoreCase)).ToArray()) obj.Remove(key);
         }
-        else throw new InvalidDataException("专用配置动作缺少唯一的类型化目标。");
+        else throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.IdentityFingerprint.01"), sourceText => new InvalidDataException(sourceText));
         string canonical = Canonical(node);
-        if (Encoding.UTF8.GetByteCount(canonical) > 96 * 1024) throw new InvalidDataException("配置目标超过上限。");
+        if (Encoding.UTF8.GetByteCount(canonical) > 96 * 1024) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.IdentityFingerprint.02"), sourceText => new InvalidDataException(sourceText));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(action.Type + "\n" + canonical)));
+    }
+
+    internal static void RemoveProxyDisplayMetadata(JsonNode? node)
+    {
+        string Name(string name) => JsonFile.Options.PropertyNamingPolicy?.ConvertName(name) ?? name;
+        if (node is not JsonObject proxy) return;
+        foreach (string snapshot in new[] { nameof(BoundProxyTarget.Before), nameof(BoundProxyTarget.Desired) })
+            if (proxy[Name(snapshot)] is JsonObject value && value[Name(nameof(BoundProxySnapshot.PolicyGuard))] is JsonObject guard)
+                guard.Remove(Name(nameof(BoundProxyPolicyGuard.DetailMessage)));
     }
 
     private static string Canonical(JsonNode? node) => node switch
@@ -99,16 +110,16 @@ public static class BoundConfigurationPlanBuilder
         IEnumerable<RemediationAction>? prerequisites, BoundConfigurationEvidenceCatalog catalog)
     {
         RemediationAction[] configurations = configurationActions.Take(17).ToArray();
-        if (configurations.Length is < 1 or > 16) throw new InvalidDataException("每批精确配置处置限定 1 至 16 项。");
+        if (configurations.Length is < 1 or > 16) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Build.01"), sourceText => new InvalidDataException(sourceText));
         List<RemediationAction> actions = (prerequisites ?? []).Take(65).ToList();
         if (actions.Any(a => a.Type is RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident || a.BoundCertificate is not null || a.BoundProxy is not null))
-            throw new InvalidDataException("配置前置动作不能嵌套生命周期或配置处置。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Build.02"), sourceText => new InvalidDataException(sourceText));
         foreach (RemediationAction action in configurations) catalog.Authorize(action);
         actions.AddRange(configurations);
         RemediationDependencies.AssignAndOrder(actions);
         RemediationPlan plan = new() { Actions = actions };
         if (JsonSerializer.SerializeToUtf8Bytes(plan, JsonFile.Options).Length > 1024 * 1024)
-            throw new InvalidDataException("精确配置计划超过 1 MiB，未截断目标或拆分关联链。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Build.03"), sourceText => new InvalidDataException(sourceText));
         return plan;
     }
 }

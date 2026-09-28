@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -20,11 +21,18 @@ public static class JsonFile
 
     public static async Task<T> ReadAsync<T>(
         Stream stream,
-        string sourceDescription = "JSON 流",
+        string? sourceDescription = null,
+        CancellationToken cancellationToken = default) =>
+        await ReadAsync<T>(stream, sourceDescription is null ? MessageText.Create("Backend.Core.JsonFile.ReadAsync.01") : (MessageText)sourceDescription,
+            cancellationToken).ConfigureAwait(false);
+
+    public static async Task<T> ReadAsync<T>(
+        Stream stream,
+        MessageText sourceDescription,
         CancellationToken cancellationToken = default)
     {
         return await JsonSerializer.DeserializeAsync<T>(stream, Options, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException($"JSON 文件为空或无效：{sourceDescription}");
+            ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.JsonFile.ReadAsync.02", (sourceDescription)), sourceText => new InvalidDataException(sourceText));
     }
 
     public static async Task WriteAtomicAsync<T>(string path, T value, CancellationToken cancellationToken = default,
@@ -32,7 +40,7 @@ public static class JsonFile
     {
         string fullPath = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(fullPath)
-            ?? throw new InvalidOperationException("目标路径没有父目录。");
+            ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.JsonFile.WriteAtomicAsync.01"), sourceText => new InvalidOperationException(sourceText));
         Directory.CreateDirectory(directory);
 
         string temporary = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
@@ -59,7 +67,7 @@ public static class JsonFile
     {
         string fullPath = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(fullPath)
-            ?? throw new InvalidOperationException("目标路径没有父目录。");
+            ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.JsonFile.WriteNewAsync.01"), sourceText => new InvalidOperationException(sourceText));
         Directory.CreateDirectory(directory);
 
         await using FileStream stream = new(

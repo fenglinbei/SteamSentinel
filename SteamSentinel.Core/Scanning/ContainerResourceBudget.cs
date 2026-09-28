@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Diagnostics;
 using SteamSentinel.Core.Models;
 
@@ -7,17 +8,23 @@ public sealed class ContainerResourceBudget
 {
     private readonly Stopwatch _watch = Stopwatch.StartNew();
     private readonly CancellationToken _token;
+    private readonly ScanResourceSession? _resourceSession = ScanResourceSession.Current;
     private long _read, _decoded, _accepted, _rangeCopy, _temporary, _peakTemporary, _peakMemory, _metadata;
     private long _lastMemoryCheck;
     private long _nativeReserved;
     private long _nativeDecodedReserved;
+    private long _parallelReserved;
     private int _attempts;
+    private readonly long _initialWait = ScanResourceSession.Current?.WaitingMilliseconds ?? 0;
+    private long ActiveMilliseconds => Math.Max(0, _watch.ElapsedMilliseconds - ((ScanResourceSession.Current?.WaitingMilliseconds ?? 0) - _initialWait));
     public ContainerResourceLimits Limits { get; }
+    public long EffectiveDiskReserve => _resourceSession?.RaisedResources == true ? Math.Max(1024L * 1024 * 1024, Limits.ReservedDiskBytes) : Limits.ReservedDiskBytes;
     public Action? Progress { get; set; }
 
     public ContainerResourceBudget(ContainerResourceLimits limits, CancellationToken token = default)
     {
         Validate(limits); Limits = limits; _token = token;
+        ScanResourceSession.Current?.ObserveResources(Snapshot);
     }
 
     public static void Validate(ContainerResourceLimits limits)
@@ -34,14 +41,15 @@ public sealed class ContainerResourceBudget
             limits.MaximumPasswordAttempts is < 1 or >= int.MaxValue || limits.MaximumVolumes is < 1 or >= int.MaxValue ||
             limits.MaximumDirectoryCandidates is < 1 or >= int.MaxValue || limits.MaximumDurationSeconds is < 1 or > 4294960 ||
             !double.IsFinite(limits.MaximumCompressionRatio) || limits.MaximumCompressionRatio < 1)
-            throw new ArgumentOutOfRangeException(nameof(limits), "容器资源配置超出支持范围。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.Validate.01"), sourceText => new ArgumentOutOfRangeException(nameof(limits), sourceText));
     }
 
     public void Check()
     {
         _token.ThrowIfCancellationRequested();
-        if (_watch.Elapsed.TotalSeconds >= Limits.MaximumDurationSeconds)
-            throw new ScanResourceLimitException("容器处理达到时间上限；已保留完成的检查和未完成对象。");
+        if (ActiveMilliseconds / 1000d >= Limits.MaximumDurationSeconds &&
+            !ScanResourceSession.Allow("ContainerLimits.MaximumDurationSeconds", checked(Limits.MaximumDurationSeconds + 1L), ActiveMilliseconds / 1000, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.Check.01"), sourceText => new ScanResourceLimitException(sourceText));
         if (_watch.ElapsedMilliseconds - _lastMemoryCheck >= 500)
         {
             _lastMemoryCheck = _watch.ElapsedMilliseconds;
@@ -57,7 +65,9 @@ public sealed class ContainerResourceBudget
         if (requested < 0) throw new ArgumentOutOfRangeException(nameof(requested));
         if (requested == 0) return 0;
         long remaining = RemainingWorkBytes;
-        if (requested > 0 && remaining <= 0) throw new ScanResourceLimitException("读取与解码累计达到本轮预算，未继续读取内容。");
+        if (remaining <= 0 && ScanResourceSession.Allow("ContainerLimits.MaximumWorkBytes", checked(Limits.MaximumWorkBytes + requested), Limits.MaximumWorkBytes, known: false))
+            remaining = RemainingWorkBytes;
+        if (requested > 0 && remaining <= 0) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.ReadAllowance.01"), sourceText => new ScanResourceLimitException(sourceText));
         return (int)Math.Min(requested, remaining);
     }
 
@@ -79,14 +89,17 @@ public sealed class ContainerResourceBudget
     private void EnsureWork(long bytes)
     {
         Check();
-        if (bytes < 0 || bytes > Limits.MaximumWorkBytes - _read - _decoded - _nativeReserved - _nativeDecodedReserved)
-            throw new ScanResourceLimitException("读取与解码累计达到本轮预算，未将未完成内容标为通过。");
+        long used = checked(_read + _decoded + _nativeReserved + _nativeDecodedReserved);
+        if (bytes < 0 || bytes > Limits.MaximumWorkBytes - used &&
+            !ScanResourceSession.Allow("ContainerLimits.MaximumWorkBytes", checked(used + bytes), used, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.EnsureWork.01"), sourceText => new ScanResourceLimitException(sourceText));
     }
     public void AcceptExpansion(long bytes)
     {
         Check();
-        if (bytes < 0 || bytes > Limits.MaximumExpandedBytes - _accepted)
-            throw new ScanResourceLimitException("已接受成员的累计展开量达到上限。");
+        if (bytes < 0 || bytes > Limits.MaximumExpandedBytes - _accepted &&
+            !ScanResourceSession.Allow("ContainerLimits.MaximumExpandedBytes", checked(_accepted + bytes), _accepted, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.AcceptExpansion.01"), sourceText => new ScanResourceLimitException(sourceText));
         _accepted = checked(_accepted + bytes);
     }
     public void RestoreLogicalExpansion(long checkpoint)
@@ -95,27 +108,48 @@ public sealed class ContainerResourceBudget
         _accepted = checkpoint;
     }
     public long AcceptedExpandedBytes => _accepted;
-    public long RemainingWorkBytes => Math.Max(0, Limits.MaximumWorkBytes - _read - _decoded - _nativeReserved - _nativeDecodedReserved);
+    public long RemainingWorkBytes => Math.Max(0, Limits.MaximumWorkBytes - _read - _decoded - _nativeReserved - _nativeDecodedReserved - _parallelReserved);
+    // The dispatcher owns these reservations. Tasks receive disjoint slices and never
+    // mutate this ledger; settlement happens after all tasks have stopped.
+    internal bool TryReserveParallelWork(long bytes)
+    {
+        Check();
+        if (bytes < 0 || bytes > RemainingWorkBytes) return false;
+        _parallelReserved = checked(_parallelReserved + bytes); return true;
+    }
+    internal void SettleParallelWork(long reserved, ContainerResourceSnapshot? actual)
+    {
+        if (reserved < 0 || reserved > _parallelReserved) throw new InvalidDataException("Invalid parallel reservation.");
+        long read = actual?.ReadBytes ?? 0, decoded = actual?.DecodedBytes ?? 0;
+        if (read < 0 || decoded != 0 || read > reserved || actual is { AcceptedExpandedBytes: not 0 } or
+            { NativeReservedReadBytes: not 0 } or { NativeReservedDecodedBytes: not 0 } or { CurrentTemporaryBytes: not 0 })
+            throw new InvalidDataException("A leaf task exceeded its reserved scope.");
+        _read = checked(_read + read); _parallelReserved -= reserved;
+        _peakMemory = Math.Max(_peakMemory, actual?.PeakPrivateMemoryBytes ?? 0);
+    }
     public void ChargeMetadata()
     {
         Check();
-        if (++_metadata > Limits.MaximumMetadataAttempts) throw new ScanResourceLimitException("归档目录读取尝试达到本轮上限。");
+        if (++_metadata > Limits.MaximumMetadataAttempts && !ScanResourceSession.Allow("ContainerLimits.MaximumMetadataAttempts", _metadata, _metadata - 1, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.ChargeMetadata.01"), sourceText => new ScanResourceLimitException(sourceText));
     }
     public void ChargePasswordAttempt()
     {
         Check();
-        if (++_attempts > Limits.MaximumPasswordAttempts) throw new ScanResourceLimitException("密码解码尝试达到本轮上限，已经发生的读取和解码消耗不会退还。");
+        if (++_attempts > Limits.MaximumPasswordAttempts && !ScanResourceSession.Allow("ContainerLimits.MaximumPasswordAttempts", _attempts, _attempts - 1, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.ChargePasswordAttempt.01"), sourceText => new ScanResourceLimitException(sourceText));
     }
     public void ReserveTemporary(long bytes)
     {
         Check();
-        if (bytes < 0 || bytes > Limits.MaximumTemporaryBytes - _temporary)
-            throw new ScanResourceLimitException("临时内容占用达到上限，未继续展开。");
+        if (bytes < 0 || bytes > Limits.MaximumTemporaryBytes - _temporary &&
+            !ScanResourceSession.Allow("ContainerLimits.MaximumTemporaryBytes", checked(_temporary + bytes), _temporary, known: false))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.ReserveTemporary.01"), sourceText => new ScanResourceLimitException(sourceText));
         _temporary = checked(_temporary + bytes); _peakTemporary = Math.Max(_peakTemporary, _temporary);
     }
     public void ReleaseTemporary(long bytes)
     {
-        if (bytes < 0 || bytes > _temporary) throw new InvalidOperationException("临时空间计账不一致。");
+        if (bytes < 0 || bytes > _temporary) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.ReleaseTemporary.01"), sourceText => new InvalidOperationException(sourceText));
         _temporary -= bytes;
     }
     public ContainerResourceSnapshot Snapshot() => new()
@@ -131,6 +165,6 @@ public sealed class ContainerResourceBudget
         PeakPrivateMemoryBytes = _peakMemory,
         MetadataAttempts = _metadata,
         PasswordAttempts = _attempts,
-        ElapsedMilliseconds = _watch.ElapsedMilliseconds
+        ElapsedMilliseconds = ActiveMilliseconds
     };
 }

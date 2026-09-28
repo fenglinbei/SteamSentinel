@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -52,7 +53,7 @@ public sealed class ArchiveVolumeSession : IDisposable
         ArgumentNullException.ThrowIfNull(plan); plan.Limits.Validate();
         if (plan.Status != ArchiveVolumeStatus.Ready) throw new ArchiveVolumeException(plan.Status, plan.Detail);
         if (plan.Members.Count == 0 || plan.Members.Count > plan.Limits.MaximumVolumes)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "卷组数量无效。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.01"));
         if (password is { Length: > 4096 }) throw new ArgumentOutOfRangeException(nameof(password));
         List<(FileStream File, Stream Decorated, Stream Range)> owned = [];
         List<ArchiveVolumeIdentity> identities = [];
@@ -67,26 +68,26 @@ public sealed class ArchiveVolumeSession : IDisposable
                 string path = Path.GetFullPath(member.PhysicalPath);
                 if (!Path.IsPathFullyQualified(path) || path.StartsWith("\\\\", StringComparison.Ordinal) ||
                     Validation.ContainsReparsePoint(path))
-                    throw new ArchiveVolumeException(ArchiveVolumeStatus.Unavailable, "分卷必须是明确的本地普通文件。");
+                    throw new ArchiveVolumeException(ArchiveVolumeStatus.Unavailable, MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.02"));
                 FileStream file = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous);
                 Stream decorated = file;
                 // Register the lock immediately so every validation/decorator failure releases it.
                 owned.Add((file, file, file));
                 string fileId = VerifyHandle(file, path);
-                if (!fileIds.Add(fileId)) throw new ArchiveVolumeException(ArchiveVolumeStatus.DuplicateVolume, "分卷引用了同一文件身份。");
+                if (!fileIds.Add(fileId)) throw new ArchiveVolumeException(ArchiveVolumeStatus.DuplicateVolume, MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.03"));
                 long sourceLength = file.Length;
                 total = checked(total + sourceLength);
-                if (sourceLength <= 0 || total > plan.Limits.MaximumTotalBytes)
-                    throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "分卷实际输入字节数超过限额或存在空卷。");
+                if (sourceLength <= 0 || !plan.Limits.AllowsTotalBytes(total))
+                    throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.04"));
                 long rangeLength = member.Length ?? (sourceLength - member.Offset);
                 if (member.Offset < 0 || member.Offset > sourceLength || rangeLength <= 0 || rangeLength > sourceLength - member.Offset)
-                    throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, "归档输入切片超出已锁定文件。");
+                    throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.05"));
                 if (readDecorator is not null)
                 {
-                    decorated = readDecorator(file) ?? throw new ArgumentException("读取计量包装器返回空值。", nameof(readDecorator));
+                    decorated = readDecorator(file) ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.06"), sourceText => new ArgumentException(sourceText, nameof(readDecorator)));
                     owned[^1] = (file, decorated, decorated);
                     if (!decorated.CanRead || !decorated.CanSeek || decorated.CanWrite || decorated.Length != sourceLength)
-                        throw new ArgumentException("读取计量包装器必须保留只读可定位视图与原始长度。", nameof(readDecorator));
+                        throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.07"), sourceText => new ArgumentException(sourceText, nameof(readDecorator)));
                 }
                 decorated.Position = 0;
                 string fullHash = Convert.ToHexString(await SHA256.HashDataAsync(decorated, cancellationToken).ConfigureAwait(false));
@@ -112,7 +113,7 @@ public sealed class ArchiveVolumeSession : IDisposable
                 case ArchiveVolumeFormat.Rar:
                     rar = ArchiveIntegrity.InspectRarHeaders(ranges, password, plan.Limits, cancellationToken);
                     break;
-                default: throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedLayout, "未知归档格式。");
+                default: throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedLayout, MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenAsync.08"));
             }
             foreach (Stream range in ranges) range.Position = 0;
             IReadOnlyList<Stream> libraryOrder = ranges;
@@ -129,6 +130,7 @@ public sealed class ArchiveVolumeSession : IDisposable
                 libraryOrder = new[] { continuations[^1] }.Concat(continuations.Take(continuations.Length - 1)).ToArray();
             }
             ReaderOptions readerOptions = new() { Password = password, LeaveStreamOpen = true, LookForHeader = false };
+            if (plan.Format == ArchiveVolumeFormat.Zip) readerOptions.ArchiveEncoding = ArchiveZipNames.DecoderEncoding();
             archive = plan.Format switch
             {
                 ArchiveVolumeFormat.Zip => SharpCompress.Archives.Zip.ZipArchive.OpenArchive(libraryOrder, readerOptions),
@@ -148,7 +150,7 @@ public sealed class ArchiveVolumeSession : IDisposable
     public IReader OpenReader()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_readerOpened) throw new InvalidOperationException("卷组只能进行一次顺序解码；密码重试必须重新打开会话。");
+        if (_readerOpened) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenReader.01"), sourceText => new InvalidOperationException(sourceText));
         _readerOpened = true;
         (int entries, int files) = Plan.Format switch
         {
@@ -159,7 +161,7 @@ public sealed class ArchiveVolumeSession : IDisposable
         IReader reader = Plan.Format switch
         {
             ArchiveVolumeFormat.Zip => new ArchiveVolumeEntryReader(Archive),
-            ArchiveVolumeFormat.Rar => (RarIntegrity ?? throw new InvalidOperationException("RAR 校验索引缺失。"))
+            ArchiveVolumeFormat.Rar => (RarIntegrity ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.OpenReader.Rar.01"), sourceText => new InvalidOperationException(sourceText)))
                 .OpenReader(Password, _cancellationToken),
             _ => Archive.ExtractAllEntries()
         };
@@ -170,16 +172,21 @@ public sealed class ArchiveVolumeSession : IDisposable
     {
         // This is the initial 7z directory load. ExtractAllEntries reuses these cached
         // records, and final completion checks never re-open or re-decode the archive.
-        var entries = Archive.Entries.Take(Plan.Limits.MaximumEntries + 1).ToList();
-        if (entries.Count > Plan.Limits.MaximumEntries)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "7z 目录条目超过元数据限额。");
-        return (entries.Count, entries.Count(entry => !entry.IsDirectory));
+        int entries = 0, files = 0;
+        foreach (var entry in Archive.Entries)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (!Plan.Limits.AllowsEntries(checked(++entries), known: false))
+                throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeSession.SevenZipInventory.01"));
+            if (!entry.IsDirectory) files++;
+        }
+        return (entries, files);
     }
 
     internal void RequireCurrentEntry(SharpCompress.Common.IEntry entry) =>
-        (_traversal ?? throw new InvalidOperationException("完整性校验必须通过会话读取器。")).RequireCurrent(entry);
+        (_traversal ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.RequireCurrentEntry.01"), sourceText => new InvalidOperationException(sourceText))).RequireCurrent(entry);
     internal void MarkEntryVerified(SharpCompress.Common.IEntry entry) =>
-        (_traversal ?? throw new InvalidOperationException("完整性校验必须通过会话读取器。")).MarkVerified(entry);
+        (_traversal ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.MarkEntryVerified.01"), sourceText => new InvalidOperationException(sourceText))).MarkVerified(entry);
 
     /// <summary>Only ZIP can move past an unopened file without decoding or automatic skipping.</summary>
     public bool CanSkipCurrentUnopenedEntry => !_disposed && (_traversal?.CanSkipCurrentUnopenedEntry ?? false);
@@ -188,14 +195,14 @@ public sealed class ArchiveVolumeSession : IDisposable
     public void SkipCurrentUnopenedEntry(SharpCompress.Common.IEntry entry)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        (_traversal ?? throw new InvalidOperationException("归档遍历尚未开始。")).SkipCurrentUnopenedEntry(entry);
+        (_traversal ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.SkipCurrentUnopenedEntry.01"), sourceText => new InvalidOperationException(sourceText))).SkipCurrentUnopenedEntry(entry);
     }
     /// <summary>
     /// Requires actual EOF and one successful content check per file. Allowing an
     /// explicit skip proves traversal accounting only; the archive remains incomplete.
     /// </summary>
     public void VerifyTraversalCompleted(bool allowSkipped = false) =>
-        (_traversal ?? throw new InvalidOperationException("归档遍历尚未开始。")).VerifyCompleted(allowSkipped);
+        (_traversal ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.VerifyTraversalCompleted.01"), sourceText => new InvalidOperationException(sourceText))).VerifyCompleted(allowSkipped);
 
     internal ArchiveIntegrityZipMember? FindZipMember(string key, long size, uint crc, bool encrypted) =>
         _zipIndex.GetValueOrDefault((key, size, crc, encrypted));
@@ -204,40 +211,40 @@ public sealed class ArchiveVolumeSession : IDisposable
     {
         byte[] header = ArchiveIntegrityZip.At(source, 0, 32);
         if (!header.AsSpan(0, 6).SequenceEqual(new byte[] { 0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c }))
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, "7z 首卷签名不匹配。");
-        if (header[6] != 0) throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedLayout, "7z 主版本不受支持。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, MessageText.Create("Backend.Core.ArchiveVolumeSession.ValidateSevenZip.01"));
+        if (header[6] != 0) throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedLayout, MessageText.Create("Backend.Core.ArchiveVolumeSession.ValidateSevenZip.02"));
         uint startCrc = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(8));
         if (ArchiveIntegrity.Crc32(header.AsSpan(12, 20)) != startCrc)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, "7z 起始头 CRC 不匹配。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, MessageText.Create("Backend.Core.ArchiveVolumeSession.ValidateSevenZip.03"));
         ulong nextOffset = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(header.AsSpan(12));
         ulong nextSize = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(header.AsSpan(20));
         if (nextOffset > long.MaxValue - 32 || nextSize > (ulong)plan.Limits.MaximumMetadataBytes)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "7z 下一头范围超过限额。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveVolumeSession.ValidateSevenZip.04"));
         long start = 32 + (long)nextOffset;
         if (start > source.Length || nextSize > (ulong)(source.Length - start))
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "7z 下一头缺失，卷组可能不完整。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, MessageText.Create("Backend.Core.ArchiveVolumeSession.ValidateSevenZip.05"));
         if ((long)nextSize != source.Length - start)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, "7z 结束范围与输入卷组不一致。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, MessageText.Create("Backend.Core.ArchiveVolumeSession.ValidateSevenZip.06"));
         token.ThrowIfCancellationRequested();
         byte[] next = ArchiveIntegrityZip.At(source, start, (int)nextSize);
         uint expected = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(28));
         if (ArchiveIntegrity.Crc32(next) != expected)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, "7z 下一头 CRC 不匹配。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, MessageText.Create("Backend.Core.ArchiveVolumeSession.ValidateSevenZip.07"));
     }
 
     internal static string VerifyHandle(FileStream file, string expectedPath)
     {
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("卷组文件锁身份校验需要 Windows。");
+        if (!OperatingSystem.IsWindows()) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveVolumeSession.VerifyHandle.01"), sourceText => new PlatformNotSupportedException(sourceText));
         StringBuilder buffer = new(32768);
         uint count = GetFinalPathNameByHandle(file.SafeFileHandle, buffer, (uint)buffer.Capacity, 0);
         if (count == 0 || count >= buffer.Capacity || !GetFileInformationByHandle(file.SafeFileHandle, out FileInformation information))
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.Unavailable, "无法核验已打开分卷的文件身份。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.Unavailable, MessageText.Create("Backend.Core.ArchiveVolumeSession.VerifyHandle.02"));
         string final = buffer.ToString();
         if (final.StartsWith("\\\\?\\", StringComparison.Ordinal)) final = final[4..];
         if (!string.Equals(final, expectedPath, StringComparison.OrdinalIgnoreCase) ||
             (information.Attributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0 ||
             Validation.ContainsReparsePoint(expectedPath))
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.Unavailable, "分卷文件身份或路径在打开时发生变化。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.Unavailable, MessageText.Create("Backend.Core.ArchiveVolumeSession.VerifyHandle.03"));
         return $"{information.VolumeSerial:X8}:{information.FileIndexHigh:X8}{information.FileIndexLow:X8}";
     }
 

@@ -41,7 +41,7 @@ internal static partial class Program
             Records = [new() { RolledBack = true }]
         };
         ScanReport Clean(ScanMode mode = ScanMode.Full, DateTimeOffset? start = null) => new()
-        { Mode = mode, StartedAtUtc = start ?? now.AddMinutes(-10), CompletedAtUtc = now.AddMinutes(-2) };
+        { Mode = mode, StatusSchemaVersion = 1, ExecutionState = ScanExecutionState.Completed, StartedAtUtc = start ?? now.AddMinutes(-10), CompletedAtUtc = now.AddMinutes(-2) };
         ScanReport clean = Clean();
         Check("0.1.17 已回滚空事件仅接受本次完整系统与内容复扫", IncidentDeletionPolicy.RejectionReason(incident, clean, clean.ScanId, now, boot) is null);
         ScanReport custom = Clean(ScanMode.Custom);

@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Reflection;
 using SharpCompress.Common;
 
@@ -17,25 +18,25 @@ public static partial class ArchiveIntegrity
 
     private static ArchiveIntegrityEntryVerifier BeginCore(ArchiveVolumeSession session, IEntry entry)
     {
-        if (entry.IsDirectory) return new(new(true, false, 0, 0, false, "目录不包含可验证的密码内容。"));
+        if (entry.IsDirectory) return new(new(true, false, 0, 0, false, MessageText.Create("Backend.Core.ArchiveIntegrity.BeginCore.01")));
         switch (session.Plan.Format)
         {
             case ArchiveVolumeFormat.Zip:
                 string key = (entry.Key ?? "").Replace('\\', '/');
                 ArchiveIntegrityZipMember? zip = session.FindZipMember(key, entry.Size, unchecked((uint)entry.Crc), entry.IsEncrypted);
-                if (zip is null) return Unsupported(entry, "ZIP 解码条目不能唯一对应已验证的中央目录元数据。");
-                if (zip.Encrypted && session.Password is null) return Unsupported(entry, "ZIP 加密成员尚未提供密码。");
+                if (zip is null) return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.BeginCore.02"));
+                if (zip.Encrypted && session.Password is null) return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.BeginCore.03"));
                 // AE-2 has an authenticated ciphertext and deliberately no plaintext CRC. Ordinary
                 // ZIP and AE-1 retain valid CRC32 values including zero.
                 return new(new(true, zip.AesVersion != 2, zip.Crc, zip.Size,
-                    zip.Encrypted && zip.Size > 0, zip.AesVersion == 2 ? "ZIP AES 认证码已独立核验。" : "必须校验完整解码长度与 CRC32（包括零值）。"));
+                    zip.Encrypted && zip.Size > 0, zip.AesVersion == 2 ? MessageText.Create("Backend.Core.ArchiveIntegrity.BeginCore.04") : MessageText.Create("Backend.Core.ArchiveIntegrity.BeginCore.05")));
             case ArchiveVolumeFormat.Rar:
-                if (session.RarIntegrity is null) return Unsupported(entry, "RAR 缺少经过验证的卷头和校验元数据。");
+                if (session.RarIntegrity is null) return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.BeginCore.06"));
                 ArchiveIntegrityRarVerifier rar = BeginRar(entry, session.RarIntegrity, session.Password);
                 return new(rar.Requirement, rar);
             case ArchiveVolumeFormat.SevenZip:
                 return SevenZip(entry);
-            default: return Unsupported(entry, "归档完整性方案未受支持。");
+            default: return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.BeginCore.07"));
         }
     }
 
@@ -48,24 +49,24 @@ public static partial class ArchiveIntegrity
             // if the package's shape changes. No decoder state is modified.
             object? part = FindProperty(entry.GetType(), "FilePart")?.GetValue(entry);
             if (part?.GetType().FullName != "SharpCompress.Common.SevenZip.SevenZipFilePart")
-                return Unsupported(entry, "7z 成员的校验元数据结构不受支持。");
+                return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.01"));
             object? header = FindProperty(part.GetType(), "Header")?.GetValue(part);
             if (header?.GetType().FullName != "SharpCompress.Common.SevenZip.CFileItem")
-                return Unsupported(entry, "7z 成员头结构不受支持。");
+                return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.02"));
             PropertyInfo? crcField = header.GetType().GetProperty("Crc", BindingFlags.Instance | BindingFlags.Public);
             PropertyInfo? streamField = header.GetType().GetProperty("HasStream", BindingFlags.Instance | BindingFlags.Public);
             PropertyInfo? antiField = header.GetType().GetProperty("IsAnti", BindingFlags.Instance | BindingFlags.Public);
             if (crcField?.PropertyType != typeof(uint?) || streamField?.PropertyType != typeof(bool) || antiField?.PropertyType != typeof(bool))
-                return Unsupported(entry, "7z 校验字段形状与锁定依赖不一致。");
-            if ((bool)antiField.GetValue(header)!) return Unsupported(entry, "7z anti-item 不是可扫描的普通成员。");
+                return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.03"));
+            if ((bool)antiField.GetValue(header)!) return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.04"));
             uint? crc = (uint?)crcField.GetValue(header);
             bool hasStream = (bool)streamField.GetValue(header)!;
-            if (!hasStream && entry.Size == 0) return new(new(true, true, 0, 0, false, "无数据的空成员。"));
-            if (!crc.HasValue) return Unsupported(entry, "7z 成员未提供可验证的 CRC，不能以 IsComplete 或长度声称完整。");
-            return new(new(true, true, crc.Value, entry.Size, entry.IsEncrypted && entry.Size > 0, "校验 7z 成员长度与实际存在的 CRC32。"));
+            if (!hasStream && entry.Size == 0) return new(new(true, true, 0, 0, false, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.05")));
+            if (!crc.HasValue) return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.06"));
+            return new(new(true, true, crc.Value, entry.Size, entry.IsEncrypted && entry.Size > 0, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.07")));
         }
         catch (Exception exception) when (exception is TargetInvocationException or ArgumentException or InvalidCastException or MemberAccessException)
-        { return Unsupported(entry, "7z 校验元数据无法可靠读取。"); }
+        { return Unsupported(entry, MessageText.Create("Backend.Core.ArchiveIntegrity.SevenZip.08")); }
     }
 
     private static PropertyInfo? FindProperty(Type type, string name)
@@ -77,7 +78,7 @@ public static partial class ArchiveIntegrity
         }
         return null;
     }
-    private static ArchiveIntegrityEntryVerifier Unsupported(IEntry entry, string detail) =>
+    private static ArchiveIntegrityEntryVerifier Unsupported(IEntry entry, MessageText detail) =>
         new(new(false, false, 0, entry.Size, false, detail));
 }
 
@@ -96,7 +97,7 @@ public sealed class ArchiveIntegrityEntryVerifier : IDisposable
     public void Complete(Stream decodedStream, long copied, uint actualCrc32)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_completed) throw new InvalidOperationException("归档成员完整性不能重复确认。");
+        if (_completed) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveIntegrity.Complete.01"), sourceText => new InvalidOperationException(sourceText));
         if (_rar is not null) _rar.Complete(decodedStream, copied, actualCrc32);
         else ArchiveIntegrity.Complete(Requirement, copied, actualCrc32);
         _onVerified?.Invoke();

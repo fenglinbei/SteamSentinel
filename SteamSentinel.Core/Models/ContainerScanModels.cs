@@ -9,13 +9,14 @@ public enum ContainerStageStatus
 }
 public enum ContentSignatureStatus { NotChecked, Valid, NotSigned, HashMismatch, Untrusted, Unavailable, Failed }
 
-public sealed class ContainerEngineObservation
+public sealed partial class ContainerEngineObservation
 {
     public string Engine { get; init; } = string.Empty;
     public ContainerStageStatus Status { get; set; }
     public long? Offset { get; init; }
     public long? Length { get; init; }
     public string Detail { get; set; } = string.Empty;
+    public AmsiDiagnosticInfo? AmsiDiagnostics { get; init; }
 }
 
 public sealed class ContainerVolumeIdentity
@@ -27,7 +28,7 @@ public sealed class ContainerVolumeIdentity
     public bool IsTemporary { get; init; }
 }
 
-public sealed class ContainerScanNode
+public sealed partial class ContainerScanNode
 {
     public int Revision { get; set; }
     public Guid NodeId { get; init; } = Guid.NewGuid();
@@ -52,6 +53,7 @@ public sealed class ContainerScanNode
     public ContainerStageStatus Overall { get; set; } = ContainerStageStatus.Pending;
     public List<ContainerVolumeIdentity> Volumes { get; init; } = [];
     public List<ContainerEngineObservation> Engines { get; init; } = [];
+    public VPetFamilyEvidence? VPetFamily { get; set; }
     public List<string> Details { get; init; } = [];
     public ContentSignatureStatus Signature { get; set; } = ContentSignatureStatus.NotChecked;
     public DateTimeOffset? SignatureCheckedAtUtc { get; set; }
@@ -78,7 +80,7 @@ public sealed class ContainerResourceSnapshot
     public string Accounting => "Stream bytes delivered to scanner/decoder, including repeat reads; not operating-system physical I/O.";
 }
 
-public sealed class ContainerScanReport
+public sealed partial class ContainerScanReport
 {
     public const int MaximumNodes = int.MaxValue - 1;
     public int SchemaVersion { get; init; } = 1;

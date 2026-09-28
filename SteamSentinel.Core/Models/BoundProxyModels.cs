@@ -15,6 +15,11 @@ public sealed class BoundProxyPolicyGuard
     public BoundProxyPolicyStatus Status { get; init; }
     public string Fingerprint { get; init; } = string.Empty;
     public string Detail { get; init; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText { get => new(Detail, DetailMessage); init { Detail = value.OriginalText; DetailMessage = value.Message; } }
+
 }
 
 public sealed class BoundProxySnapshot
@@ -56,4 +61,9 @@ public sealed class BoundProxyBackup
     public bool RestoreReadBackMatched { get; set; }
     public BoundProxyMutationState MutationState { get; set; }
     public string Diagnostic { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? DiagnosticMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Diagnostic); set => field = value; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DiagnosticText { get => new(Diagnostic, DiagnosticMessage); set { Diagnostic = value.OriginalText; DiagnosticMessage = value.Message; } }
+
 }

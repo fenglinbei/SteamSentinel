@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers;
 using System.Text;
 using SteamSentinel.Core.Inspection;
@@ -40,7 +41,7 @@ internal static class StreamingStringInspection
                 int read = await stream.ReadAsync(buffer.AsMemory(retained, (int)Math.Min(ChunkBytes, limit - total + 1)), token);
                 if (read == 0) break;
                 total += read;
-                if (total > limit) throw new InvalidDataException("文件在读取期间超过文本检查上限。");
+                if (total > limit) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StreamingStringInspection.ReadAsync.01"), sourceText => new InvalidDataException(sourceText));
                 int count = retained + read;
                 Inspect(Encoding.UTF8.GetString(buffer, 0, count));
                 // Preserve UTF-16LE byte alignment even if the stream returns a short, odd-sized read.

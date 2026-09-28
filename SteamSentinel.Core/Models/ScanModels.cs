@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 using System.Text.Json.Serialization;
 
 namespace SteamSentinel.Core.Models;
@@ -58,7 +59,7 @@ public enum SuggestedActionKind
     DisableRelatedFirewallRule
 }
 
-public sealed class Finding
+public sealed partial class Finding
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string RuleId { get; init; } = string.Empty;
@@ -69,6 +70,7 @@ public sealed class Finding
     public string Description { get; init; } = string.Empty;
     public string Target { get; init; } = string.Empty;
     public string Evidence { get; init; } = string.Empty;
+    public string? ReasonCode { get; init; }
     public string? Sha256 { get; init; }
     public string? ContentPath { get; set; }
     public string? TargetSha256 { get; set; }
@@ -85,6 +87,7 @@ public sealed class Finding
     public string? WorkshopId { get; init; }
     public string? AppId { get; set; }
     public string? SourceKind { get; set; }
+    public SteamUiEvidence? SteamUiEvidence { get; init; }
     public bool IsKnownMalware { get; init; }
     public bool CanRemediate { get; init; }
     public FindingHandlingReason HandlingReason { get; init; }
@@ -109,7 +112,7 @@ public sealed class ScanMetrics
     public long WorkshopItemsVisited { get; set; }
 }
 
-public sealed class ScanReport
+public sealed partial class ScanReport
 {
     public string ProductVersion { get; init; } = ProductInfo.Version;
     public string BuildIdentity { get; init; } = ProductInfo.BuildIdentity;
@@ -121,8 +124,16 @@ public sealed class ScanReport
     public string UserName { get; init; } = Environment.UserName;
     public ScanMode Mode { get; init; }
     public ScanCoverage Coverage { get; set; } = ScanCoverage.Complete;
+    // Missing fields in old reports stay Unknown; timestamps and prose are not proof.
+    public int StatusSchemaVersion { get; set; }
+    public ScanExecutionState ExecutionState { get; set; }
+    public string? ExecutionReasonCode { get; set; }
+    [JsonPropertyName("ExecutionStatus")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyExecutionStatus { get; set; }
     public List<string> Roots { get; init; } = [];
     public List<string> CoverageNotes { get; init; } = [];
+    public List<CoverageNotice> CoverageNotices { get; init; } = [];
     public List<CoverageAggregate> CoverageAggregates { get; init; } = [];
     public List<Finding> Findings { get; init; } = [];
     public List<ScanRootSummary> RootSummaries { get; init; } = [];
@@ -140,10 +151,8 @@ public sealed class ScanReport
         .Select(f => f.Severity).DefaultIfEmpty(FindingSeverity.Information).Max();
 
     public int RiskFindingCount => Findings.Count(f => f.Category != FindingCategory.Coverage);
-    public string ExecutionStatus => Findings.Any(f => f.RuleId == "CONTENT-SCAN-FAILED") ? "内容检查失败，已保留可用结果" :
-        CoverageNotes.Any(n => n.Contains("取消")) ? "扫描已取消，已保留可用结果" :
-        CompletedAtUtc is null ? "尚未结束" :
-        Coverage == ScanCoverage.Complete ? "本次扫描已完成" : "本次扫描已结束，仍有未检查内容";
+    [JsonIgnore]
+    public string ExecutionStatus => Reporting.StatusPresentation.Scan(this);
     public List<string> ScopeNotes { get; init; } = [];
 }
 
@@ -151,6 +160,7 @@ public sealed record ScanRootSummary(string Path, ScanCoverage Coverage, int Kno
 
 public sealed class ScanOptions
 {
+    private bool _useAmsi;
     private int? _maximumArchiveDepth;
     private long? _maximumEntryBytes, _maximumExpandedBytes;
     public ScanMode Mode { get; init; } = ScanMode.Quick;
@@ -174,9 +184,12 @@ public sealed class ScanOptions
     public int MaximumReportRecords { get; init; } = 20_000;
     public long MaximumReportTextCharacters { get; init; } = 8 * 1024 * 1024;
     public int MaximumStructureDurationSeconds { get; init; } = 15;
+    public bool AllowResourceDecisions { get; init; }
+    public int MaximumParallelFiles { get; init; } = 1;
+    public ScanPerformanceMode PerformanceMode { get; init; } = ScanPerformanceMode.Automatic;
     public ContainerRangeLimits? RangeLimits { get; init; }
     public bool InspectArchives { get; init; } = true;
-    public bool UseAmsi { get; init; } = true;
+    public bool UseAmsi { get => _useAmsi; init => _useAmsi = value; }
     public bool HashEveryFile { get; init; }
     public int MaximumArchiveDepth { get => _maximumArchiveDepth ?? (Mode == ScanMode.Quick ? 4 : 12); init => _maximumArchiveDepth = value; }
     public long MaximumEntryBytes { get => _maximumEntryBytes ?? (Mode == ScanMode.Quick ? 256L * 1024 * 1024 : 8L * 1024 * 1024 * 1024); init => _maximumEntryBytes = value; }
@@ -190,14 +203,39 @@ public sealed class ScanOptions
     public int MaximumFiles { get; init; } = 200_000;
     public List<string> CustomRoots { get; init; } = [];
     public List<string> ExcludedRoots { get; init; } = [];
+
+    internal ScanOptions CopyWithAmsi(bool useAmsi)
+    {
+        ScanOptions copy = (ScanOptions)MemberwiseClone();
+        copy._useAmsi = useAmsi;
+        return copy;
+    }
 }
 
+[method: JsonConstructor]
 public sealed record ScanProgress(
     string Stage,
     string CurrentItem,
     long Completed,
     long? Total,
-    string Message);
+    string Message)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? StageMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Stage); init => field = value; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Message); init => field = value; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? CurrentItemMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, CurrentItem); init => field = value; }
+    public ScanProgress(Reporting.MessageText stage, string currentItem, long completed, long? total, Reporting.MessageText message)
+        : this(stage.OriginalText, currentItem, completed, total, message.OriginalText)
+    { StageMessage = stage.Message; DetailMessage = message.Message; }
+    public ScanProgress(Reporting.MessageText stage, Reporting.MessageText currentItem, long completed, long? total, Reporting.MessageText message)
+        : this(stage, currentItem.OriginalText, completed, total, message) { CurrentItemMessage = currentItem.Message; }
+    [JsonIgnore] public string DisplayStage => Reporting.MessageText.Render(StageMessage, Stage);
+    [JsonIgnore] public string DisplayDetail => Reporting.MessageText.Render(DetailMessage, Message);
+    [JsonIgnore] public string DisplayCurrentItem => Reporting.MessageText.Render(CurrentItemMessage, CurrentItem);
+    public void ValidateDisplayMessages() { StageMessage?.Validate(); DetailMessage?.Validate(); CurrentItemMessage?.Validate(); }
+}
 
 public sealed record ArchivePasswordRequest(
     string RequestId,
@@ -208,7 +246,12 @@ public sealed record ArchivePasswordRequest(
     string? WorkshopId,
     string Reason,
     ArchivePasswordReuseScope PreferredReuseScope = ArchivePasswordReuseScope.ArchiveTree,
-    ArchivePasswordPromptKind PromptKind = ArchivePasswordPromptKind.Needed);
+    ArchivePasswordPromptKind PromptKind = ArchivePasswordPromptKind.Needed)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DisplayMessage? ReasonMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Reason); init => field = value; }
+    [JsonIgnore] public Reporting.MessageText ReasonText => new(Reason, ReasonMessage);
+}
 
 public sealed record ArchivePasswordResponse(
     string RequestId,
@@ -233,14 +276,14 @@ public static class ArchivePasswordInput
     {
         ArgumentNullException.ThrowIfNull(response);
         if (!Enum.IsDefined(response.ReuseScope))
-            throw new ArgumentException("密码复用范围值无效。", nameof(response));
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanModels.ValidateAndGetPasswords.01"), sourceText => new ArgumentException(sourceText, nameof(response)));
         if (response.Password is { Length: > MaximumPasswordCharacters })
-            throw new ArgumentException($"单个密码不能超过 {MaximumPasswordCharacters} 个字符。", nameof(response));
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanModels.ValidateAndGetPasswords.02", (MaximumPasswordCharacters)), sourceText => new ArgumentException(sourceText, nameof(response)));
 
         if (response.Passwords is { } supplied)
         {
             if (supplied.Count > MaximumPasswords)
-                throw new ArgumentException($"一次最多可以提供 {MaximumPasswords} 个密码。", nameof(response));
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanModels.ValidateAndGetPasswords.03", (MaximumPasswords)), sourceText => new ArgumentException(sourceText, nameof(response)));
             List<string> ordered = [];
             HashSet<string> seen = new(StringComparer.Ordinal);
             for (int index = 0; index < supplied.Count; index++)
@@ -248,7 +291,7 @@ public static class ArchivePasswordInput
                 string? value = supplied[index];
                 if (string.IsNullOrEmpty(value)) continue;
                 if (value.Length > MaximumPasswordCharacters)
-                    throw new ArgumentException($"单个密码不能超过 {MaximumPasswordCharacters} 个字符。", nameof(response));
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanModels.ValidateAndGetPasswords.04", (MaximumPasswordCharacters)), sourceText => new ArgumentException(sourceText, nameof(response)));
                 if (seen.Add(value)) ordered.Add(value);
             }
             if (ordered.Count > 0) return ordered;

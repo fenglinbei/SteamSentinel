@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +15,7 @@ using SteamSentinel.App;
 using SteamSentinel.App.Dialogs;
 using SteamSentinel.App.ViewModels;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.SelfTest;
@@ -21,21 +23,31 @@ namespace SteamSentinel.SelfTest;
 internal static partial class Program
 {
     // Reuse TestV016Dialog's STA/Application. WPF allows only one Application per process.
-    private static int RunV0117LayoutUi(string output)
+    private static int RunV0117LayoutUi(string output, string? language = null, int? dpiPercent = null)
     {
+        // WPF can suppress even RenderTargetBitmap output when the desktop's
+        // display devices disappear. Opt in only for this short-lived UI export.
+        AppContext.SetSwitch("Switch.System.Windows.Media.ShouldRenderEvenWhenNoDisplayDevicesAreAvailable", true);
         output = Path.GetFullPath(output);
         Directory.CreateDirectory(output);
         Exception? error = null;
         Thread thread = new(() =>
         {
+            using IDisposable languageScope = DisplayText.UseCulture(language is null ? DisplayText.Chinese : CultureInfo.GetCultureInfo(language));
             SteamSentinel.App.App? app = null;
             try
             {
+                UiLayoutHarness.RequestedDpi = dpiPercent is int percent ? new DpiScale(percent / 100d, percent / 100d) : null;
+                // Keep off-screen evidence deterministic even when hardware composition
+                // is unavailable (for example an inactive desktop or graphics session).
+                RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
                 app = new();
                 app.InitializeComponent();
                 app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 TestV0117Layout(output);
                 TestScanSettingsUi(output);
+                TestV030UiPresentation(output);
+                TestV030LanguageControls(output);
             }
             catch (Exception ex) { error = ex; }
             finally { app?.Shutdown(); }
@@ -48,6 +60,10 @@ internal static partial class Program
         {
             passed = _passed,
             failed = Failures.Count,
+            language = language ?? "zh-Hans",
+            dpiPercent,
+            dpiMode = dpiPercent is null ? "native" : "synthetic-window-dpi",
+            rendering = "software-offscreen-with-no-display-support",
             failures = Failures,
             buildIdentity = ProductInfo.BuildIdentity,
             completedAtUtc = DateTimeOffset.UtcNow,
@@ -125,6 +141,9 @@ internal static partial class Program
                 layout.Refresh();
                 DataGrid batch = (DataGrid)window.FindName("BatchResultsGrid");
                 Check($"UI {size} 处置结果表保留阅读空间", batch.Items.Count > 0 && batch.ActualHeight >= 48 && layout.HasReadableColumns(batch));
+                RemediationTargetOutcome firstOutcome = (RemediationTargetOutcome)batch.Items[0];
+                Check($"UI {size} 处置结果实际单元格显示目标原路径", !string.IsNullOrWhiteSpace(firstOutcome.Target) &&
+                    (batch.Columns[1].GetCellContent(firstOutcome) as TextBlock)?.Text == firstOutcome.Target);
                 Check($"UI {size} 处置结果复查详情与导出入口固定可见", layout.IsFullyVisible((FrameworkElement)window.FindName("FollowUpDetailsButton")) &&
                     layout.IsFullyVisible((FrameworkElement)window.FindName("ExportButton")));
                 if (output is not null) layout.Save("layout-results-" + size, output);
@@ -276,11 +295,12 @@ internal static partial class Program
                 DataGrid findings = (DataGrid)window.FindName("FindingsGrid");
                 DataGridRow first = (DataGridRow)findings.ItemContainerGenerator.ContainerFromIndex(0);
                 Check($"UI 表格 {size} 两条信息提示仍是不可处置的真实绑定", findings.Items.Count == 2 &&
-                    window.Findings.All(finding => finding.Severity == "信息" && !finding.CanSelect) &&
+                    window.Findings.All(finding => finding.Severity == UiExpected("信息", "Information") && !finding.CanSelect) &&
                     !((Button)window.FindName("RemediateButton")).IsEnabled);
-                Check($"UI 表格 {size} 处理状态与原因双行可读且行高有界", first.ActualHeight is >= 38 and <= 52 &&
+                Check($"UI 表格 {size} 处理状态与原因双行可读且行高有界", first.ActualHeight >= findings.MinRowHeight && first.ActualHeight <= 52 &&
                     findings.Columns.Count == 7 && findings.Columns[6].GetCellContent(first) is { } handling &&
-                    UiLayoutHarness.Descendants<TextBlock>(handling).Count(text => !string.IsNullOrWhiteSpace(text.Text)) >= 2);
+                    UiLayoutHarness.Descendants<TextBlock>(handling).Where(text => !string.IsNullOrWhiteSpace(text.Text)).ToArray() is { Length: >= 2 } lines &&
+                    lines.All(layout.IsFullyVisible));
                 Check($"UI 表格 {size} 真实单元格保留左右8上下3像素留白", layout.CellsHaveRealPadding(findings));
                 Check($"UI 表格 {size} 严重度分类分数与处置复选框居中", new[] { 1, 2, 3 }.All(column => layout.CellTextIsCentered(findings, 0, column)) &&
                     layout.CellCheckIsCentered(findings, 0, 0));
@@ -334,6 +354,7 @@ internal static partial class Program
             if (output is not null) layout.Save("visual-button-contrast", output);
         }
         controls.Close();
+        TestV030DpiLayout(output);
     }
 
 }
@@ -371,7 +392,7 @@ internal static class UiLayoutFixtures
                     Severity = FindingSeverity.Information, Description = "只复现用户反馈中的单行表格布局，不读取或修改 hosts。" },
                 new() { RuleId = "UI-INERT-READ", Category = FindingCategory.Coverage, Target = "本次扫描", Description = "无害界面示例：部分文件未读取。" },
                 new() { RuleId = "UI-INERT-READ-2", Category = FindingCategory.Coverage, Target = "本次扫描", Description = "无害界面示例：部分进程已退出。" },
-                new() { RuleId = "UI-INERT-AMSI", Category = FindingCategory.Coverage, Target = "本次扫描", Description = "AMSI 无害界面示例，不查询真实安全软件状态。" }
+                new() { RuleId = "UI-INERT-AMSI", ReasonCode = ReasonCodes.AmsiUnavailable, Category = FindingCategory.Coverage, Target = "本次扫描", Description = "AMSI 无害界面示例，不查询真实安全软件状态。" }
             ],
             CoverageAggregates =
             [
@@ -469,10 +490,10 @@ internal static class UiLayoutFixtures
             Targets = plan.Actions.Select((action, i) => new RemediationTargetOutcome
             {
                 Target = action.Target,
-                Status = i % 2 == 0 ? "已完成" : "尚未执行",
+                State = i % 2 == 0 ? RemediationTargetState.Completed : RemediationTargetState.NotExecuted,
                 ActionIds = [action.ActionId],
                 MissingActions = i % 4 == 0 ? ["inert omitted action"] : [],
-                Reason = i == 15 ? string.Concat(Enumerable.Repeat("这是超过六百字的无害处置结果说明，需要确认每一行都可通过表格内滚动读到。", 24)) + "\n" + LongReasonEnd :
+                ReasonDetails = i == 15 ? string.Concat(Enumerable.Repeat("这是超过六百字的无害处置结果说明，需要确认每一行都可通过表格内滚动读到。", 24)) + "\n" + LongReasonEnd :
                     "这是无害测试数据；用于确认较长的目标路径与结果说明不会挤压列宽或覆盖底部操作按钮。"
             }).ToList(),
             Notes = ["只展示无害的界面示例，不读取、扫描或处置所列路径。", string.Concat(Enumerable.Repeat("较长的计划说明，仍须保留确认按钮与列表可读区域。", 12))]
@@ -487,11 +508,15 @@ internal static class UiLayoutFixtures
 
 internal sealed class UiLayoutHarness : IDisposable
 {
+    // A DPI notification to our private HWND exercises WPF measure/arrange and text
+    // rasterization without changing the desktop. It is not a physical monitor move.
+    internal static DpiScale? RequestedDpi { get; set; }
     private readonly Window _window;
     private readonly FrameworkElement _content;
     private readonly HwndSource _source;
     private readonly int _width;
     private readonly int _height;
+    private DpiScale _layoutDpi;
     internal Border Root { get; }
 
     internal UiLayoutHarness(Window window, int width, int height)
@@ -528,19 +553,72 @@ internal sealed class UiLayoutHarness : IDisposable
             WindowStyle = unchecked((int)0x80000000)
         });
         _source.RootVisual = Root;
+        SetDpi(RequestedDpi ?? VisualTreeHelper.GetDpi(Root));
         Refresh();
+    }
+
+    internal void SetDpi(DpiScale dpi)
+    {
+        _layoutDpi = dpi;
+        Matrix transform = _source.CompositionTarget.TransformToDevice;
+        if (Math.Abs(transform.M11 - dpi.DpiScaleX) > 0.001 || Math.Abs(transform.M22 - dpi.DpiScaleY) > 0.001)
+        {
+            // Update the HwndTarget as well as the visual tree. SetRootDpi alone leaves
+            // text/template measurement tied to the source's old DPI and is not valid here.
+            NativeRect bounds = new()
+            {
+                Left = -32000, Top = -32000,
+                Right = -32000 + (int)Math.Ceiling(_width * dpi.DpiScaleX),
+                Bottom = -32000 + (int)Math.Ceiling(_height * dpi.DpiScaleY)
+            };
+            int dpiX = (int)Math.Round(dpi.PixelsPerInchX), dpiY = (int)Math.Round(dpi.PixelsPerInchY);
+            SendMessage(_source.Handle, 0x02E0, new IntPtr(dpiX | (dpiY << 16)), ref bounds); // WM_DPICHANGED, own HWND only
+        }
+        // HwndSource dimensions and PNG dimensions are physical pixels; Root uses DIPs.
+        if (!SetWindowPos(_source.Handle, IntPtr.Zero, 0, 0,
+            (int)Math.Ceiling(_width * dpi.DpiScaleX), (int)Math.Ceiling(_height * dpi.DpiScaleY),
+            0x0002 | 0x0004 | 0x0010)) // NOMOVE | NOZORDER | NOACTIVATE
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        transform = _source.CompositionTarget.TransformToDevice;
+        if (Math.Abs(transform.M11 - dpi.DpiScaleX) > 0.001 || Math.Abs(transform.M22 - dpi.DpiScaleY) > 0.001)
+            throw new InvalidOperationException("The private WPF source did not accept the requested DPI.");
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, ref NativeRect lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(IntPtr hwnd, out NativeRect rect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect { internal int Left, Top, Right, Bottom; }
+
+    internal bool HasCorrectPixelSize()
+    {
+        DpiScale dpi = VisualTreeHelper.GetDpi(Root);
+        return GetClientRect(_source.Handle, out NativeRect rect) &&
+            rect.Right - rect.Left == (int)Math.Ceiling(_width * dpi.DpiScaleX) &&
+            rect.Bottom - rect.Top == (int)Math.Ceiling(_height * dpi.DpiScaleY);
     }
 
     internal void Refresh()
     {
-        for (int pass = 0; pass < 3; pass++)
+        for (int pass = 0; pass < 8; pass++)
         {
             Root.Measure(new Size(_width, _height));
             Root.Arrange(new Rect(0, 0, _width, _height));
             foreach (Control control in Descendants<Control>(Root).ToArray()) control.ApplyTemplate();
             Root.UpdateLayout();
             Root.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            if (pass >= 2 && Root.IsMeasureValid && Root.IsArrangeValid &&
+                Descendants<Visual>(Root).All(visual => VisualTreeHelper.GetDpi(visual).Equals(_layoutDpi))) return;
         }
+        throw new InvalidOperationException("UI fixture did not converge to a stable layout with one DPI.");
     }
 
     internal Rect Bounds(FrameworkElement element) => element.TransformToAncestor(Root).TransformBounds(new Rect(element.RenderSize));
@@ -552,8 +630,13 @@ internal sealed class UiLayoutHarness : IDisposable
         {
             if (cell.Template.FindName("CellContent", cell) is not ContentPresenter content) return false;
             Rect inner = content.TransformToAncestor(cell).TransformBounds(new Rect(content.RenderSize));
-            return inner.Left >= 7.9 && cell.ActualWidth - inner.Right >= 7.9 &&
-                inner.Top >= 2.9 && cell.ActualHeight - inner.Bottom >= 2.9;
+            DpiScale dpi = VisualTreeHelper.GetDpi(cell);
+            // Horizontal padding rounds once. Vertical padding plus content centering
+            // can each lose half a pixel (e.g. 3 DIPs at 125% becomes 3 physical pixels).
+            return inner.Left * dpi.DpiScaleX >= 8 * dpi.DpiScaleX - 0.51 &&
+                (cell.ActualWidth - inner.Right) * dpi.DpiScaleX >= 8 * dpi.DpiScaleX - 0.51 &&
+                inner.Top * dpi.DpiScaleY >= 3 * dpi.DpiScaleY - 1.01 &&
+                (cell.ActualHeight - inner.Bottom) * dpi.DpiScaleY >= 3 * dpi.DpiScaleY - 1.01;
         });
     }
 
@@ -561,16 +644,16 @@ internal sealed class UiLayoutHarness : IDisposable
     {
         if (CellContent(grid, rowIndex, columnIndex) is not TextBlock text || ParentCell(text) is not DataGridCell cell) return false;
         Rect content = text.TransformToAncestor(cell).TransformBounds(new Rect(text.RenderSize));
-        return text.TextAlignment == TextAlignment.Center && Math.Abs(content.Left + content.Width / 2 - cell.ActualWidth / 2) <= 1.1 &&
-            Math.Abs(content.Top + content.Height / 2 - cell.ActualHeight / 2) <= 1.1;
+        return text.TextAlignment == TextAlignment.Center && IsCenteredInCell(cell, content);
     }
 
     internal bool CellTextIsLeftAligned(DataGrid grid, int rowIndex, int columnIndex)
     {
         if (CellContent(grid, rowIndex, columnIndex) is not TextBlock text || ParentCell(text) is not DataGridCell cell) return false;
         Rect content = text.TransformToAncestor(cell).TransformBounds(new Rect(text.RenderSize));
-        return text.TextAlignment == TextAlignment.Left && content.Left >= 7.9 && content.Left <= 10 &&
-            Math.Abs(content.Top + content.Height / 2 - cell.ActualHeight / 2) <= 1.1;
+        double scale = VisualTreeHelper.GetDpi(cell).DpiScaleX;
+        return text.TextAlignment == TextAlignment.Left && Math.Abs(content.Left - 8) * scale <= 0.51 &&
+            IsCenteredInCell(cell, content, verticalOnly: true);
     }
 
     internal bool CellCheckIsCentered(DataGrid grid, int rowIndex, int columnIndex)
@@ -579,8 +662,19 @@ internal sealed class UiLayoutHarness : IDisposable
         CheckBox? check = content as CheckBox ?? Descendants<CheckBox>(content).FirstOrDefault();
         if (check is null || ParentCell(check) is not DataGridCell cell) return false;
         Rect glyph = check.TransformToAncestor(cell).TransformBounds(new Rect(check.RenderSize));
-        return Math.Abs(glyph.Left + glyph.Width / 2 - cell.ActualWidth / 2) <= 1.1 &&
-            Math.Abs(glyph.Top + glyph.Height / 2 - cell.ActualHeight / 2) <= 1.1;
+        return IsCenteredInCell(cell, glyph);
+    }
+
+    private static bool IsCenteredInCell(DataGridCell cell, Rect content, bool verticalOnly = false)
+    {
+        if (cell.Template.FindName("CellSurface", cell) is not FrameworkElement surface) return false;
+        // DataGridCell reserves space for its bottom/right grid lines outside the template.
+        // Compare against the actual content surface, not that asymmetric outer rectangle.
+        Rect body = surface.TransformToAncestor(cell).TransformBounds(new Rect(surface.RenderSize));
+        DpiScale dpi = VisualTreeHelper.GetDpi(cell);
+        // Two nested centered elements can each round by half a physical pixel.
+        return (verticalOnly || Math.Abs(content.Left + content.Width / 2 - body.Left - body.Width / 2) * dpi.DpiScaleX <= 1.01) &&
+            Math.Abs(content.Top + content.Height / 2 - body.Top - body.Height / 2) * dpi.DpiScaleY <= 1.01;
     }
 
     private static FrameworkElement? CellContent(DataGrid grid, int rowIndex, int columnIndex) =>
@@ -610,22 +704,28 @@ internal sealed class UiLayoutHarness : IDisposable
         return (Math.Max(first, second) + 0.05) / (Math.Min(first, second) + 0.05);
     }
 
-    internal bool IsFullyVisible(FrameworkElement element)
+    internal bool IsFullyVisible(FrameworkElement element) => VisibilityIssue(element) is null;
+
+    internal string? VisibilityIssue(FrameworkElement element)
     {
-        if (element.Visibility != Visibility.Visible || element.ActualWidth < 1 || element.ActualHeight < 1) return false;
+        if (element.Visibility != Visibility.Visible || element.ActualWidth < 1 || element.ActualHeight < 1) return "Hidden or empty.";
         Rect bounds = Bounds(element);
-        if (bounds.Left < -1 || bounds.Top < -1 || bounds.Right > _width + 1 || bounds.Bottom > _height + 1) return false;
+        DpiScale dpi = VisualTreeHelper.GetDpi(Root);
+        // Allow half a physical pixel for rounded edges, never a whole clipped pixel.
+        double epsilonX = 0.51 / dpi.DpiScaleX, epsilonY = 0.51 / dpi.DpiScaleY;
+        if (bounds.Left < -epsilonX || bounds.Top < -epsilonY || bounds.Right > _width + epsilonX || bounds.Bottom > _height + epsilonY)
+            return $"Root clipping: {bounds.ToString(CultureInfo.InvariantCulture)} in {_width}x{_height}.";
         for (DependencyObject? ancestor = VisualTreeHelper.GetParent(element); ancestor is not null && ancestor != Root;
              ancestor = VisualTreeHelper.GetParent(ancestor))
         {
             if (ancestor is not FrameworkElement parent) continue;
-            if (parent.Visibility != Visibility.Visible) return false;
+            if (parent.Visibility != Visibility.Visible) return "Hidden ancestor: " + parent.Name;
             if (!parent.ClipToBounds && parent is not ScrollContentPresenter) continue;
             Rect clipping = Bounds(parent);
-            clipping.Inflate(1, 1);
-            if (!clipping.Contains(bounds)) return false;
+            clipping.Inflate(epsilonX, epsilonY);
+            if (!clipping.Contains(bounds)) return $"Clipped by {parent.GetType().Name} {parent.Name}: {bounds.ToString(CultureInfo.InvariantCulture)} in {Bounds(parent).ToString(CultureInfo.InvariantCulture)}.";
         }
-        return true;
+        return null;
     }
 
     internal bool DoNotOverlap(IEnumerable<FrameworkElement> elements)
@@ -665,12 +765,25 @@ internal sealed class UiLayoutHarness : IDisposable
     {
         width = _width,
         height = _height,
+        dpi = VisualTreeHelper.GetDpi(Root),
+        dpiMode = RequestedDpi is null ? "native" : "synthetic-window-dpi",
+        sourceTransform = _source.CompositionTarget.TransformToDevice.ToString(CultureInfo.InvariantCulture),
+        pixelWidth = (int)Math.Ceiling(_width * VisualTreeHelper.GetDpi(Root).DpiScaleX),
+        pixelHeight = (int)Math.Ceiling(_height * VisualTreeHelper.GetDpi(Root).DpiScaleY),
+        nativeClientSizeMatches = HasCorrectPixelSize(),
+        optionalPanels = Descendants<ScrollViewer>(Root).Where(viewer => viewer.Name is "ScanOptionsScroll" or "FindingDetailScroll").Select(viewer => new
+        {
+            viewer.Name, height = double.IsFinite(viewer.Height) ? (double?)viewer.Height : null,
+            maxHeight = double.IsFinite(viewer.MaxHeight) ? (double?)viewer.MaxHeight : null,
+            viewer.ActualHeight, viewer.ViewportHeight, viewer.ScrollableHeight
+        }).ToArray(),
         buttons = Descendants<Button>(Root).Select(button => new
         {
             button.Name,
             content = button.Content?.ToString(),
             bounds = Bounds(button).ToString(CultureInfo.InvariantCulture),
             fullyVisible = IsFullyVisible(button),
+            visibilityIssue = VisibilityIssue(button),
             button.IsEnabled,
             button.Opacity,
             foreground = BrushColor(button.Foreground).ToString(),
@@ -693,6 +806,21 @@ internal sealed class UiLayoutHarness : IDisposable
             firstRowHeight = (grid.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow)?.ActualHeight,
             firstRowFullyVisible = grid.ItemContainerGenerator.ContainerFromIndex(0) is DataGridRow row && IsFullyVisible(row),
             realCellPadding = CellsHaveRealPadding(grid),
+            cells = Descendants<DataGridCell>(grid).Take(grid.Columns.Count * 2).Select(cell => new
+            {
+                cell.ActualWidth,
+                cell.ActualHeight,
+                padding = cell.Padding.ToString(),
+                surface = cell.Template.FindName("CellSurface", cell) is FrameworkElement surface
+                    ? surface.TransformToAncestor(cell).TransformBounds(new Rect(surface.RenderSize)).ToString(CultureInfo.InvariantCulture) : null,
+                content = cell.Template.FindName("CellContent", cell) is ContentPresenter presenter
+                    ? presenter.TransformToAncestor(cell).TransformBounds(new Rect(presenter.RenderSize)).ToString(CultureInfo.InvariantCulture) : null,
+                elements = Descendants<FrameworkElement>(cell).Where(element => element is TextBlock or CheckBox).Select(element => new
+                {
+                    type = element.GetType().Name,
+                    bounds = element.TransformToAncestor(cell).TransformBounds(new Rect(element.RenderSize)).ToString(CultureInfo.InvariantCulture)
+                }).ToArray()
+            }).ToArray(),
             columns = grid.Columns.Select(column => new { label = column.Header?.ToString(), column.ActualWidth }).ToArray(),
             scrollViewers = Descendants<ScrollViewer>(grid).Select(viewer => new { viewer.ScrollableWidth, viewer.ScrollableHeight, viewer.ViewportWidth, viewer.ViewportHeight }).ToArray()
         }).ToArray()
@@ -700,8 +828,45 @@ internal sealed class UiLayoutHarness : IDisposable
 
     internal void Save(string name, string output)
     {
-        RenderTargetBitmap bitmap = new(_width, _height, 96, 96, PixelFormats.Pbgra32);
+        DpiScale dpi = VisualTreeHelper.GetDpi(Root);
+        RenderTargetBitmap bitmap = new((int)Math.Ceiling(_width * dpi.DpiScaleX), (int)Math.Ceiling(_height * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
         bitmap.Render(Root);
+        uint[] pixels = new uint[bitmap.PixelWidth * bitmap.PixelHeight];
+        bitmap.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
+        bool hasVisiblePixels = false, hasDetail = false;
+        foreach (uint pixel in pixels)
+        {
+            hasVisiblePixels |= (pixel >> 24) != 0;
+            hasDetail |= pixel != pixels[0];
+            if (hasVisiblePixels && hasDetail) break;
+        }
+        if (!hasVisiblePixels || !hasDetail)
+        {
+            DrawingVisual probe = new();
+            using (DrawingContext drawing = probe.RenderOpen()) drawing.DrawRectangle(Brushes.Red, null, new Rect(0, 0, 16, 16));
+            RenderTargetBitmap probeBitmap = new(16, 16, 96, 96, PixelFormats.Pbgra32);
+            probeBitmap.Render(probe);
+            uint[] probePixels = new uint[256];
+            probeBitmap.CopyPixels(probePixels, 64, 0);
+            File.WriteAllText(Path.Combine(output, name + ".blank.json"), JsonSerializer.Serialize(new
+            {
+                standaloneSoftwarePixels = probePixels.Count(pixel => (pixel >> 24) != 0),
+                rootVisible = Root.IsVisible, contentVisible = _content.IsVisible,
+                rootVisibility = Root.Visibility.ToString(), contentVisibility = _content.Visibility.ToString(),
+                rootOpacity = Root.Opacity, contentOpacity = _content.Opacity,
+                attached = _source.RootVisual == Root, Root.IsLoaded, Root.IsMeasureValid, Root.IsArrangeValid,
+                renderMode = RenderOptions.ProcessRenderMode.ToString(), tier = RenderCapability.Tier,
+                rootClip = VisualTreeHelper.GetClip(Root)?.Bounds.ToString(CultureInfo.InvariantCulture),
+                contentClip = VisualTreeHelper.GetClip(_content)?.Bounds.ToString(CultureInfo.InvariantCulture),
+                rootDrawing = VisualTreeHelper.GetDrawing(Root)?.Bounds.ToString(CultureInfo.InvariantCulture),
+                descendantBounds = VisualTreeHelper.GetDescendantBounds(Root).ToString(CultureInfo.InvariantCulture),
+                rootOffset = VisualTreeHelper.GetOffset(Root).ToString(CultureInfo.InvariantCulture),
+                rootSize = Root.RenderSize.ToString(CultureInfo.InvariantCulture),
+                geometry = Describe()
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            throw new InvalidOperationException("UI screenshot is blank: " + name);
+        }
         PngBitmapEncoder encoder = new();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using (FileStream stream = File.Create(Path.Combine(output, name + ".png"))) encoder.Save(stream);

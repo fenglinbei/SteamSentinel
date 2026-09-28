@@ -1,3 +1,4 @@
+using SteamSentinel.Core.Reporting;
 /*
  * RAR password/checksum adaptation includes logic derived from UnRAR
  * (copyright Alexander Roshal): CryptData::SetKey30, sha1_process_rar29,
@@ -72,9 +73,9 @@ public sealed class ArchiveRarIntegrityIndex
     {
         ArgumentNullException.ThrowIfNull(entry);
         if (entry.Key is null || !_byKey.TryGetValue(entry.Key, out ArchiveRarEntryChecksum? checksum) || checksum is null)
-            throw RarIntegrityReflection.Invalid("RAR 成员在已验证清单中缺失或重名，无法唯一关联校验值。");
+            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Match.01"));
         if (entry.Size != checksum.Size || entry.IsDirectory != checksum.IsDirectory || entry.IsEncrypted != checksum.IsEncrypted)
-            throw RarIntegrityReflection.Invalid("RAR 成员与已验证清单的元数据不一致。");
+            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Match.02"));
         return checksum;
     }
 
@@ -95,7 +96,7 @@ public sealed class ArchiveIntegrityRarVerifier : IDisposable
     {
         _checksum = checksum;
         if (checksum.IsEncrypted && password is null)
-            throw new SharpCompress.Common.CryptographicException("RAR 成员需要密码。");
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Constructor.01"), sourceText => new SharpCompress.Common.CryptographicException(sourceText));
         if (checksum.HashMac)
         {
             byte[] passwordBytes = Encoding.UTF8.GetBytes(password!);
@@ -112,15 +113,15 @@ public sealed class ArchiveIntegrityRarVerifier : IDisposable
         Requirement = new(true, plainCrc,
             plainCrc ? BinaryPrimitives.ReadUInt32LittleEndian(checksum.ExpectedHash) : 0,
             checksum.Size, checksum.IsEncrypted && checksum.Size > 0,
-            checksum.HashMac ? "RAR5 密码关联校验" : "RAR 内容校验");
+            checksum.HashMac ? MessageText.Create("Backend.Core.ArchiveIntegrityRar.Constructor.02") : MessageText.Create("Backend.Core.ArchiveIntegrityRar.Constructor.03"));
     }
 
     public void Complete(Stream decodedStream, long copied, uint actualCrc32)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_completed) throw new InvalidOperationException("RAR 校验已经结束。");
+        if (_completed) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Complete.01"), sourceText => new InvalidOperationException(sourceText));
         if (copied != _checksum.Size)
-            throw RarIntegrityReflection.Invalid("RAR 成员实际长度与声明不一致。");
+            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Complete.02"));
         byte[] actual;
         if (_checksum.ExpectedHash.Length == 4)
         {
@@ -152,7 +153,7 @@ public sealed class ArchiveIntegrityRarVerifier : IDisposable
                 finally { CryptographicOperations.ZeroMemory(digest); }
             }
             if (!CryptographicOperations.FixedTimeEquals(actual, _checksum.ExpectedHash))
-                throw RarIntegrityReflection.Invalid("RAR 成员内容校验不匹配。");
+                throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Complete.03"));
             _completed = true;
         }
         finally { CryptographicOperations.ZeroMemory(actual); }
@@ -178,9 +179,9 @@ public static partial class ArchiveIntegrity
         limits.Validate();
         RarIntegrityReflection.EnsureVersion();
         if (password is { Length: > 256 })
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 密码长度超出格式适配预算。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.01"));
         if (volumes.Count is < 1 || volumes.Count > limits.MaximumVolumes)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 卷数超出预算。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.02"));
         var entries = new List<ArchiveRarEntryChecksum>();
         ArchiveRarEntryChecksum? pending = null;
         bool? commonRar5 = null, commonSolid = null, commonEncrypted = null;
@@ -190,7 +191,7 @@ public static partial class ArchiveIntegrity
         {
             token.ThrowIfCancellationRequested();
             if (!source.CanRead || !source.CanSeek)
-                throw RarIntegrityReflection.Invalid("RAR 卷流必须可读且可定位。");
+                throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.03"));
             long originalPosition = source.Position;
             using var bounded = new RarMetadataStream(source, limits.MaximumMetadataBytes,
                 count => { metadataRead = checked(metadataRead + count); return metadataRead; }, token);
@@ -206,8 +207,8 @@ public static partial class ArchiveIntegrity
                 while (true)
                 {
                     token.ThrowIfCancellationRequested();
-                    if (++headerCount > checked(limits.MaximumEntries + limits.MaximumVolumes * 8))
-                        throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 头数量超出预算。");
+                    if (!limits.AllowsEntries(Math.Max(0, checked(++headerCount) - (long)limits.MaximumVolumes * 8), known: false))
+                        throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.04"));
                     long headerStart = bounded.Position;
                     bool encryptedHeader = factory.IsEncrypted;
                     long? controlledDataStart = null;
@@ -229,25 +230,25 @@ public static partial class ArchiveIntegrity
                     }
                     if (header.HeaderType == HeaderType.Mark)
                     {
-                        if (sawMark) throw RarIntegrityReflection.Invalid("重复 RAR 标记。");
+                        if (sawMark) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.05"));
                         sawMark = true;
                         rar5 = RarIntegrityReflection.Property<bool>(header, "IsRar5");
                         if (commonRar5.HasValue && commonRar5.Value != rar5)
-                            throw RarIntegrityReflection.Invalid("RAR 各卷格式不一致。");
+                            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.06"));
                         commonRar5 = rar5;
                         continue;
                     }
-                    if (!sawMark) throw RarIntegrityReflection.Invalid("RAR 标记缺失。");
+                    if (!sawMark) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.07"));
                     if (header.HeaderType == HeaderType.Crypt)
                     {
                         if (!rar5 || sawMain || headerKey is not null)
-                            throw RarIntegrityReflection.Invalid("RAR 加密头位置不合法。");
+                            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.08"));
                         object crypto = RarIntegrityReflection.FieldObject(header, "CryptInfo",
                             "SharpCompress.Common.Rar.Rar5CryptoInfo");
                         byte[] salt = RarIntegrityReflection.Field<byte[]>(crypto, "Salt");
                         int log2 = RarIntegrityReflection.Field<int>(crypto, "LG2Count");
                         RarIntegrityReflection.ValidateKdf(log2, salt);
-                        if (password is null) throw new SharpCompress.Common.CryptographicException("RAR 加密头需要密码。");
+                        if (password is null) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.09"), sourceText => new SharpCompress.Common.CryptographicException(sourceText));
                         byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
                         try { headerKey = Rfc2898DeriveBytes.Pbkdf2(passwordBytes, salt, 1 << log2, HashAlgorithmName.SHA256, 32); }
                         finally { CryptographicOperations.ZeroMemory(passwordBytes); }
@@ -256,7 +257,7 @@ public static partial class ArchiveIntegrity
                     }
                     if (header.HeaderType == HeaderType.Archive)
                     {
-                        if (sawMain) throw RarIntegrityReflection.Invalid("重复 RAR 主头。");
+                        if (sawMain) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.10"));
                         sawMain = true;
                         bool multi = RarIntegrityReflection.Property<bool>(header, "IsVolume");
                         bool first = RarIntegrityReflection.Property<bool>(header, "IsFirstVolume");
@@ -265,25 +266,25 @@ public static partial class ArchiveIntegrity
                         volumeEncrypted |= factory.IsEncrypted;
                         if ((volumes.Count > 1 && !multi) || (multi && first != (volumeIndex == 0)) ||
                             (rar5 && (number ?? 0) != volumeIndex))
-                            throw RarIntegrityReflection.Invalid("RAR 主头卷顺序或卷标志不一致。");
+                            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.11"));
                         if ((commonSolid.HasValue && commonSolid.Value != solid) ||
                             (commonEncrypted.HasValue && commonEncrypted.Value != volumeEncrypted))
-                            throw RarIntegrityReflection.Invalid("RAR 各卷固实或加密设置不一致。");
+                            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.12"));
                         commonSolid = solid; commonEncrypted = volumeEncrypted;
                         continue;
                     }
-                    if (!sawMain) throw RarIntegrityReflection.Invalid("RAR 主头缺失。");
+                    if (!sawMain) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.13"));
                     if (header.HeaderType == HeaderType.EndArchive)
                     {
                         ushort flags = RarIntegrityReflection.Property<ushort>(header, "Flags");
                         bool next = (flags & 1) != 0;
                         if (next != (volumeIndex < volumes.Count - 1))
-                            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "RAR 结束标记与受控卷清单不一致。");
+                            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.14"));
                         if (!rar5)
                         {
                             short? number = RarIntegrityReflection.Property<short?>(header, "VolumeNumber");
                             if (number.HasValue && number.Value != volumeIndex)
-                                throw RarIntegrityReflection.Invalid("RAR 结束头卷号不一致。");
+                                throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.15"));
                         }
                         sawEnd = true;
                         break;
@@ -305,24 +306,24 @@ public static partial class ArchiveIntegrity
                         bool splitBefore = RarIntegrityReflection.Property<bool>(header, "IsSplitBefore");
                         bool splitAfter = RarIntegrityReflection.Property<bool>(header, "IsSplitAfter");
                         if (RarIntegrityReflection.Property<bool>(header, "IsRedir"))
-                            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR 重定向成员不具有可校验的独立内容流。");
+                            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.16"));
                         byte[] expected = RarIntegrityReflection.NullableBytes(header, "FileCrc") ?? [];
                         if (size < 0 || size == long.MaxValue || (!directory && expected.Length is not (4 or 32)))
-                            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR 成员缺少受支持的长度或内容校验值。");
+                            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.17"));
                         byte[] salt = []; int log2 = 0; bool hashMac = false;
                         if (rar5)
                         {
                             RarCryptoRecord record = RarIntegrityReflection.ReadRar5Crypto(bounded, headerStart,
                                 encryptedHeader ? headerKey : null, limits.MaximumMetadataBytes);
                             if (record.Encrypted != encrypted)
-                                throw RarIntegrityReflection.Invalid("RAR5 加密元数据与解码器解释不一致。");
+                                throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.18"));
                             salt = record.Salt; log2 = record.Log2; hashMac = record.HashMac;
                             if (encrypted) RarIntegrityReflection.ValidateKdf(log2, salt);
                         }
                         long dataStart = controlledDataStart ?? RarIntegrityReflection.Property<long>(header, "DataStartPosition");
                         long packedLength = RarIntegrityReflection.Property<long>(header, "CompressedSize");
                         if (dataStart < 0 || packedLength < 0 || dataStart > source.Length - packedLength)
-                            throw RarIntegrityReflection.Invalid("RAR 压缩数据区超出受控卷范围。");
+                            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.19"));
                         var part = new ArchiveRarPackedPart(source, dataStart, packedLength, volumeIndex);
                         object firstHeader = pending?.FirstHeader ?? header;
                         IReadOnlyList<ArchiveRarPackedPart> parts = pending is null ? [part] : [.. pending.PackedParts, part];
@@ -334,26 +335,26 @@ public static partial class ArchiveIntegrity
                                 pending.IsDirectory != current.IsDirectory || pending.IsEncrypted != current.IsEncrypted ||
                                 pending.KdfLog2 != current.KdfLog2 ||
                                 !pending.Salt.AsSpan().SequenceEqual(current.Salt))
-                                throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, "RAR 拆分成员的相邻卷元数据不一致。");
+                                throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.20"));
                             if (!RarIntegrityReflection.CryptoParametersMatch(pending.FirstHeader, header, rar5))
-                                throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, "RAR 拆分成员的加密参数不一致。");
+                                throw new ArchiveVolumeException(ArchiveVolumeStatus.MixedVolumes, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.21"));
                             // Intermediate parts have a packed-part checksum and may omit
                             // HashMAC. Only the last part supplies the logical content hash.
                         }
                         else if (pending is not null)
-                            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "RAR 拆分成员缺少连续后续卷。");
+                            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.22"));
                         if (splitAfter) pending = current;
                         else
                         {
                             pending = null;
                             entries.Add(current);
-                            if (entries.Count > limits.MaximumEntries)
-                                throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 成员数超出预算。");
+                            if (!limits.AllowsEntries(entries.Count, known: false))
+                                throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.23"));
                         }
                     }
                 }
                 if (!sawMain || !sawEnd)
-                    throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "RAR 卷缺少经过校验的主头或结束标记。");
+                    throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.24"));
             }
             finally
             {
@@ -362,7 +363,7 @@ public static partial class ArchiveIntegrity
             }
         }
         if (pending is not null)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, "RAR 最后成员仍要求后续卷。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.MissingVolume, MessageText.Create("Backend.Core.ArchiveIntegrityRar.InspectRarHeaders.25"));
         return new ArchiveRarIntegrityIndex(entries, commonEncrypted ?? false, commonSolid ?? false);
     }
 
@@ -373,9 +374,9 @@ public static partial class ArchiveIntegrity
         RarIntegrityReflection.EnsureVersion();
         if (entry.CompressionType != CompressionType.Rar || entry.Key != checksum.Key ||
             entry.Size != checksum.Size || entry.IsDirectory != checksum.IsDirectory || entry.IsEncrypted != checksum.IsEncrypted)
-            throw RarIntegrityReflection.Invalid("RAR 实际成员与已验证的顺序清单不一致。");
+            throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.BeginRar.01"));
         if (checksum.IsDirectory)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, "RAR 目录不具有内容流。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.UnsupportedIntegrity, MessageText.Create("Backend.Core.ArchiveIntegrityRar.BeginRar.02"));
         return new ArchiveIntegrityRarVerifier(checksum, password);
     }
 
@@ -394,11 +395,11 @@ internal static class RarIntegrityReflection
         Assembly assembly = typeof(RarHeaderFactory).Assembly;
         if (assembly.GetName().Version != new Version(0, 50, 4, 0) ||
             assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion != "0.50.4")
-            throw Unsupported("RAR 校验适配器仅适用于锁定的 SharpCompress 0.50.4。");
+            throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.EnsureVersion.01"));
     }
 
-    internal static ArchiveVolumeException Invalid(string message) => new(ArchiveVolumeStatus.InvalidMetadata, message);
-    private static ArchiveVolumeException Unsupported(string message) => new(ArchiveVolumeStatus.UnsupportedIntegrity, message);
+    internal static ArchiveVolumeException Invalid(MessageText message) => new(ArchiveVolumeStatus.InvalidMetadata, message);
+    private static ArchiveVolumeException Unsupported(MessageText message) => new(ArchiveVolumeStatus.UnsupportedIntegrity, message);
 
     private static PropertyInfo FindProperty(object value, string name)
     {
@@ -409,31 +410,31 @@ internal static class RarIntegrityReflection
             if (property is not null && property.GetIndexParameters().Length == 0 && property.GetMethod is not null)
                 return property;
         }
-        throw Unsupported("锁定版本的 RAR 元数据属性不可用：" + name);
+        throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.FindProperty.01") + name);
     }
 
     internal static T Property<T>(object value, string name)
     {
         PropertyInfo property = FindProperty(value, name);
-        if (property.PropertyType != typeof(T)) throw Unsupported("RAR 元数据属性形状已改变：" + name);
+        if (property.PropertyType != typeof(T)) throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Property.01") + name);
         object? result = property.GetValue(value);
         if (result is T typed) return typed;
         if (result is null && Nullable.GetUnderlyingType(typeof(T)) is not null) return default!;
-        throw Invalid("RAR 元数据属性为空：" + name);
+        throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Property.02") + name);
     }
 
     internal static object PropertyObject(object value, string name, string expectedType)
     {
         PropertyInfo property = FindProperty(value, name);
         if (property.PropertyType.FullName != expectedType || property.PropertyType.Assembly != typeof(RarHeaderFactory).Assembly)
-            throw Unsupported("RAR 元数据属性形状已改变：" + name);
-        return property.GetValue(value) ?? throw Invalid("RAR 加密元数据为空。");
+            throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.PropertyObject.01") + name);
+        return property.GetValue(value) ?? throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.PropertyObject.02"));
     }
 
     internal static byte[]? NullableBytes(object value, string name)
     {
         PropertyInfo property = FindProperty(value, name);
-        if (property.PropertyType != typeof(byte[])) throw Unsupported("RAR 校验属性形状已改变。");
+        if (property.PropertyType != typeof(byte[])) throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.NullableBytes.01"));
         return (byte[]?)property.GetValue(value);
     }
 
@@ -441,8 +442,8 @@ internal static class RarIntegrityReflection
     {
         FieldInfo? field = value.GetType().GetField(name, InstanceMembers);
         if (value.GetType().Assembly != typeof(RarHeaderFactory).Assembly || field is null || field.FieldType != typeof(T))
-            throw Unsupported("RAR 元数据字段形状已改变：" + name);
-        return field.GetValue(value) is T typed ? typed : throw Invalid("RAR 元数据字段为空：" + name);
+            throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Field.01") + name);
+        return field.GetValue(value) is T typed ? typed : throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Field.02") + name);
     }
 
     internal static object FieldObject(object value, string name, string expectedType)
@@ -450,16 +451,16 @@ internal static class RarIntegrityReflection
         FieldInfo? field = value.GetType().GetField(name, InstanceMembers);
         if (value.GetType().Assembly != typeof(RarHeaderFactory).Assembly || field is null ||
             field.FieldType.FullName != expectedType || field.FieldType.Assembly != typeof(RarHeaderFactory).Assembly)
-            throw Unsupported("RAR 元数据字段形状已改变：" + name);
-        return field.GetValue(value) ?? throw Invalid("RAR 加密元数据字段为空。");
+            throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.FieldObject.01") + name);
+        return field.GetValue(value) ?? throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.FieldObject.02"));
     }
 
     internal static void ValidateKdf(int log2, byte[] salt)
     {
         // The library accepts larger counts; the scanner deliberately bounds this work.
         if (log2 is < 0 or > 20)
-            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 密码派生工作量超出预算。");
-        if (salt.Length != 16) throw Invalid("RAR5 salt 长度不合法。");
+            throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveIntegrityRar.ValidateKdf.01"));
+        if (salt.Length != 16) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ValidateKdf.02"));
     }
 
     internal static byte[] ReadCompletedBlake(Stream decoded)
@@ -470,18 +471,18 @@ internal static class RarIntegrityReflection
         Type type = decoded.GetType();
         if (type.Assembly != typeof(RarHeaderFactory).Assembly ||
             type.FullName != "SharpCompress.Compressors.Rar.RarBLAKE2spStream")
-            throw Unsupported("RAR BLAKE2sp 校验流形状不受支持。");
+            throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadCompletedBlake.01"));
         MethodInfo? method = type.GetMethod("GetCrc", BindingFlags.Instance | BindingFlags.Public,
             binder: null, types: Type.EmptyTypes, modifiers: null);
-        if (method is null || method.ReturnType != typeof(byte[])) throw Unsupported("RAR BLAKE2sp 校验接口已改变。");
+        if (method is null || method.ReturnType != typeof(byte[])) throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadCompletedBlake.02"));
         try
         {
             if (method.Invoke(decoded, null) is not byte[] { Length: 32 } result)
-                throw Invalid("RAR BLAKE2sp 校验结果不合法。");
+                throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadCompletedBlake.03"));
             return result.ToArray();
         }
         catch (TargetInvocationException ex)
-        { throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, "RAR 内容流尚未完成 BLAKE2sp 校验。", ex.InnerException ?? ex); }
+        { throw new ArchiveVolumeException(ArchiveVolumeStatus.InvalidMetadata, MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadCompletedBlake.04"), ex.InnerException ?? ex); }
     }
 
     internal static bool CryptoParametersMatch(object first, object current, bool rar5)
@@ -512,13 +513,13 @@ internal static class RarIntegrityReflection
                 int prefixLength = 5;
                 while ((prefix[prefixLength - 1] & 0x80) != 0)
                 {
-                    if (prefixLength == 7) throw Invalid("RAR5 头长度编码超限。");
+                    if (prefixLength == 7) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.01"));
                     source.ReadExactly(prefix.AsSpan(prefixLength++, 1));
                 }
                 int index = 4;
                 int body = checked((int)ReadVint(prefix.AsSpan(0, prefixLength), ref index));
                 int length = checked(index + body);
-                if (length > maximumHeaderBytes || length < index) throw Invalid("RAR5 头长度超出预算。");
+                if (length > maximumHeaderBytes || length < index) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.02"));
                 plaintext = new byte[length];
                 prefix.AsSpan(0, index).CopyTo(plaintext);
                 source.ReadExactly(plaintext.AsSpan(index));
@@ -534,9 +535,9 @@ internal static class RarIntegrityReflection
                 decryptor.TransformBlock(first, 0, 16, initial, 0);
                 int index = 4;
                 int body = checked((int)ReadVint(initial, ref index));
-                if (index > 7) throw Invalid("RAR5 头长度编码超限。");
+                if (index > 7) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.03"));
                 int length = checked(index + body);
-                if (length > maximumHeaderBytes || length < index) throw Invalid("RAR5 加密头长度超出预算。");
+                if (length > maximumHeaderBytes || length < index) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.04"));
                 int aligned = checked((length + 15) & ~15);
                 plaintext = new byte[aligned]; initial.CopyTo(plaintext, 0);
                 if (aligned > 16)
@@ -550,31 +551,31 @@ internal static class RarIntegrityReflection
             int headerSize = checked((int)ReadVint(plaintext, ref cursor));
             int end = checked(cursor + headerSize);
             if (end > plaintext.Length || ArchiveIntegrity.Crc32(plaintext.AsSpan(4, end - 4)) != BinaryPrimitives.ReadUInt32LittleEndian(plaintext))
-                throw Invalid("RAR5 原始头 CRC32 不匹配。");
+                throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.05"));
             ulong typeCode = ReadVint(plaintext.AsSpan(0, end), ref cursor);
             ulong flags = ReadVint(plaintext.AsSpan(0, end), ref cursor);
-            if (typeCode != 2) throw Invalid("RAR5 文件头位置与解码器不一致。");
+            if (typeCode != 2) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.06"));
             int extra = (flags & 1) != 0 ? checked((int)ReadVint(plaintext.AsSpan(0, end), ref cursor)) : 0;
             if ((flags & 2) != 0) _ = ReadVint(plaintext.AsSpan(0, end), ref cursor);
             int extraStart = checked(end - extra);
-            if (extraStart < cursor) throw Invalid("RAR5 扩展区长度不合法。");
+            if (extraStart < cursor) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.07"));
             cursor = extraStart;
             RarCryptoRecord result = new(false, false, [], 0);
             while (cursor < end)
             {
                 int size = checked((int)ReadVint(plaintext.AsSpan(0, end), ref cursor));
                 int recordEnd = checked(cursor + size);
-                if (size < 1 || recordEnd > end) throw Invalid("RAR5 扩展记录长度不合法。");
+                if (size < 1 || recordEnd > end) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.08"));
                 ulong recordType = ReadVint(plaintext.AsSpan(0, recordEnd), ref cursor);
                 if (recordType == 1)
                 {
-                    if (result.Encrypted) throw Invalid("重复 RAR5 文件加密记录。");
+                    if (result.Encrypted) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.09"));
                     ulong version = ReadVint(plaintext.AsSpan(0, recordEnd), ref cursor);
                     ulong cryptoFlags = ReadVint(plaintext.AsSpan(0, recordEnd), ref cursor);
                     if (version != 0 || (cryptoFlags & ~3UL) != 0)
-                        throw Unsupported("RAR5 文件加密版本或标志不受支持。");
+                        throw Unsupported(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.10"));
                     int required = (cryptoFlags & 1) != 0 ? 45 : 33;
-                    if (recordEnd - cursor != required) throw Invalid("RAR5 文件加密记录尺寸不合法。");
+                    if (recordEnd - cursor != required) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadRar5Crypto.11"));
                     int log2 = plaintext[cursor++];
                     byte[] salt = plaintext.AsSpan(cursor, 16).ToArray();
                     result = new(true, (cryptoFlags & 2) != 0, salt, log2);
@@ -595,13 +596,13 @@ internal static class RarIntegrityReflection
         ulong value = 0;
         for (int shift = 0; shift < 70; shift += 7)
         {
-            if ((uint)index >= (uint)data.Length) throw Invalid("RAR5 整数编码被截断。");
+            if ((uint)index >= (uint)data.Length) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadVint.01"));
             byte next = data[index++];
-            if (shift == 63 && next > 1) throw Invalid("RAR5 整数编码溢出。");
+            if (shift == 63 && next > 1) throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadVint.02"));
             value |= (ulong)(next & 0x7f) << shift;
             if ((next & 0x80) == 0) return value;
         }
-        throw Invalid("RAR5 整数编码超限。");
+        throw Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.ReadVint.03"));
     }
 }
 
@@ -617,7 +618,7 @@ internal sealed class RarMetadataStream(Stream source, long maximumBytes, Func<i
         set
         {
             token.ThrowIfCancellationRequested();
-            if (value < 0 || value > Length) throw RarIntegrityReflection.Invalid("RAR 数据区超出受控卷范围。");
+            if (value < 0 || value > Length) throw RarIntegrityReflection.Invalid(MessageText.Create("Backend.Core.ArchiveIntegrityRar.Position.01"));
             source.Position = value;
         }
     }
@@ -625,9 +626,9 @@ internal sealed class RarMetadataStream(Stream source, long maximumBytes, Func<i
     public override int Read(Span<byte> buffer)
     {
         token.ThrowIfCancellationRequested();
-        if (buffer.Length > maximumBytes) throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 单次元数据读取超出预算。");
+        if (buffer.Length > maximumBytes) throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveIntegrityRar.Read.01"));
         int read = source.Read(buffer);
-        if (account(read) > maximumBytes) throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, "RAR 元数据读取总量超出预算。");
+        if (account(read) > maximumBytes) throw new ArchiveVolumeException(ArchiveVolumeStatus.LimitExceeded, MessageText.Create("Backend.Core.ArchiveIntegrityRar.Read.02"));
         return read;
     }
     public override int ReadByte()

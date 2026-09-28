@@ -1,9 +1,31 @@
+using SteamSentinel.Core.Reporting;
 using System.Buffers.Binary;
 using System.Text;
 
 namespace SteamSentinel.Core.Inspection;
 
-public sealed record ShortcutInspection(string? Target, string? Arguments, string? WorkingDirectory, bool Complete, string Detail);
+[method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record ShortcutInspection(string? Target, string? Arguments, string? WorkingDirectory, bool Complete, string Detail)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SteamSentinel.Core.Reporting.MessageText DetailText
+    {
+        get => new(Detail ?? string.Empty, DetailMessage);
+        init
+        {
+            Detail = value.OriginalText;
+            DetailMessage = value.Message;
+        }
+    }
+
+    public ShortcutInspection(string? Target, string? Arguments, string? WorkingDirectory, bool Complete, SteamSentinel.Core.Reporting.MessageText Detail) : this(Target, Arguments, WorkingDirectory, Complete, Detail.OriginalText)
+    {
+        DetailMessage = Detail.Message;
+    }
+}
 
 /// <summary>MS-SHLLINK bytes only. No Shell COM resolution, icon lookup or network access.</summary>
 public static class ShortcutInspector
@@ -14,7 +36,7 @@ public static class ShortcutInspector
         {
             if (data.Length < 76 || data.Length > 1024 * 1024 || U32(data, 0) != 76 ||
                 !data.Slice(4, 16).SequenceEqual(new Guid("00021401-0000-0000-c000-000000000046").ToByteArray()))
-                throw new InvalidDataException("快捷方式头无效或超过上限");
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.ShortcutInspector.Inspect.01"), sourceText => new InvalidDataException(sourceText));
             uint flags = U32(data, 20);
             int position = 76;
             bool complete = (flags & 1) == 0;
@@ -25,7 +47,7 @@ public static class ShortcutInspector
                 int size = checked((int)U32(data, position));
                 ReadOnlySpan<byte> info = data.Slice(position, size);
                 int header = checked((int)U32(info, 4));
-                if (header < 28 || header > size) throw new InvalidDataException("LinkInfo 头无效");
+                if (header < 28 || header > size) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ShortcutInspector.Inspect.02"), sourceText => new InvalidDataException(sourceText));
                 uint infoFlags = U32(info, 8);
                 if ((infoFlags & 1) != 0)
                 {
@@ -58,10 +80,10 @@ public static class ShortcutInspector
             if ((flags & 0x02000000) != 0 || position + 4 < data.Length && U32(data, position) != 0) complete = false;
             if (string.IsNullOrWhiteSpace(target) || target.StartsWith("\\\\", StringComparison.Ordinal)) complete = false;
             return new(target, arguments, working, complete,
-                complete ? "已读取目标、参数和工作目录，未启动或解析目标" : "已读取可用字段，网络、IDList 或扩展块未解析，未访问目标");
+                complete ? MessageText.Create("Backend.Core.ShortcutInspector.Inspect.03") : MessageText.Create("Backend.Core.ShortcutInspector.Inspect.04"));
         }
         catch (Exception ex) when (ex is ArgumentOutOfRangeException or OverflowException or InvalidDataException)
-        { return new(null, null, null, false, ex.Message); }
+        { return new(null, null, null, false, MessageExceptions.Describe(ex)); }
     }
 
     private static uint U32(ReadOnlySpan<byte> data, int offset) => BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
@@ -71,7 +93,7 @@ public static class ShortcutInspector
         if (offset == 0) return "";
         int end = offset, stride = unicode ? 2 : 1;
         while (end + stride <= data.Length && (data[end] != 0 || unicode && data[end + 1] != 0)) end += stride;
-        if (end + stride > data.Length) throw new InvalidDataException("快捷方式字符串未终止");
+        if (end + stride > data.Length) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ShortcutInspector.ZString.01"), sourceText => new InvalidDataException(sourceText));
         return (unicode ? Encoding.Unicode : Encoding.Latin1).GetString(data.Slice(offset, end - offset));
     }
 }
