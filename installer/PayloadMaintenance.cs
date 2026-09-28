@@ -14,8 +14,12 @@ public sealed class MaintenanceException : IOException
     public string Code { get; private set; }
     public string RelativePath { get; private set; }
     public string[] Operations { get; internal set; }
-    public MaintenanceException(string code, string path) : base(code + ": " + path)
+    public MaintenanceException(string code, string path) : this(code, path, null) { }
+    public MaintenanceException(string code, string path, string detail) : base(code + ": " + path +
+        (String.IsNullOrEmpty(detail) ? "" : "; " + Bound(detail)))
     { Code = code; RelativePath = path; Operations = new string[0]; }
+    static string Bound(string text)
+    { return text.Substring(0, Math.Min(text.Length, 2048)).Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' '); }
 }
 
 public sealed class LegacyEntry
@@ -34,7 +38,11 @@ public static class SteamSentinelPayloadMaintenance
         new LegacyEntry("mscordaccore_amd64_amd64_10.0.1126.37416.dll", 1356632,
             "C1B92DA5356BB36F4AB55AA54B2D25A8A27518CF7A456EB4957DDFE94E2D428C"),
         new LegacyEntry("SIGNER.cer", 1022,
-            "927392458711531A02B5DDF3AE170C79059EFCBBEE90AD3A453EFE939B2C2255")
+            "927392458711531A02B5DDF3AE170C79059EFCBBEE90AD3A453EFE939B2C2255"),
+        new LegacyEntry(@"Assets\App.ico", 156459,
+            "162F9AC661707279CAE17A8DD86348BE71486989DE4917FFE238BE3DF404837A"),
+        new LegacyEntry(@"Assets\App.png", 1317522,
+            "7B72DC146BF3D958C89B8106AE8F1894A8AA07CC896E11D54355A026A0FBCF1C")
     };
     static readonly string[] Trusted = { "S-1-5-18", "S-1-5-32-544",
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464" };
@@ -172,13 +180,72 @@ public static class SteamSentinelPayloadMaintenance
         }
         return text;
     }
-    static string FullLocal(string path)
+    static MaintenanceException PathFailure(string code, string role, string input, string component, string final, int error)
     {
-        if (String.IsNullOrEmpty(path) || path.Length < 3 || !Char.IsLetter(path[0]) || path[1] != ':' || path[2] != '\\' || path.IndexOf('/', 0) >= 0 || path.IndexOf(':', 2) >= 0)
-            throw new MaintenanceException("UnsafePath", "");
-        string full = System.IO.Path.GetFullPath(path).TrimEnd('\\');
-        if (!String.Equals(full, path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) throw new MaintenanceException("UnsafePath", "");
-        return full;
+        return new MaintenanceException(code, role, "Stage=NormalizePath; Input=" + input +
+            "; Component=" + component + "; Final=" + final + "; Win32=" + error);
+    }
+    static string FullLocal(string path, string role = "<path>")
+    {
+        // Validate before any Windows normalization: neither dot segments, device names nor
+        // alternate streams become acceptable just because Win32 can resolve them.
+        if (String.IsNullOrEmpty(path) || path.Length < 3 || path.Length >= 32760 ||
+            !((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) ||
+            path[1] != ':' || path[2] != '\\' || path.IndexOf('/') >= 0 || path.IndexOf(':', 2) >= 0)
+            throw PathFailure("UnsafePath", role, path, "<syntax>", "", 0);
+        string text = path.Length > 3 && path.EndsWith("\\", StringComparison.Ordinal) ? path.Substring(0, path.Length - 1) : path;
+        string[] parts = text.Length == 3 ? new string[0] : text.Substring(3).Split('\\');
+        foreach (string part in parts) {
+            if (part.Length == 0 || part == "." || part == ".." || part.EndsWith(".", StringComparison.Ordinal) || part.EndsWith(" ", StringComparison.Ordinal))
+                throw PathFailure("UnsafePath", role, path, part, "", 0);
+            foreach (char c in part) if (c < 32 || "<>:\"|?*".IndexOf(c) >= 0)
+                throw PathFailure("UnsafePath", role, path, part, "", 0);
+            string stem = part.Split('.')[0].ToUpperInvariant();
+            if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" ||
+                (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal) || stem.StartsWith("LPT", StringComparison.Ordinal)) &&
+                ((stem[3] >= '0' && stem[3] <= '9') || "\u00b9\u00b2\u00b3".IndexOf(stem[3]) >= 0)))
+                throw PathFailure("UnsafePath", role, path, part, "", 0);
+        }
+        // Resolve each name through a real handle with OPEN_REPARSE_POINT. Every existing
+        // parent stays pinned against rename until resolution finishes. A short alias is
+        // accepted only for an ordinary direct child of that same physical parent.
+        string current = text.Substring(0, 3);
+        List<SafeFileHandle> pins = new List<SafeFileHandle>();
+        try {
+            for (int index = -1; index < parts.Length; index++) {
+                string candidate = index < 0 ? current : System.IO.Path.Combine(current, parts[index]);
+                SafeFileHandle handle = CreateFile(candidate, ReadAttributes, 3, IntPtr.Zero, OpenExisting,
+                    OpenReparsePoint | BackupSemantics, IntPtr.Zero);
+                if (handle.IsInvalid) {
+                    int error = Marshal.GetLastWin32Error(); handle.Dispose();
+                    if (index >= 0 && (error == 2 || error == 3)) {
+                        // Fresh installation: only a syntactically valid missing suffix may
+                        // remain. RunCore still pins/checks the existing installation parent.
+                        for (; index < parts.Length; index++) current = System.IO.Path.Combine(current, parts[index]);
+                        return current;
+                    }
+                    throw PathFailure(error == 32 || error == 33 ? "FileBusy" : "AccessDenied", role, path, candidate, "", error);
+                }
+                pins.Add(handle);
+                FileInfoNative info;
+                if (!GetFileInformationByHandle(handle, out info))
+                    throw PathFailure("UnsafePath", role, path, candidate, "", Marshal.GetLastWin32Error());
+                bool directory = (info.Attributes & DirectoryAttribute) != 0;
+                if ((info.Attributes & ReparseAttribute) != 0 || (!directory && (index < parts.Length - 1 || info.Links != 1)))
+                    throw PathFailure("UnsafePath", role, path, candidate, "", 0);
+                StringBuilder final = new StringBuilder(32768);
+                uint count = GetFinalPathNameByHandle(handle, final, (uint)final.Capacity, 0);
+                if (count == 0 || count >= final.Capacity || !final.ToString().StartsWith(@"\\?\", StringComparison.Ordinal))
+                    throw PathFailure("UnsafePath", role, path, candidate, final.ToString(), Marshal.GetLastWin32Error());
+                string resolved = final.ToString().Substring(4);
+                string expectedParent = index < 0 ? current : current.TrimEnd('\\');
+                string actualParent = index < 0 ? resolved : (System.IO.Path.GetDirectoryName(resolved) ?? "").TrimEnd('\\');
+                if (!String.Equals(expectedParent, actualParent, StringComparison.OrdinalIgnoreCase))
+                    throw PathFailure("UnsafePath", role, path, candidate, resolved, 0);
+                current = resolved;
+            }
+            return current;
+        } finally { for (int i = pins.Count - 1; i >= 0; i--) pins[i].Dispose(); }
     }
     static void PinAncestors(string directory, List<HeldFile> held, string[] trusted, bool checkAcl)
     {
@@ -192,7 +259,7 @@ public static class SteamSentinelPayloadMaintenance
     static Dictionary<string, string> LoadManifest(string path, string expectedHash, string[] inputTrust)
     {
         if (!IsHash(expectedHash)) throw new MaintenanceException("InvalidManifest", "");
-        path = FullLocal(path); List<HeldFile> parents = new List<HeldFile>();
+        path = FullLocal(path, "<incoming-manifest-path>"); List<HeldFile> parents = new List<HeldFile>();
         try {
         PinAncestors(System.IO.Path.GetDirectoryName(path), parents, inputTrust, false);
         using (HeldFile input = new HeldFile(path, "<incoming-manifest>", false, false, false, inputTrust)) {
@@ -233,18 +300,19 @@ public static class SteamSentinelPayloadMaintenance
     public static string[] RunForTest(string mode, string root, string incomingManifestPath, string expectedManifestSha256,
         LegacyEntry[] approvedCatalog, Action beforeRetireRecheck)
     {
-        string full = FullLocal(root), temp = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()).TrimEnd('\\') + "\\";
+        string full = FullLocal(root, "<test-root>"), temp = FullLocal(System.IO.Path.GetTempPath(), "<test-temp>").TrimEnd('\\') + "\\";
         if (!full.StartsWith(temp, StringComparison.OrdinalIgnoreCase) || full.Length <= temp.Length) throw new MaintenanceException("UnsafePath", "<test-root>");
         List<string> trust = new List<string>(Trusted); trust.Add(WindowsIdentity.GetCurrent().User.Value);
         return RunCore(mode, full, incomingManifestPath, expectedManifestSha256, approvedCatalog, trust.ToArray(), beforeRetireRecheck);
     }
+    public static LegacyEntry[] GetCatalogForTest() { return (LegacyEntry[])Catalog.Clone(); }
 #endif
 
     static string[] RunCore(string mode, string root, string manifestPath, string manifestHash,
         LegacyEntry[] catalog, string[] trusted, Action beforeRetireRecheck)
     {
         if (mode != "Preflight" && mode != "Retire" && mode != "Verify") throw new MaintenanceException("InvalidManifest", "<mode>");
-        root = FullLocal(root);
+        root = FullLocal(root, "<installation-path>");
         List<string> inputTrust = new List<string>(Trusted); inputTrust.Add(WindowsIdentity.GetCurrent().User.Value);
         Dictionary<string, string> manifest = LoadManifest(manifestPath, manifestHash, inputTrust.ToArray());
         Dictionary<string, LegacyEntry> legacy = new Dictionary<string, LegacyEntry>(StringComparer.OrdinalIgnoreCase);

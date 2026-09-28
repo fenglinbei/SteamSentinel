@@ -13,6 +13,15 @@ $parameters.CompilerOptions='/define:STEAMSENTINEL_INSTALLER_TESTS'
 $parameters.GenerateInMemory=$true
 foreach($assembly in @('System.dll','System.Core.dll')){$null=$parameters.ReferencedAssemblies.Add($assembly)}
 Add-Type -TypeDefinition ([IO.File]::ReadAllText($source)) -CompilerParameters $parameters
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class InstallerShortPathTests {
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+ public static extern uint GetShortPathName(string input, StringBuilder output, uint length);
+}
+'@
 $started=[DateTime]::UtcNow;$clock=[Diagnostics.Stopwatch]::StartNew()
 $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('SteamSentinel-InstallerTests-'+[guid]::NewGuid().ToString('N'))
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -21,6 +30,7 @@ $security.SetOwner($identity);$security.SetAccessRuleProtection($true,$false)
 foreach($sid in @($identity.Value,'S-1-5-18','S-1-5-32-544')|Select-Object -Unique){$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),[Security.AccessControl.FileSystemRights]::FullControl,([Security.AccessControl.InheritanceFlags]::ContainerInherit-bor[Security.AccessControl.InheritanceFlags]::ObjectInherit),[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))}
 [IO.Directory]::CreateDirectory($fixtureRoot,$security)|Out-Null
 $results=New-Object 'Collections.Generic.List[object]'
+$shortPathExamples=New-Object 'Collections.Generic.List[object]'
 function Check([bool]$Condition,[string]$Message){if(-not$Condition){throw $Message}}
 function Hash([string]$Path){return(Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash}
 function Bytes([string]$Value){return,[Text.Encoding]::UTF8.GetBytes($Value)}
@@ -50,7 +60,88 @@ function Test([string]$Name,[scriptblock]$Body){
 }
 function AddUsersWrite([string]$Path){$acl=Get-Acl -LiteralPath $Path;$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),[Security.AccessControl.FileSystemRights]::Write,[Security.AccessControl.AccessControlType]::Allow));Set-Acl -LiteralPath $Path -AclObject $acl}
 function AssertUnchanged([string]$Path,[string]$Expected){Check (Test-Path -LiteralPath $Path -PathType Leaf) 'Preserved file was removed.';Check ((Hash $Path)-eq$Expected) 'Preserved file content changed.'}
+function RealShortPath([string]$Path){
+ $buffer=[Text.StringBuilder]::new(32768);$n=[InstallerShortPathTests]::GetShortPathName($Path,$buffer,[uint32]$buffer.Capacity)
+ Check ($n-gt0-and$n-lt$buffer.Capacity) 'GetShortPathName failed.';$short=$buffer.ToString()
+ Check ($short-match'\\[^\\]*~[^\\]*') 'Fixture has no real 8.3 alias; this coverage must not be skipped.'
+ $shortPathExamples.Add([pscustomobject]@{input=$Path;short=$short});return $short
+}
+function AddHistoricalImages($Fixture){
+ $Fixture.catalog=[SteamSentinelPayloadMaintenance]::GetCatalogForTest()
+ foreach($name in @('App.ico','App.png')){
+  $p=Join-Path $Fixture.root ('Assets\'+$name);$original=Join-Path (Split-Path $PSScriptRoot -Parent) ('SteamSentinel.App\Assets\'+$name)
+  WriteBytes $p ([IO.File]::ReadAllBytes($original))
+  $entry=@($Fixture.catalog|Where-Object{$_.RelativePath-ceq('Assets\'+$name)})
+  Check ($entry.Count-eq1-and$entry[0].Bytes-eq(Get-Item -LiteralPath $p).Length-and$entry[0].Sha256-ceq(Hash $p)) 'Historical image differs from the production catalog.'
+ }
+}
 try{
+ Test 'A real short incoming manifest path passes all three phases' {
+  $f=Fixture 'short-manifest';$f.manifest=RealShortPath $f.manifest
+  foreach($mode in @('Preflight','Retire','Verify')){$null=RunCore $f $mode}
+ }
+ Test 'A real short installation path retires only approved bytes and verifies' {
+  $f=Fixture 'short-root';$old=AddLegacy $f;$h=Hash (Join-Path $f.root 'current.dll');$f.root=RealShortPath $f.root
+  $null=RunCore $f 'Preflight';Check (Test-Path -LiteralPath $old) 'Preflight removed old bytes.';$null=RunCore $f 'Retire'
+  Check (-not(Test-Path -LiteralPath $old)) 'Approved old bytes remain.';AssertUnchanged (Join-Path $f.root 'current.dll') $h;$null=RunCore $f 'Verify'
+ }
+ Test 'A missing installation leaf below a real short parent passes preflight only' {
+  $f=Fixture 'short-fresh';$f.root=Join-Path (RealShortPath $f.base) 'not-installed';$f.manifest=RealShortPath $f.manifest
+  $null=RunCore $f 'Preflight';Check (-not(Test-Path -LiteralPath $f.root)) 'Preflight created an installation.';$null=Reject {RunCore $f 'Retire'} @('InstallationMissing')
+ }
+ Test 'A real short TEMP is accepted by the bounded test entry point' {
+  $savedTemp=$env:TEMP;$savedTmp=$env:TMP
+  try{$short=RealShortPath $fixtureRoot;$env:TEMP=$short;$env:TMP=$short;$f=Fixture 'short-temp';$null=RunCore $f 'Verify'}finally{$env:TEMP=$savedTemp;$env:TMP=$savedTmp}
+ }
+ Test 'A short manifest alias through a junction is rejected without touching its target' {
+  $f=Fixture 'short-manifest-junction';$link=Join-Path $f.base 'redirected-directory';New-Item -ItemType Junction -Path $link -Target (Join-Path $f.root 'docs')|Out-Null
+  $target=Join-Path $f.root 'docs\guide.txt';$h=Hash $target;$f.manifest=Join-Path (RealShortPath $link) 'guide.txt';$null=Reject {RunCore $f 'Preflight'} @('UnsafePath');AssertUnchanged $target $h
+ }
+ Test 'A short installation-root junction is rejected before retirement' {
+  $f=Fixture 'short-root-junction';$old=AddLegacy $f;$h=Hash $old;$link=Join-Path $f.base 'redirected-installation';New-Item -ItemType Junction -Path $link -Target $f.root|Out-Null
+  $f.root=RealShortPath $link;$null=Reject {RunCore $f 'Retire'} @('UnsafePath');AssertUnchanged $old $h
+ }
+ Test 'A short junction ancestor cannot conceal a missing fresh-install leaf' {
+  $f=Fixture 'short-parent-junction';$link=Join-Path $f.base 'redirected-parent';New-Item -ItemType Junction -Path $link -Target $f.root|Out-Null
+  $f.root=Join-Path (RealShortPath $link) 'missing-leaf';$null=Reject {RunCore $f 'Preflight'} @('UnsafePath');Check (-not(Test-Path -LiteralPath $f.root)) 'Rejected preflight created a target.'
+ }
+ Test 'A hard-linked incoming manifest remains rejected through its short alias' {
+  $f=Fixture 'short-hardlink';$h=Hash $f.manifest;$link=Join-Path $f.base 'linked-manifest.txt';New-Item -ItemType HardLink -Path $link -Target $f.manifest|Out-Null
+  $f.manifest=RealShortPath $link;$null=Reject {RunCore $f 'Preflight'} @('UnsafePath');AssertUnchanged $link $h
+ }
+ foreach($suffix in @('..\incoming.txt','.\incoming.txt','incoming.txt:stream','incoming.txt.','incoming.txt ','CON.txt','COM1.txt','a\\incoming.txt','a/incoming.txt')){
+  $badSuffix=$suffix
+  Test ('Absolute manifest syntax is rejected before normalization: '+$badSuffix) {
+   $f=Fixture ('bad-absolute-'+[guid]::NewGuid().ToString('N'));$f.manifest=$f.base+'\'+$badSuffix
+   try{$null=RunCore $f 'Preflight';throw 'Unsafe syntax was accepted.'}catch{
+    $e=$_.Exception;while($null-ne$e-and$e.GetType().Name-ne'MaintenanceException'){$e=$e.InnerException}
+    Check ($null-ne$e-and$e.Code-eq'UnsafePath'-and$e.RelativePath-eq'<incoming-manifest-path>') 'Missing path-specific rejection.'
+    Check ($e.Message.Contains('Stage=NormalizePath; Input=')-and$e.Message.Contains($f.base)-and$e.Message.Length-le2300) 'Missing or unbounded normalization diagnostic.'
+   }
+  }
+ }
+ Test 'UNC and device manifest paths remain rejected' {
+  $f=Fixture 'non-dos-paths';foreach($bad in @('\\localhost\c$\incoming.txt','\\?\C:\incoming.txt','\\.\C:\incoming.txt','C:incoming.txt')){$f.manifest=$bad;$null=Reject {RunCore $f 'Preflight'} @('UnsafePath')}
+ }
+ Test 'Production catalog retires the two byte-exact historical images' {
+  $f=Fixture 'historical-images';AddHistoricalImages $f;$h=Hash (Join-Path $f.root 'current.dll');$null=RunCore $f 'Preflight'
+  Check ((Test-Path -LiteralPath (Join-Path $f.root 'Assets\App.ico'))-and(Test-Path -LiteralPath (Join-Path $f.root 'Assets\App.png'))) 'Preflight removed images.'
+  $null=RunCore $f 'Retire';Check (-not(Test-Path -LiteralPath (Join-Path $f.root 'Assets\App.ico'))-and-not(Test-Path -LiteralPath (Join-Path $f.root 'Assets\App.png'))) 'Historical images remain.'
+  AssertUnchanged (Join-Path $f.root 'current.dll') $h;$null=RunCore $f 'Verify'
+ }
+ Test 'A modified historical image preserves both old image files' {
+  $f=Fixture 'historical-image-tamper';AddHistoricalImages $f;$a=Join-Path $f.root 'Assets\App.ico';$ah=Hash $a;$b=Join-Path $f.root 'Assets\App.png';[IO.File]::AppendAllText($b,'tamper');$bh=Hash $b
+  $null=Reject {RunCore $f 'Retire'} @('LegacyContentMismatch');AssertUnchanged $a $ah;AssertUnchanged $b $bh
+ }
+ Test 'An unknown historical image name prevents any image retirement' {
+  $f=Fixture 'historical-image-unknown';AddHistoricalImages $f;$a=Join-Path $f.root 'Assets\App.ico';$ah=Hash $a;$extra=Join-Path $f.root 'Assets\Other.png';WriteBytes $extra (Bytes 'unreviewed image');$h=Hash $extra
+  $null=Reject {RunCore $f 'Retire'} @('UnknownFile');AssertUnchanged $a $ah;AssertUnchanged $extra $h
+ }
+ Test 'A historical image included in the incoming manifest is not retired' {
+  $f=Fixture 'historical-image-current';AddHistoricalImages $f
+  foreach($name in @('App.ico','App.png')){[IO.File]::AppendAllText($f.manifest,(Hash (Join-Path $f.root ('Assets\'+$name)))+' *Assets\'+$name+"`r`n",[Text.UTF8Encoding]::new($false))}
+  $f.manifestHash=Hash $f.manifest;[IO.File]::Copy($f.manifest,(Join-Path $f.root 'SHA256SUMS.txt'),$true);$null=RunCore $f 'Retire';$null=RunCore $f 'Verify'
+ }
  Test 'Fresh preflight neither creates an installation nor allows retirement before install' {
   $f=Fixture 'fresh';$f.root=Join-Path $f.base 'not-installed';$null=RunCore $f 'Preflight';Check (-not(Test-Path -LiteralPath $f.root)) 'Preflight created the install root.';$null=Reject {RunCore $f 'Retire'} @('InstallationMissing');$null=Reject {RunCore $f 'Verify'} @('InstallationMissing')
  }
@@ -163,7 +254,7 @@ try{
  }
 }finally{
  $clock.Stop();$failed=@($results.ToArray()|Where-Object{-not$_.passed}).Count;$passed=$results.Count-$failed
- $report=[ordered]@{schema='SteamSentinel.InstallerPayloadMaintenanceTests/1';startedUtc=$started.ToString('o');completedUtc=[DateTime]::UtcNow.ToString('o');passed=$passed;failed=$failed;skipped=0;elapsedMs=$clock.ElapsedMilliseconds;sourcePath=$source;sourceSha256=$sourceHash;testScriptSha256=(Hash $PSCommandPath);powershell=$PSVersionTable.PSVersion.ToString();fixtureRoot=$fixtureRoot;fixturesPreserved=$true;productionRootTouched=$false;vmOperated=$false;testOnlyCompilationSymbol='STEAMSENTINEL_INSTALLER_TESTS';tests=$results.ToArray()}
+ $report=[ordered]@{schema='SteamSentinel.InstallerPayloadMaintenanceTests/1';startedUtc=$started.ToString('o');completedUtc=[DateTime]::UtcNow.ToString('o');passed=$passed;failed=$failed;skipped=0;elapsedMs=$clock.ElapsedMilliseconds;sourcePath=$source;sourceSha256=$sourceHash;testScriptSha256=(Hash $PSCommandPath);powershell=$PSVersionTable.PSVersion.ToString();fixtureRoot=$fixtureRoot;fixturesPreserved=$true;productionRootTouched=$false;vmOperated=$false;testOnlyCompilationSymbol='STEAMSENTINEL_INSTALLER_TESTS';shortPathExamples=$shortPathExamples.ToArray();tests=$results.ToArray()}
  $json=$report|ConvertTo-Json -Depth 8;$enc=[Text.UTF8Encoding]::new($true);$data=$enc.GetPreamble()+$enc.GetBytes($json);$stream=[IO.File]::Open($ResultsPath,'CreateNew','Write','Read');try{$stream.Write($data,0,$data.Length);$stream.Flush($true)}finally{$stream.Dispose()}
  Write-Host ('Passed '+$passed+', failed '+$failed+', skipped 0. Results: '+$ResultsPath)
 }

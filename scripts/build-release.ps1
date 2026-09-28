@@ -350,7 +350,7 @@ try {
         if ($null -eq $installerTests.PSObject.Properties[$field]) { throw "Installer test result missing $field." }
     }
     if ($installerTests.schema -ne 'SteamSentinel.InstallerPayloadMaintenanceTests/1' -or
-        [int]$installerTests.passed -lt 34 -or [int]$installerTests.failed -ne 0 -or [int]$installerTests.skipped -ne 0 -or
+        [int]$installerTests.passed -lt 56 -or [int]$installerTests.failed -ne 0 -or [int]$installerTests.skipped -ne 0 -or
         [long]$installerTests.elapsedMs -lt 0 -or @($installerTests.tests).Count -ne [int]$installerTests.passed -or
         @($installerTests.tests | Where-Object { $_.passed -ne $true }).Count -ne 0 -or
         $installerTests.sourceSha256 -ne $installerTestSourceHash -or $installerTests.testScriptSha256 -ne $installerTestScriptHash -or

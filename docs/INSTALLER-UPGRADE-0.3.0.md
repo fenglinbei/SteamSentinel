@@ -10,6 +10,16 @@ The embedded retirement catalog contains exactly:
 |---|---:|---|
 | `mscordaccore_amd64_amd64_10.0.1126.37416.dll` | 1356632 | `C1B92DA5356BB36F4AB55AA54B2D25A8A27518CF7A456EB4957DDFE94E2D428C` |
 | `SIGNER.cer` | 1022 | `927392458711531A02B5DDF3AE170C79059EFCBBEE90AD3A453EFE939B2C2255` |
+| `Assets\App.ico` | 156459 | `162F9AC661707279CAE17A8DD86348BE71486989DE4917FFE238BE3DF404837A` |
+| `Assets\App.png` | 1317522 | `7B72DC146BF3D958C89B8106AE8F1894A8AA07CC896E11D54355A026A0FBCF1C` |
+
+后两项来自已经核验的早期 0.3.0 候选 `5ef39e8d6cef`，内容与现行包 `SteamSentinel.App\Assets` 中对应资源一致；只覆盖表中旧位置和精确内容，不按文件名或扩展名批量清理。
+
+The last two entries cover the verified older resource layout from early 0.3.0 candidate `5ef39e8d6cef`. Their bytes match the resources now under `SteamSentinel.App\Assets`. Only the listed old paths and exact content qualify, never a filename or extension wildcard.
+
+合法 Windows 8.3 短名称（例如 `ADMINI~1`）按逐级打开的真实文件句柄解析为完整路径。解析期间固定父目录并拒绝重解析点；每一级最终路径必须仍是同一父目录的直接子项。绝对本地路径语法先行检查，拒绝 `.`/`..`、设备路径、ADS 和含混尾点/空格。新安装仅允许语法有效的缺失后缀，已有父目录仍接受原权限及路径检查。后续文件核验和移除前复核保持不变。解析失败的日志包含路径用途、阶段、输入、当前组件和实际路径，不再只返回空路径。
+
+Valid Windows 8.3 aliases, such as `ADMINI~1`, are resolved through real handles one component at a time. Parents remain pinned during resolution, reparse points are refused, and each resolved component must remain a direct child of the same parent. Local absolute-path syntax is checked first: dot segments, device paths, alternate streams and ambiguous trailing dots/spaces are refused. A fresh install may have a valid missing suffix; existing parents still undergo the original permission and path checks. Subsequent verification and pre-retirement rechecks remain in force. Resolution errors identify the path role, stage, input, component and resolved path instead of an empty path.
 
 新包内的文件清单和维护组件由安装器编译时的 SHA256 绑定。旧的本地清单不授予删除权限。若新包包含 `SIGNER.cer`，按普通新文件替换、校验，不能被旧证书清理规则移除。未知旧文件或内容不符的同名文件保留原件并阻止升级，需复核后重试。不得建议用户搬动文件来绕过检查。
 
@@ -23,9 +33,9 @@ The production entry point fixes the application directory under Program Files a
 
 This is the maintenance component's boundary, not a promise that merged historical uninstall logs preserve empty directories. After a 0.2.0 upgrade, the official uninstaller may remove empty machine-state directories recorded by the old installation. Verify directories/ACLs separately from user records; preserving records does not imply all historical empty directories remain unchanged. Maintenance does not automatically recreate them or change their permissions.
 
-早于 0.1.17 的 17 个平铺说明文件不再按名称直接删除。没有审定内容哈希时，它们也属于需人工复核的未知旧文件。本轮自动清理覆盖已经验真的两套 0.2.0 验收基线，不声称覆盖所有未知旧构建。增加兼容项必须另行核实并扩展内置清单。机器状态权限由下面的独立初始化流程处理，不属于旧文件清理目录。
+早于 0.1.17 的 17 个平铺说明文件不再按名称直接删除。没有审定内容哈希时，它们也属于需人工复核的未知旧文件。本轮自动清理覆盖已经验真的两套 0.2.0 验收基线及上表精确限定的早期 0.3.0 资源，不声称覆盖所有未知旧构建。增加兼容项必须另行核实并扩展内置清单。机器状态权限由下面的独立初始化流程处理，不属于旧文件清理目录。
 
-The former filename-only deletion of 17 pre-0.1.17 documentation files has been removed. Without approved historical content hashes, those files also require review. The current catalog covers the two verified 0.2.0 acceptance inputs; it does not claim universal historical-build compatibility. Additional entries require verified provenance. Machine-state permissions are handled separately as described below, outside the file-retirement catalog.
+The former filename-only deletion of 17 pre-0.1.17 documentation files has been removed. Without approved historical content hashes, those files also require review. The catalog covers the two verified 0.2.0 acceptance inputs and the exact early 0.3.0 resources listed above; it does not claim universal historical-build compatibility. Additional entries require verified provenance. Machine-state permissions are handled separately as described below, outside the file-retirement catalog.
 
 ## 旧版无数据状态目录 / Empty legacy state directories
 
