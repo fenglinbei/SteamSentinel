@@ -120,7 +120,7 @@ internal static partial class Program
             }, (request, _) => Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false)),
             new InlineProgress(progress =>
             {
-                if (progress.Stage != "压缩包目录") return;
+                if (progress.StageMessage?.MessageId != "Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.01") return;
                 triggered = true;
                 timeout.Cancel();
             }), timeout.Token);
@@ -196,7 +196,7 @@ internal static partial class Program
         {
             IProgress<ScanProgress> progress = new InlineProgress(p =>
             {
-                if (p.Stage != "压缩包扫描") return;
+                if (p.StageMessage?.MessageId != "Backend.Core.ContentScanner.ArchiveGraph.DecodeContainerAttemptAsync.01") return;
                 cancellationTriggered = true;
                 cancel.Cancel();
             });

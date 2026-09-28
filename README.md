@@ -2,19 +2,19 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，当前发布包为 2026-09-28 发布的 [v0.3.0-preview.2 自签名预发布版](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2)。已补齐 VPet 精确规则、有界家族解码、组件关系、Steam HTML/JS/CSS 检查、ZIP 中文名称绑定及中英文显示。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对目前观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，已于 2026-09-28 公开发布为 [v0.3.0-preview.3 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.3)，规则版本为 `2026.09.28.1`。下载以发行页实际可见的完整附件为准。
 
-本轮源码正在准备规则修正 3：通用字符串共现仅供复核，收紧由此派生的进程关联及旧报告处置资格，兼容 `.node` 原生模块，并把仅路径重合改为低风险观察。精确恶意哈希和专用强规则保持有效。修正原理与旧报告使用方式见 [中文说明](docs/FALSE-POSITIVE-CORRECTION-0.3.0.md) / [English](docs/FALSE-POSITIVE-CORRECTION-0.3.0.en.md)；下述修订 2 的证据不代替本轮新构建验收。
+规则修正 3 将通用字符串共现保留为中风险、仅供复核，不再据此隔离文件或终止宿主；同步收紧 MSI、快捷方式、运行历史及弱文件关联，兼容 `.node` 原生模块，并把仅历史路径重合改为低风险观察。精确恶意哈希、专用强规则、VPet 家族和独立配置证据继续按各自规则处理。旧报告和病例不重写，新计划会拒绝退役弱规则；请升级后重新扫描原范围。详见 [中文说明](docs/FALSE-POSITIVE-CORRECTION-0.3.0.md) / [English](docs/FALSE-POSITIVE-CORRECTION-0.3.0.en.md)。
 
-安装修订 2 修复合法 Windows 短路径导致的 `Code=UnsafePath; Path=; Mode=Preflight`，并补齐两份已验真旧图标的精确迁移。七个程序二进制与 preview.1 完全一致；**2,358 项完整回归**保留为同二进制基线，本修订未重复运行。新运行的安装维护 **56 项**、状态迁移 **43 项**均零失败、零跳过，并完成 Windows 10／11 的短路径升级、普通路径重装、531 个载荷文件核验、普通用户扫描／导出／取消及重启后复核。完整身份、证据分层和保留范围见 [0.3.0 发布状态与验收索引](docs/RELEASE-0.3.0.md)。
+产品及安装器已从干净源码提交 `67e507b744a88e072707ae3c6d2ebdf34f3e7429` 完整重编译。新原生完整自测 **2,469 项**、同提交 Windows CI **2,469 项**、安装维护 **56 项**、状态迁移 **43 项**分别通过，均零失败、零跳过；这些独立运行不相加。最终签名 Core 的旧 JSON 资格回放确认三份报告的三项退役弱规则全部不可处置，独立配置项仍保留资格，原证据包未改写。Windows 10／11、静态语料与重启验收：**两机各通过 164 项误报专项，完成升级、同版重装、535 项载荷核验、中英文启动探针、原三项扫描／导出与独立双语取消补验，以及一次重启复核；三份原始 ZIP 静态扫描保留 15 条预期强规则，覆盖为 Complete／Partial／Complete**。完整身份、已完成范围及保留项见 [0.3.0 发布状态与验收索引](docs/RELEASE-0.3.0.md)。
 
-本包已在 GitHub 公开发布为 **Pre-release**，使用 `CN=fenglinbei` 自签名证书，没有公共受信任证书链或时间戳，Windows 仍可能提示发布者不受信任。具体身份以包内 `VERSION.txt`、`SIGNING.txt` 及发行页的 `PUBLICATION-IDENTITY.json`、`RELEASE-METADATA.json` 为准。项目尚未完成外部安全审计；跨物理显示器测试暂停，旧版有条件迁移提示保留未目视检查的已接受缺口。早期感染恢复验收仍绑定原候选，不冒充本修订完整复测。
+本包使用 `CN=fenglinbei` 自签名证书，没有公共受信任证书链或时间戳，Windows 仍可能提示发布者不受信任。具体身份以包内 `VERSION.txt`、`SIGNING.txt` 及发行附件 `PUBLICATION-IDENTITY.json`、`RELEASE-METADATA.json` 为准。项目尚未完成外部安全审计；跨物理显示器测试暂停，旧版有条件迁移提示保留未目视检查的已接受缺口。preview.2 的 **2,358 项**旧二进制基线、安装短路径修复以及更早的感染恢复验收保留各自历史身份，不计为本轮重测。
 
 **当前暂停系统 AMSI 增强入口及实际调用**；缺少该增强项不会单独使基础扫描显示“扫描不完整”。历史报告保持原样，真正的读取、密码、格式或缺卷等检查缺口仍会显示。无需为基础扫描安装 Norton。
 
 [English quick start](docs/QUICKSTART.en.md) covers installation, language selection, results, remediation, reports and rollback.
 
-它的定位是：让不想临时安装 360、卡巴斯基等完整安全套件的用户，也能快速对当前电脑做一次 Steam 垂直场景检查和可回滚处置。启发式能力不会因为专业杀毒软件存在而关闭，但启发式发现默认不预选，必须由用户核对精确目标后才能隔离。
+它的定位是：让不想临时安装 360、卡巴斯基等完整安全套件的用户，也能快速对当前电脑做一次 Steam 垂直场景检查和可回滚处置。启发式能力不会因为专业杀毒软件存在而关闭，符合独立强证据及处置资格条件的启发式发现默认不预选，须由用户核对精确目标后确认；通用词语共现只供复核，不能选择隔离。
 
 ## 主要能力
 
@@ -53,11 +53,11 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 可在“代理与证书”页执行本机只读诊断，查看 8 个代理配置来源及当前用户／本机的物理 Root、CA 证书来源。结果会解释“待确认”“暂不支持”和“条件未满足”，不能选择处理的项目会保留原因和下一步；普通信息不计为未处理。诊断不连接外部地址、不修改配置，也不代表确认恶意或处理完成。范围和验证见 [第一批交付说明](docs/TRUST-PROXY-DIAGNOSTICS-PHASE1.md)。
 
-1. 从 [v0.3.0-preview.2 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.2)取得安装包，对照同页带版本前缀的 `RELEASE-SHA256.txt`、`PUBLICATION-IDENTITY.json` 及 `RELEASE-METADATA.json` 核对哈希和来源。当前包为自签名预发布版，程序保留原 `dirty Preview` 构建身份，来源关系见[发布索引](docs/RELEASE-0.3.0.md)。升级前退出旧版主程序和管理员窗口，使用完整安装包覆盖安装，不要只替换 EXE。遇到旧包的短路径 `UnsafePath` 错误时直接使用修订 2 重装，无需手动删除旧文件或放宽目录权限。
+1. 从 [v0.3.0-preview.3 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.3)取得完整安装包，对照带版本前缀的 `RELEASE-SHA256.txt`、`PUBLICATION-IDENTITY.json` 及 `RELEASE-METADATA.json` 核对哈希与来源。本轮为干净提交完整重编译的自签名预发布包，构建身份见[发布索引](docs/RELEASE-0.3.0.md)。升级前退出主程序和管理员窗口，不要只替换 EXE。早期安装器的短路径 `UnsafePath` 问题已在修订 2 修复，本包保留该修复；无需手动删除旧文件或放宽目录权限。
 2. 使用安装器安装到固定的 Program Files 目录。默认普通权限扫描，处置时自动请求 UAC，也可点击“打开管理员窗口”主动授权，不需要在快捷方式中手动配置。
 3. 首次使用先执行“快速扫描”，随后执行“完整工坊扫描”。单独收到的 MP4、压缩包或安装包可用“扫描文件/目录”。
 4. 检查结果顶部的覆盖状态。`Complete` 只表示已完成支持范围内的检查，`Partial` 不能当作“安全”。
-5. 已知恶意项会默认预选，启发式项保留可选处置能力但默认不选。核对判定类型、精确目标与哈希/目录指纹后再确认 UAC。
+5. 符合资格的已知恶意项会默认预选；具备独立强证据且符合资格的启发式项可手选，默认不选。通用共现等弱证据只供复核。核对判定类型、精确目标与哈希/目录指纹后再确认 UAC。
 6. 如果动作涉及 Steam 前端，请先完整退出 Steam。异常前端文件与 `steam.cfg` 被隔离后，重新启动 Steam 让官方客户端补全组件，若未自动补全，使用 Steam 官方安装包覆盖安装。
 7. 隔离后重启并再次完整扫描。需要恢复时使用“隔离与回滚”，永久删除前应先保留取证副本。
 
@@ -91,7 +91,7 @@ Broker 只接受 `%LOCALAPPDATA%\SteamSentinel\Plans` 下的短时 JSON 计划�
 - 用户计划、报告与 Low Integrity 临时区：`%LOCALAPPDATA%\SteamSentinel`、`%USERPROFILE%\AppData\LocalLow\SteamSentinel`
 - 管理员隔离区：`%PROGRAMDATA%\SteamSentinel\Quarantine`
 - 管理员结果区：`%PROGRAMDATA%\SteamSentinel\Results`
-- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.09.20.1`
+- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.09.28.1`
 
 ## 从源码构建
 
