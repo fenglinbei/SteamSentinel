@@ -15,6 +15,14 @@ namespace SteamSentinel.SelfTest;
 
 internal static partial class Program
 {
+    private static int AdaptiveTestCpuCapacity(int logicalProcessors)
+    {
+        // Production reserves one of each pair of logical processors, then uses
+        // only 1/2/4 slots. Keep real execution inside that CPU capacity.
+        int slots = Math.Max(1, logicalProcessors / 2);
+        return slots >= 4 ? 4 : slots >= 2 ? 2 : 1;
+    }
+
     private static async Task TestV030AdaptiveScanAsync(string root)
     {
         string directory = Path.Combine(root, "adaptive-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
@@ -51,6 +59,10 @@ internal static partial class Program
         Check("自适应 资源未知不允许估算通过", ScanResourcePlanner.Propose(initial, request, machine with { AvailableMemoryBytes = -1 }).Assessment == ResourceAssessmentKind.Unknown);
         Check("自适应 不足提交余量与物理内存分别检查", ScanResourcePlanner.Propose(initial, request with { LimitKey = "MaximumAmsiBytes", CurrentLimit = initial.MaximumAmsiBytes, RequiredMinimum = 64 * MiB }, machine with { CommitHeadroomBytes = MiB }).Assessment == ResourceAssessmentKind.Insufficient);
         Check("自适应 性能档为有界1/2/4且资源未知回1", ScanResourcePlanner.ParallelFiles(machine, ScanPerformanceMode.LowImpact) == 1 && ScanResourcePlanner.ParallelFiles(machine, ScanPerformanceMode.Automatic) == 2 && ScanResourcePlanner.ParallelFiles(machine, ScanPerformanceMode.HighThroughput) == 4 && ScanResourcePlanner.ParallelFiles(machine with { AvailableMemoryBytes = -1 }, ScanPerformanceMode.HighThroughput) == 1);
+        foreach (var (logicalProcessors, expectedCapacity) in new[] { (2, 1), (4, 2), (8, 4) })
+            Check($"自适应 模拟{logicalProcessors}逻辑CPU精确规划{expectedCapacity}路",
+                ScanResourcePlanner.ParallelFiles(machine with { LogicalProcessors = logicalProcessors }, ScanPerformanceMode.HighThroughput) == expectedCapacity &&
+                AdaptiveTestCpuCapacity(logicalProcessors) == expectedCapacity);
         Check("自适应 拒绝权限字段与降低磁盘预留", Rejects(() => ScanLimitAccess.Apply(initial, [new("UseAmsi", 0, 1)])) && Rejects(() => ScanLimitAccess.Apply(initial, [new("ContainerLimits.ReservedDiskBytes", 0, MiB)])));
         ScanOptions copied = ArchiveWorkerClient.CopyOptions(initial);
         ScanLimitAccess.Apply(copied, proposal.Changes);
@@ -185,9 +197,11 @@ internal static partial class Program
             typeof(ScanOptions).GetProperty(nameof(ScanOptions.MaximumParallelFiles))!.SetValue(concurrent, concurrency);
             typeof(ScanOptions).GetProperty(nameof(ScanOptions.PerformanceMode))!.SetValue(concurrent, ScanPerformanceMode.HighThroughput);
             ScanReport parallel = await new ScanCoordinator().RunAsync(concurrent);
+            int capacityCpu = AdaptiveTestCpuCapacity(parallel.ResourceAudit?.Preflight?.LogicalProcessors ?? Environment.ProcessorCount);
+            int expectedConcurrency = Math.Min(concurrency, capacityCpu);
             Check($"自适应 {concurrency}路结果、哈希、命中和覆盖等价", Semantics(serial) == Semantics(parallel));
             Check($"自适应 {concurrency}路共用工作账本且未重复读取", serial.Containers!.Resources.ReadBytes == parallel.Containers!.Resources.ReadBytes);
-            Check($"自适应 {concurrency}路实际启用且有界", parallel.ResourceAudit?.PeakParallelFiles == concurrency);
+            Check($"自适应 请求{concurrency}路按CPU容量实际启用{expectedConcurrency}路且有界", parallel.ResourceAudit?.PeakParallelFiles == expectedConcurrency);
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"parallel-{concurrency}.json"), parallel);
         }
         foreach (string boundary in new[] { "files", "work", "hash" })
@@ -236,7 +250,12 @@ internal static partial class Program
         });
         ScanReport parallelWorker = await new ArchiveWorkerClient(DevelopmentWorkerPath()).RunAsync(parallelWorkerOptions,
             (r, _) => Task.FromResult(new ArchivePasswordResponse(r.RequestId, true, null, false)), null, default);
-        Check("自适应 真实受限Worker仍可多路且结果等价", parallelWorker.ResourceAudit?.PeakParallelFiles is >= 2 and <= 4 && Semantics(serial) == Semantics(parallelWorker));
+        int workerCapacityCpu = AdaptiveTestCpuCapacity(parallelWorker.ResourceAudit?.Preflight?.LogicalProcessors ?? Environment.ProcessorCount);
+        int expectedWorkerConcurrency = Math.Min(parallelWorkerOptions.MaximumParallelFiles, workerCapacityCpu);
+        int workerPeak = parallelWorker.ResourceAudit?.PeakParallelFiles ?? 1;
+        Check("自适应 真实受限Worker遵守CPU容量且结果等价",
+            (expectedWorkerConcurrency == 1 ? workerPeak == 1 : workerPeak >= 2 && workerPeak <= expectedWorkerConcurrency) &&
+            Semantics(serial) == Semantics(parallelWorker));
         await JsonFile.WriteAtomicAsync(Path.Combine(directory, "worker-parallel.json"), parallelWorker);
         await TestV030BaselineEnhancementPolicyAsync(directory);
         ScanOptions workerStop = Options(leaf, ("MaximumStringScanBytes", 4m / MiB));

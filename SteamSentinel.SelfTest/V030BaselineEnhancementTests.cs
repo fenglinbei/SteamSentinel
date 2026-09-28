@@ -149,13 +149,17 @@ internal static partial class Program
             using Process process = Process.GetCurrentProcess();
             long privateBefore = process.PrivateMemorySize64;
             ScanMachineResources preflight = ScanResourcePlanner.Capture(Path.GetTempPath());
+            int capacityCpu = AdaptiveTestCpuCapacity(preflight.LogicalProcessors);
+            int expectedConcurrency = Math.Min(concurrency, capacityCpu);
             await scanner.ScanRootAsync(corpus, report, requested, new NullPasswordProvider());
             process.Refresh();
             int peak = report.ResourceAudit?.PeakParallelFiles ?? 1;
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"scanner-basic-{concurrency}.json"), report);
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"scanner-basic-{concurrency}-diagnostics.json"), new
             {
-                expectedConcurrency = concurrency,
+                requestedConcurrency = concurrency,
+                capacityCpu,
+                expectedConcurrency,
                 requested.MaximumWorkerMemoryBytes,
                 privateBefore,
                 privateAfter = process.PrivateMemorySize64,
@@ -171,8 +175,8 @@ internal static partial class Program
             // Parallel leaf scanners have no parent Checkpoint callback; the
             // parent publishes the whole completed batch. Serial fallback emits
             // one visited leaf at a time, regardless of thread-pool scheduling.
-            Check($"基础验收 暂停的增强额度不限制{concurrency}路", checkpointWidths.Count > 0 &&
-                checkpointWidths.Max() == concurrency && checkpointWidths.All(width => width <= concurrency) && peak >= 1 && peak <= concurrency);
+            Check($"基础验收 暂停的增强额度不限制CPU允许的{expectedConcurrency}路（请求{concurrency}路）", checkpointWidths.Count > 0 &&
+                checkpointWidths.Max() == expectedConcurrency && checkpointWidths.All(width => width <= expectedConcurrency) && peak >= 1 && peak <= expectedConcurrency);
         }
 
         string firstFile = Path.Combine(corpus, "ordinary-00.ps1");
@@ -212,7 +216,10 @@ internal static partial class Program
             Check($"基础验收 真实受限Worker {concurrency}路保留调用方旧设置", before == JsonSerializer.Serialize(requested, JsonFile.Options) &&
                 requested.UseAmsi && report.ContentScanSettings?.UseAmsi == false);
             int peak = report.ResourceAudit?.PeakParallelFiles ?? 1;
-            Check($"基础验收 真实受限Worker实际{concurrency}路", concurrency == 1 ? peak == 1 : peak >= 2 && peak <= concurrency);
+            int capacityCpu = AdaptiveTestCpuCapacity(report.ResourceAudit?.Preflight?.LogicalProcessors ?? Environment.ProcessorCount);
+            int expectedConcurrency = Math.Min(concurrency, capacityCpu);
+            Check($"基础验收 真实受限Worker请求{concurrency}路遵守CPU容量{expectedConcurrency}路",
+                expectedConcurrency == 1 ? peak == 1 : peak >= 2 && peak <= expectedConcurrency);
             if (serial is not null) Check($"基础验收 真实受限Worker {concurrency}路与串行结果一致", BaselineScanSemantics(serial) == BaselineScanSemantics(report));
             else serial = report;
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"worker-basic-{concurrency}.json"), report);
@@ -234,10 +241,14 @@ internal static partial class Program
             var observed = await ObserveBaselineWorkerAsync(requested);
             ScanReport report = observed.Report;
             int peak = report.ResourceAudit?.PeakParallelFiles ?? 1;
+            int capacityCpu = AdaptiveTestCpuCapacity(report.ResourceAudit?.Preflight?.LogicalProcessors ?? Environment.ProcessorCount);
+            int expectedConcurrency = Math.Min(concurrency, capacityCpu);
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"worker-dispatch-{concurrency}.json"), report);
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"worker-dispatch-{concurrency}-diagnostics.json"), new
             {
-                expectedConcurrency = concurrency,
+                requestedConcurrency = concurrency,
+                capacityCpu,
+                expectedConcurrency,
                 observed.Containment,
                 observed.Batches,
                 actualPeak = peak,
@@ -246,10 +257,10 @@ internal static partial class Program
                 preflight = ScanResourcePlanner.Capture(Path.GetTempPath()),
                 report.WorkerDiagnostics
             });
-            Check($"基础验收 真实受限Worker精确派发{concurrency}路且未因增强额度回退", observed.Batches.Count > 0 &&
-                observed.Batches.Max(batch => batch.Files) == concurrency && observed.Batches.Sum(batch => batch.Files) == 16 &&
-                observed.Batches.All(batch => batch.Files <= concurrency && batch.Findings >= batch.Files && batch.FindingTargets == batch.Files) &&
-                (concurrency == 1 ? peak == 1 : peak >= 2 && peak <= concurrency) &&
+            Check($"基础验收 真实受限Worker按CPU容量精确派发{expectedConcurrency}路且未因增强额度回退（请求{concurrency}路）", observed.Batches.Count > 0 &&
+                observed.Batches.Max(batch => batch.Files) == expectedConcurrency && observed.Batches.Sum(batch => batch.Files) == 16 &&
+                observed.Batches.All(batch => batch.Files <= expectedConcurrency && batch.Findings >= batch.Files && batch.FindingTargets == batch.Files) &&
+                (expectedConcurrency == 1 ? peak == 1 : peak >= 2 && peak <= expectedConcurrency) &&
                 report.ExecutionState == ScanExecutionState.Completed && report.Coverage == ScanCoverage.Complete &&
                 report.Metrics.FilesVisited == 16 && !HasAmsiObservation(report) && report.ContentScanSettings?.UseAmsi == false);
             if (dispatchSerial is not null)

@@ -31,6 +31,10 @@ internal static partial class Program
             return await RunWorkerFixtureAsync(executableName[fixturePrefix.Length..]);
         string? resultsPath = args.Length == 2 && args[0] == "--results" ? Path.GetFullPath(args[1]) : null;
         if (args.Length > 0 && resultsPath is null) return await RunUtilityAsync(args);
+        // Legacy copy assertions deliberately test the Chinese catalog. App startup can
+        // select English on an English runner; isolate these fixtures from that process
+        // default without changing OS/thread culture or the separate startup probes.
+        using IDisposable fullSuiteDisplayCulture = DisplayText.UseCulture(DisplayText.Chinese);
         Stopwatch elapsed = Stopwatch.StartNew();
 
         string root = Path.Combine(Path.GetTempPath(), "SteamSentinel-SelfTest-" + Guid.NewGuid().ToString("N"));
