@@ -160,17 +160,17 @@ public sealed partial class ContentScanner : IDisposable
                     if (await TryScanParallelLeavesAsync(group, report, options, passwordProvider, progress, cancellationToken, workshopId, projectType)) continue;
                     foreach (string file in group)
                     {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (IsExcluded(file, options.ExcludedRoots)) continue;
-                    if (report.Metrics.FilesVisited >= options.MaximumFiles &&
-                        !ScanResourceSession.Allow("MaximumFiles", report.Metrics.FilesVisited + 1, report.Metrics.FilesVisited, known: false))
-                    {
-                        AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.06", (options.MaximumFiles)), fullRoot, workshopId, "SCAN-COUNT-LIMIT");
-                        return;
-                    }
-                    await ScanFileAsync(file, file, file, report, options, passwordProvider, progress,
-                        cancellationToken, 0, workshopId, projectType, archiveBudget);
-                    Checkpoint?.Invoke(report);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (IsExcluded(file, options.ExcludedRoots)) continue;
+                        if (report.Metrics.FilesVisited >= options.MaximumFiles &&
+                            !ScanResourceSession.Allow("MaximumFiles", report.Metrics.FilesVisited + 1, report.Metrics.FilesVisited, known: false))
+                        {
+                            AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.06", (options.MaximumFiles)), fullRoot, workshopId, "SCAN-COUNT-LIMIT");
+                            return;
+                        }
+                        await ScanFileAsync(file, file, file, report, options, passwordProvider, progress,
+                            cancellationToken, 0, workshopId, projectType, archiveBudget);
+                        Checkpoint?.Invoke(report);
                     }
                 }
             }

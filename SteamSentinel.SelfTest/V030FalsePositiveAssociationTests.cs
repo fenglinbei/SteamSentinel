@@ -23,20 +23,20 @@ internal static partial class Program
 
         Finding Source(string rule, bool actionable, int score = 90, FindingSeverity severity = FindingSeverity.High,
             string? expectedHash = null, bool claimedKnown = false, string? reasonCode = null) => new()
-        {
-            RuleId = rule,
-            Category = FindingCategory.File,
-            Target = component,
-            ContentPath = component,
-            Sha256 = expectedHash ?? hash,
-            TargetSha256 = expectedHash ?? hash,
-            Severity = severity,
-            Score = score,
-            ReasonCode = reasonCode,
-            IsKnownMalware = claimedKnown,
-            CanRemediate = actionable,
-            SuggestedActions = actionable ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
-        };
+            {
+                RuleId = rule,
+                Category = FindingCategory.File,
+                Target = component,
+                ContentPath = component,
+                Sha256 = expectedHash ?? hash,
+                TargetSha256 = expectedHash ?? hash,
+                Severity = severity,
+                Score = score,
+                ReasonCode = reasonCode,
+                IsKnownMalware = claimedKnown,
+                CanRemediate = actionable,
+                SuggestedActions = actionable ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
+            };
 
         foreach (string rule in new[] { "HEUR-STEAM-DEPLOYMENT-CHAIN", "HEUR-SCRIPT-TOKEN-COOCCURRENCE",
             "INSTALLER-STRUCTURE", "SHORTCUT-EXECUTION-CHAIN", "HISTORY-CLICKFIX" })
@@ -134,15 +134,23 @@ internal static partial class Program
 
         Finding weakRun = new()
         {
-            RuleId = "PERSISTENCE-RUN-BOUND", ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode,
-            CanRemediate = true, Target = "unchanged inert command", RegistryHive = "HKCU", RegistryView = "Default",
-            RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RegistryValueName = "InertAllowedEntry",
+            RuleId = "PERSISTENCE-RUN-BOUND",
+            ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode,
+            CanRemediate = true,
+            Target = "unchanged inert command",
+            RegistryHive = "HKCU",
+            RegistryView = "Default",
+            RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run",
+            RegistryValueName = "InertAllowedEntry",
             SuggestedActions = [SuggestedActionKind.RemoveRegistryValue]
         };
         Finding freshRun = new()
         {
-            Target = weakRun.Target, RegistryHive = weakRun.RegistryHive, RegistryView = weakRun.RegistryView,
-            RegistryKey = weakRun.RegistryKey, RegistryValueName = weakRun.RegistryValueName
+            Target = weakRun.Target,
+            RegistryHive = weakRun.RegistryHive,
+            RegistryView = weakRun.RegistryView,
+            RegistryKey = weakRun.RegistryKey,
+            RegistryValueName = weakRun.RegistryValueName
         };
         RelatedArtifactScanner allowlistedScanner = new(new RuleSet { KnownRunValueNames = ["InertAllowedEntry"] });
         Check("0.3 旧弱原因码不被同名启动项快照保留逻辑洗去", allowlistedScanner.PreserveAllowlistedSnapshot(weakRun, freshRun) is null &&

@@ -24,8 +24,16 @@ internal static partial class Program
         {
             ScanLimitSettings settings = new() { PerformanceMode = ScanPerformanceMode.LowImpact };
             foreach (var pair in limits) settings.Full[pair.Key] = pair.Value;
-            return settings.Apply(new() { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-                UseAmsi = false, CustomRoots = [path], HashEveryFile = true });
+            return settings.Apply(new()
+            {
+                Mode = ScanMode.Custom,
+                IncludeSystem = false,
+                IncludeSteam = false,
+                IncludeWorkshop = false,
+                UseAmsi = false,
+                CustomRoots = [path],
+                HashEveryFile = true
+            });
         }
         ScanLimitResponse Approve(ScanOptions options, ScanLimitRequest request)
         {
@@ -104,7 +112,7 @@ internal static partial class Program
 
         string archivePath = Path.Combine(directory, "inert.zip");
         using (ZipArchive zip = ZipFile.Open(archivePath, ZipArchiveMode.Create))
-            using (Stream member = zip.CreateEntry("inert.txt", CompressionLevel.NoCompression).Open()) member.Write(new byte[8192]);
+        using (Stream member = zip.CreateEntry("inert.txt", CompressionLevel.NoCompression).Open()) member.Write(new byte[8192]);
         ScanOptions archived = Options(archivePath, ("ContainerLimits.MaximumEntryBytes", 4m / MiB));
         using (ScanResourceSession session = new(archived, r => Approve(archived, r), default))
         {
@@ -151,13 +159,26 @@ internal static partial class Program
         string corpus = Path.Combine(directory, "parallel"); Directory.CreateDirectory(corpus);
         RuleSet rules = RuleLoader.LoadEmbedded();
         for (int i = 0; i < 32; i++) await File.WriteAllTextAsync(Path.Combine(corpus, $"leaf-{i:D3}.txt"), i % 5 == 0 ? rules.KnownDomains[0] : new string('q', 2048));
-        ScanOptions Sequential() => new() { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-            UseAmsi = false, CustomRoots = [corpus], HashEveryFile = true, MaximumWorkerMemoryBytes = 8L * 1024 * MiB };
+        ScanOptions Sequential() => new()
+        {
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            CustomRoots = [corpus],
+            HashEveryFile = true,
+            MaximumWorkerMemoryBytes = 8L * 1024 * MiB
+        };
         ScanReport serial = await new ScanCoordinator().RunAsync(Sequential());
-        static string Semantics(ScanReport report) => JsonSerializer.Serialize(new { report.Coverage, report.Metrics,
+        static string Semantics(ScanReport report) => JsonSerializer.Serialize(new
+        {
+            report.Coverage,
+            report.Metrics,
             nodes = report.Containers!.Nodes.Select(n => new { n.DisplayPath, n.Sha256, n.Length, n.Overall, n.ContentCheck, n.Integrity }).OrderBy(n => n.DisplayPath),
             findings = report.Findings.Select(f => new { f.RuleId, f.Target, f.ContentPath, f.Sha256, f.TargetSha256, f.Score, f.Severity, f.CanRemediate }).OrderBy(f => f.Target).ThenBy(f => f.RuleId),
-            report.CoverageNotes });
+            report.CoverageNotes
+        });
         foreach (int concurrency in new[] { 2, 4 })
         {
             ScanOptions concurrent = Sequential();
@@ -173,11 +194,21 @@ internal static partial class Program
         {
             async Task<ScanReport> Limited(int concurrency)
             {
-                ScanOptions settings = new() { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-                    UseAmsi = false, CustomRoots = [corpus], MaximumParallelFiles = concurrency, PerformanceMode = ScanPerformanceMode.HighThroughput,
-                    MaximumWorkerMemoryBytes = 8L * 1024 * MiB, MaximumFiles = boundary == "files" ? 3 : 200000,
+                ScanOptions settings = new()
+                {
+                    Mode = ScanMode.Custom,
+                    IncludeSystem = false,
+                    IncludeSteam = false,
+                    IncludeWorkshop = false,
+                    UseAmsi = false,
+                    CustomRoots = [corpus],
+                    MaximumParallelFiles = concurrency,
+                    PerformanceMode = ScanPerformanceMode.HighThroughput,
+                    MaximumWorkerMemoryBytes = 8L * 1024 * MiB,
+                    MaximumFiles = boundary == "files" ? 3 : 200000,
                     MaximumContentBytes = boundary == "hash" ? 4096 : long.MaxValue,
-                    ContainerLimits = new() { MaximumWorkBytes = boundary == "work" ? 8192 : 64L * 1024 * MiB } };
+                    ContainerLimits = new() { MaximumWorkBytes = boundary == "work" ? 8192 : 64L * 1024 * MiB }
+                };
                 ScanReport? latest = null;
                 try { return await new ScanCoordinator().RunAsync(settings, checkpoint: report => latest = report); }
                 catch (ScanResourceLimitException) { return latest!; }
@@ -194,8 +225,15 @@ internal static partial class Program
         Check("自适应 单次Worker授权不写回调用方设置", workerOptions.MaximumStringScanBytes == 4 && workerReport.ContentScanSettings!.MaximumStringScanBytes >= 8192);
         await JsonFile.WriteAtomicAsync(Path.Combine(directory, "worker-approved.json"), workerReport);
         ScanOptions parallelWorkerOptions = new ScanLimitSettings { PerformanceMode = ScanPerformanceMode.HighThroughput }.Apply(new()
-        { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-            UseAmsi = false, CustomRoots = [corpus], HashEveryFile = true });
+        {
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            CustomRoots = [corpus],
+            HashEveryFile = true
+        });
         ScanReport parallelWorker = await new ArchiveWorkerClient(DevelopmentWorkerPath()).RunAsync(parallelWorkerOptions,
             (r, _) => Task.FromResult(new ArchivePasswordResponse(r.RequestId, true, null, false)), null, default);
         Check("自适应 真实受限Worker仍可多路且结果等价", parallelWorker.ResourceAudit?.PeakParallelFiles is >= 2 and <= 4 && Semantics(serial) == Semantics(parallelWorker));

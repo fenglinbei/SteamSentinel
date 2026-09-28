@@ -26,8 +26,13 @@ internal static partial class Program
         try { await TestV030ResourceDialogAsync(output, ScanResourcePlanner.Propose(options, request, machine)); }
         catch (Exception exception) { Failures.Add(exception.ToString()); }
         await File.WriteAllTextAsync(Path.Combine(output, "resource-ui-results.json"), JsonSerializer.Serialize(new
-        { passed = _passed, failures = Failures, dpiPercent, buildIdentity = ProductInfo.BuildIdentity,
-            boundary = "Own hidden HWND DPI notification; not a physical display move." }, new JsonSerializerOptions { WriteIndented = true }));
+        {
+            passed = _passed,
+            failures = Failures,
+            dpiPercent,
+            buildIdentity = ProductInfo.BuildIdentity,
+            boundary = "Own hidden HWND DPI notification; not a physical display move."
+        }, new JsonSerializerOptions { WriteIndented = true }));
         return Failures.Count == 0 ? 0 : 1;
     }
 
@@ -41,21 +46,21 @@ internal static partial class Program
                 AppContext.SetSwitch("Switch.System.Windows.Media.ShouldRenderEvenWhenNoDisplayDevicesAreAvailable", true);
                 RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
                 foreach (var culture in new[] { DisplayText.Chinese, DisplayText.English })
-                using (DisplayText.UseCulture(culture))
-                foreach ((int width, int height) in new[] { (700, 560), (440, 350) })
-                {
-                    ScanResourceDialog dialog = new(proposal with { Request = proposal.Request with { Target = new string('x', 1600) } });
-                    using UiLayoutHarness layout = new(dialog, width, height);
-                    var buttons = UiLayoutHarness.Descendants<Button>(layout.Root);
-                    Button approve = buttons.Single(b => b.Name == "ApproveResourcesButton");
-                    Button skip = buttons.Single(b => b.Name == "SkipResourcesButton");
-                    Check($"自适应 UI {culture.Name} {width} 操作按钮可见且不默认批准", layout.IsFullyVisible(approve) && layout.IsFullyVisible(skip) && !approve.IsDefault && skip.IsCancel);
-                    Check($"自适应 UI {culture.Name} {width} 保存未来默认不选", UiLayoutHarness.Descendants<CheckBox>(layout.Root).Single().IsChecked != true && !dialog.SaveForFuture);
-                    ScrollViewer scroll = UiLayoutHarness.Descendants<ScrollViewer>(layout.Root).First(s => s.ScrollableHeight > 0);
-                    scroll.ScrollToEnd(); layout.Refresh();
-                    Check($"自适应 UI {culture.Name} {width} 长路径提示可滚动且固定操作区", scroll.VerticalOffset > 0 && layout.IsFullyVisible(approve));
-                    layout.Save($"adaptive-dialog-{culture.Name}-{width}", output);
-                }
+                    using (DisplayText.UseCulture(culture))
+                        foreach ((int width, int height) in new[] { (700, 560), (440, 350) })
+                        {
+                            ScanResourceDialog dialog = new(proposal with { Request = proposal.Request with { Target = new string('x', 1600) } });
+                            using UiLayoutHarness layout = new(dialog, width, height);
+                            var buttons = UiLayoutHarness.Descendants<Button>(layout.Root);
+                            Button approve = buttons.Single(b => b.Name == "ApproveResourcesButton");
+                            Button skip = buttons.Single(b => b.Name == "SkipResourcesButton");
+                            Check($"自适应 UI {culture.Name} {width} 操作按钮可见且不默认批准", layout.IsFullyVisible(approve) && layout.IsFullyVisible(skip) && !approve.IsDefault && skip.IsCancel);
+                            Check($"自适应 UI {culture.Name} {width} 保存未来默认不选", UiLayoutHarness.Descendants<CheckBox>(layout.Root).Single().IsChecked != true && !dialog.SaveForFuture);
+                            ScrollViewer scroll = UiLayoutHarness.Descendants<ScrollViewer>(layout.Root).First(s => s.ScrollableHeight > 0);
+                            scroll.ScrollToEnd(); layout.Refresh();
+                            Check($"自适应 UI {culture.Name} {width} 长路径提示可滚动且固定操作区", scroll.VerticalOffset > 0 && layout.IsFullyVisible(approve));
+                            layout.Save($"adaptive-dialog-{culture.Name}-{width}", output);
+                        }
                 using (DisplayText.UseCulture(DisplayText.English))
                 {
                     ScanResourceDialog denied = new(proposal with { Assessment = ResourceAssessmentKind.Unknown });

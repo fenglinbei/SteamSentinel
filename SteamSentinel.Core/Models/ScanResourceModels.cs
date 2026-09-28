@@ -79,10 +79,14 @@ public sealed class ScanResourceAudit
         if (first is null) return second;
         if (second is null || ReferenceEquals(first, second)) return first;
         first.Validate(); second.Validate();
-        ScanResourceAudit merged = new() { Preflight = second.Preflight ?? first.Preflight, Phase = second.Phase,
+        ScanResourceAudit merged = new()
+        {
+            Preflight = second.Preflight ?? first.Preflight,
+            Phase = second.Phase,
             PeakParallelFiles = Math.Max(first.PeakParallelFiles, second.PeakParallelFiles),
             WaitingMilliseconds = checked(first.WaitingMilliseconds + second.WaitingMilliseconds),
-            Decisions = first.Decisions.Concat(second.Decisions).DistinctBy(d => d.Request.RequestId).ToList() };
+            Decisions = first.Decisions.Concat(second.Decisions).DistinctBy(d => d.Request.RequestId).ToList()
+        };
         merged.Validate(); return merged;
     }
     public static bool SameDecision(ScanResourceDecision a, ScanResourceDecision b) => a.Request == b.Request &&

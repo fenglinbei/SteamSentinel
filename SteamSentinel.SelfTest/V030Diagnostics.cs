@@ -157,8 +157,11 @@ internal static partial class Program
             observations.Length == 2 && observations.All(item =>
                 expected.Any(input => string.Equals(item.DisplayPath, Path.Combine(fixture, "plugin", input.Name), StringComparison.OrdinalIgnoreCase)) &&
                 item.Status == ContainerStageStatus.Complete && item.Length == new FileInfo(item.DisplayPath).Length &&
-                item.AmsiDiagnostics is { Code: "AMSI-VERDICT", Operation: AmsiOperation.ScanBuffer, HResult: >= 0,
-                    InitializeHResult: >= 0, OpenSessionHResult: >= 0, Integrity: "Low" or "Untrusted" });
+                item.AmsiDiagnostics is
+                {
+                    Code: "AMSI-VERDICT", Operation: AmsiOperation.ScanBuffer, HResult: >= 0,
+                    InitializeHResult: >= 0, OpenSessionHResult: >= 0, Integrity: "Low" or "Untrusted"
+                });
         bool verified = diagnosticCompleted && amsiVerified;
         await JsonFile.WriteAtomicAsync(Path.Combine(output, "summary.json"), new
         {

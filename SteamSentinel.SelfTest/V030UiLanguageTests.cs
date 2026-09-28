@@ -130,8 +130,13 @@ internal static partial class Program
             try
             {
                 using UiLayoutHarness layout = new(window, 1148, 780);
-                ScanReport baseline = new() { ExecutionState = ScanExecutionState.Completed, CompletedAtUtc = DateTimeOffset.UtcNow,
-                    Coverage = ScanCoverage.Complete, ContentScanSettings = new() { UseAmsi = false } };
+                ScanReport baseline = new()
+                {
+                    ExecutionState = ScanExecutionState.Completed,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    Coverage = ScanCoverage.Complete,
+                    ContentScanSettings = new() { UseAmsi = false }
+                };
                 SetTrustProxyUiReport(window, baseline);
                 typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [true]);
                 typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [false]);

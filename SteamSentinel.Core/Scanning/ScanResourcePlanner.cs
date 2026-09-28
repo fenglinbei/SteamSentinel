@@ -62,8 +62,13 @@ public static class ScanResourcePlanner
             proposal.AdditionalTemporaryBytes <= machine.TemporaryFreeBytes - proposal.ReservedDiskBytes;
         ResourceAssessmentKind assessment = !machine.IsUsable ? ResourceAssessmentKind.Unknown :
             fits && proposal.Changes.Count > 0 ? ResourceAssessmentKind.EstimatedAvailable : ResourceAssessmentKind.Insufficient;
-        return proposal with { Machine = machine, Assessment = assessment, ReasonCode = assessment switch
-        { ResourceAssessmentKind.EstimatedAvailable => "resource.estimated_available", ResourceAssessmentKind.Unknown => "resource.capacity_unknown", _ => "resource.capacity_insufficient" } };
+        return proposal with
+        {
+            Machine = machine,
+            Assessment = assessment,
+            ReasonCode = assessment switch
+            { ResourceAssessmentKind.EstimatedAvailable => "resource.estimated_available", ResourceAssessmentKind.Unknown => "resource.capacity_unknown", _ => "resource.capacity_insufficient" }
+        };
     }
 
     public static ScanResourceProposal Propose(ScanOptions options, ScanLimitRequest request, ScanMachineResources machine)

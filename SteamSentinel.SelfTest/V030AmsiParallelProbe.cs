@@ -30,7 +30,8 @@ internal static partial class Program
             ScanReport serial = await Scan(ScanPerformanceMode.LowImpact), automatic = await Scan(ScanPerformanceMode.Automatic), parallel = await Scan(ScanPerformanceMode.HighThroughput);
             static string AmsiSemantics(ScanReport report) => JsonSerializer.Serialize(new
             {
-                roots = report.RootSummaries, notices = report.CoverageNotices.Select(notice => notice.ReasonCode),
+                roots = report.RootSummaries,
+                notices = report.CoverageNotices.Select(notice => notice.ReasonCode),
                 engines = report.Containers!.Nodes.OrderBy(node => node.DisplayPath).Select(node => new
                 { node.DisplayPath, engines = node.Engines.Where(engine => engine.Engine == "AMSI").Select(engine => new { engine.Status, engine.Length, engine.AmsiDiagnostics }) })
             });

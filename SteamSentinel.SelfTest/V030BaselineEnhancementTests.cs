@@ -85,7 +85,8 @@ internal static partial class Program
 
     private static string BaselineScanSemantics(ScanReport report) => JsonSerializer.Serialize(new
     {
-        report.Coverage, report.Metrics,
+        report.Coverage,
+        report.Metrics,
         nodes = report.Containers!.Nodes.Select(node => new
         { node.DisplayPath, node.Sha256, node.Length, node.Overall, node.ContentCheck, node.Integrity }).OrderBy(node => node.DisplayPath),
         findings = report.Findings.Select(finding => new
@@ -105,8 +106,14 @@ internal static partial class Program
         {
             ScanOptions requested = new ScanLimitSettings { PerformanceMode = mode }.Apply(new()
             {
-                Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-                UseAmsi = true, CustomRoots = [corpus], HashEveryFile = true, InspectDeepSignatures = false
+                Mode = ScanMode.Custom,
+                IncludeSystem = false,
+                IncludeSteam = false,
+                IncludeWorkshop = false,
+                UseAmsi = true,
+                CustomRoots = [corpus],
+                HashEveryFile = true,
+                InspectDeepSignatures = false
             });
             // The full test process has already run allocation-heavy cases. Its
             // retained memory must not turn this policy test into a 1 GiB Job
@@ -148,9 +155,13 @@ internal static partial class Program
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"scanner-basic-{concurrency}.json"), report);
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"scanner-basic-{concurrency}-diagnostics.json"), new
             {
-                expectedConcurrency = concurrency, requested.MaximumWorkerMemoryBytes,
-                privateBefore, privateAfter = process.PrivateMemorySize64, preflight,
-                checkpointWidths, actualPeak = peak,
+                expectedConcurrency = concurrency,
+                requested.MaximumWorkerMemoryBytes,
+                privateBefore,
+                privateAfter = process.PrivateMemorySize64,
+                preflight,
+                checkpointWidths,
+                actualPeak = peak,
                 boundary = "Parent checkpoints expose completed dispatch groups; instantaneous task overlap is scheduler-dependent."
             });
             Check($"基础验收 {concurrency}路不初始化增强引擎也不生成增强缺口", initializations == 0 && !HasAmsiObservation(report) &&
@@ -165,8 +176,18 @@ internal static partial class Program
         }
 
         string firstFile = Path.Combine(corpus, "ordinary-00.ps1");
-        ScanOptions live = new() { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-            UseAmsi = true, CustomRoots = [firstFile], MaximumStringScanBytes = 1, HashEveryFile = true, InspectDeepSignatures = false };
+        ScanOptions live = new()
+        {
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = true,
+            CustomRoots = [firstFile],
+            MaximumStringScanBytes = 1,
+            HashEveryFile = true,
+            InspectDeepSignatures = false
+        };
         using (ScanResourceSession session = new(live,
             request => new(request.RequestId, ResourceDecisionKind.Approve, [new(request.LimitKey, request.CurrentLimit, request.RequiredMinimum)]), default))
         {
@@ -216,9 +237,14 @@ internal static partial class Program
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"worker-dispatch-{concurrency}.json"), report);
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"worker-dispatch-{concurrency}-diagnostics.json"), new
             {
-                expectedConcurrency = concurrency, observed.Containment, observed.Batches, actualPeak = peak,
-                requested.MaximumWorkerMemoryBytes, requested.MaximumAmsiBytes,
-                preflight = ScanResourcePlanner.Capture(Path.GetTempPath()), report.WorkerDiagnostics
+                expectedConcurrency = concurrency,
+                observed.Containment,
+                observed.Batches,
+                actualPeak = peak,
+                requested.MaximumWorkerMemoryBytes,
+                requested.MaximumAmsiBytes,
+                preflight = ScanResourcePlanner.Capture(Path.GetTempPath()),
+                report.WorkerDiagnostics
             });
             Check($"基础验收 真实受限Worker精确派发{concurrency}路且未因增强额度回退", observed.Batches.Count > 0 &&
                 observed.Batches.Max(batch => batch.Files) == concurrency && observed.Batches.Sum(batch => batch.Files) == 16 &&
@@ -243,9 +269,14 @@ internal static partial class Program
                 failed.RootSummaries.Any(root => root.Coverage == ScanCoverage.Partial) && CoveragePresentation.Groups(failed).Count > 0);
             Check("基础验收 读取失败不归因于暂停的增强项", !HasAmsiObservation(failed) && failed.ContentScanSettings?.UseAmsi == false);
         }
-        ScanReport historical = new() { ExecutionState = ScanExecutionState.Completed, CompletedAtUtc = DateTimeOffset.UtcNow,
-            Coverage = ScanCoverage.Partial, ContentScanSettings = Requested(ScanPerformanceMode.LowImpact),
-            CoverageNotices = [new(ReasonCodes.AmsiUnavailable, "Previously recorded engine failure.")] };
+        ScanReport historical = new()
+        {
+            ExecutionState = ScanExecutionState.Completed,
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+            Coverage = ScanCoverage.Partial,
+            ContentScanSettings = Requested(ScanPerformanceMode.LowImpact),
+            CoverageNotices = [new(ReasonCodes.AmsiUnavailable, "Previously recorded engine failure.")]
+        };
         string historicalJson = JsonSerializer.Serialize(historical, JsonFile.Options);
         _ = ScanEnhancements.ForExecution(historical.ContentScanSettings!);
         ScanReport restored = JsonSerializer.Deserialize<ScanReport>(historicalJson, JsonFile.Options)!;

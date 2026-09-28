@@ -70,8 +70,14 @@ internal static partial class Program
         }
         ScanReport container = await new ScanCoordinator(new RuleSet()).RunAsync(new ScanOptions
         {
-            Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-            UseAmsi = false, InspectArchives = true, InspectDeepSignatures = false, CustomRoots = [archive]
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            InspectArchives = true,
+            InspectDeepSignatures = false,
+            CustomRoots = [archive]
         });
         Check("0.3.0 容器成员仅词共现不能授权外层隔离", container.Findings.Any(f => f.RuleId == weak.RuleId) &&
             container.Findings.All(f => !f.CanRemediate));

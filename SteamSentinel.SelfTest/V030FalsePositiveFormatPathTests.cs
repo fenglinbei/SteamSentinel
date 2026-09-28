@@ -73,18 +73,27 @@ internal static partial class Program
 
         Finding directoryMatch = paths.Findings.Single(f => f.Target == emptyDirectory);
         Check("0.3.0 同名空目录仅为低风险路径观察且不能处置",
-            directoryMatch is { RuleId: "KNOWN-DROP-PATH", Severity: FindingSeverity.Low, Score: 20,
-                ReasonCode: "KnownPathOnly", IsKnownMalware: false, CanRemediate: false, Sha256: null } &&
+            directoryMatch is
+            {
+                RuleId: "KNOWN-DROP-PATH", Severity: FindingSeverity.Low, Score: 20,
+                ReasonCode: "KnownPathOnly", IsKnownMalware: false, CanRemediate: false, Sha256: null
+            } &&
             directoryMatch.SuggestedActions.SequenceEqual([SuggestedActionKind.ReviewOnly]));
         Finding fileMatch = paths.Findings.Single(f => f.Target == unconfirmedFile);
         Check("0.3.0 路径或非恶意哈希重合不会升级高风险或授予隔离",
-            fileMatch is { Severity: FindingSeverity.Low, Score: 20, ReasonCode: "KnownPathOnly",
-                IsKnownMalware: false, CanRemediate: false } && fileMatch.Sha256 == unconfirmedHash &&
+            fileMatch is
+            {
+                Severity: FindingSeverity.Low, Score: 20, ReasonCode: "KnownPathOnly",
+                IsKnownMalware: false, CanRemediate: false
+            } && fileMatch.Sha256 == unconfirmedHash &&
             fileMatch.SuggestedActions.SequenceEqual([SuggestedActionKind.ReviewOnly]));
         Finding knownMatch = paths.Findings.Single(f => f.Target == hashNode);
         Check("0.3.0 已知路径及精确恶意哈希共同命中仍为严重且可隔离",
-            knownMatch is { RuleId: "KNOWN-DROP-PATH", Severity: FindingSeverity.Critical, Score: 100,
-                ReasonCode: null, IsKnownMalware: true, CanRemediate: true } && knownMatch.Sha256 == exactHash &&
+            knownMatch is
+            {
+                RuleId: "KNOWN-DROP-PATH", Severity: FindingSeverity.Critical, Score: 100,
+                ReasonCode: null, IsKnownMalware: true, CanRemediate: true
+            } && knownMatch.Sha256 == exactHash &&
             knownMatch.SuggestedActions.SequenceEqual([SuggestedActionKind.QuarantineFile, SuggestedActionKind.BlockKnownDomains]));
         Check("0.3.0 路径回归仅访问指定测试目标并保留原文件",
             paths.Findings.Count == 3 && File.Exists(unconfirmedFile) && File.Exists(hashNode) &&

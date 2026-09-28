@@ -107,15 +107,26 @@ internal sealed class ScanLimitsDialog : Window
     {
         _rendering = true;
         _rows.Children.Clear(); _inputs.Clear();
-        CheckBox ask = new() { Name = "AskBeforeIncreasingCheckBox", IsChecked = Settings.AskBeforeIncreasing,
-            Content = new TextBlock { Text = DisplayText.Get("Resource.AskBeforeIncreasing"), TextWrapping = TextWrapping.Wrap }, Margin = new(0, 0, 0, 12) };
+        CheckBox ask = new()
+        {
+            Name = "AskBeforeIncreasingCheckBox",
+            IsChecked = Settings.AskBeforeIncreasing,
+            Content = new TextBlock { Text = DisplayText.Get("Resource.AskBeforeIncreasing"), TextWrapping = TextWrapping.Wrap },
+            Margin = new(0, 0, 0, 12)
+        };
         ask.Checked += (_, _) => Settings.AskBeforeIncreasing = true;
         ask.Unchecked += (_, _) => Settings.AskBeforeIncreasing = false;
         _rows.Children.Add(ask);
         _rows.Children.Add(new TextBlock { Text = DisplayText.Get("Resource.PerformanceLabel"), FontWeight = FontWeights.SemiBold });
-        ComboBox performance = new() { Name = "ScanPerformanceComboBox", HorizontalAlignment = HorizontalAlignment.Left,
+        ComboBox performance = new()
+        {
+            Name = "ScanPerformanceComboBox",
+            HorizontalAlignment = HorizontalAlignment.Left,
             ItemsSource = Enum.GetValues<ScanPerformanceMode>().Select(value => DisplayText.Get("Resource.Performance." + value)).ToArray(),
-            SelectedIndex = (int)Settings.PerformanceMode, Margin = new(0, 4, 0, 8), MinWidth = 230 };
+            SelectedIndex = (int)Settings.PerformanceMode,
+            Margin = new(0, 4, 0, 8),
+            MinWidth = 230
+        };
         performance.SelectionChanged += (_, _) => { if (performance.SelectedIndex >= 0) Settings.PerformanceMode = (ScanPerformanceMode)performance.SelectedIndex; };
         System.Windows.Automation.AutomationProperties.SetName(performance, DisplayText.Get("Resource.PerformanceLabel"));
         _rows.Children.Add(performance);

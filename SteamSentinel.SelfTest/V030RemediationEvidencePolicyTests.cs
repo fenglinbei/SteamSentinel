@@ -18,10 +18,16 @@ internal static partial class Program
         {
             Finding legacy = new()
             {
-                RuleId = rule, Category = FindingCategory.File, Severity = FindingSeverity.High,
-                Score = 100, IsKnownMalware = true, CanRemediate = true,
-                Target = Path.Combine(root, "missing-token-evidence-fixture.bin"), Sha256 = new string('A', 64),
-                Evidence = "Unchanged historical text", SuggestedActions = [SuggestedActionKind.QuarantineFile]
+                RuleId = rule,
+                Category = FindingCategory.File,
+                Severity = FindingSeverity.High,
+                Score = 100,
+                IsKnownMalware = true,
+                CanRemediate = true,
+                Target = Path.Combine(root, "missing-token-evidence-fixture.bin"),
+                Sha256 = new string('A', 64),
+                Evidence = "Unchanged historical text",
+                SuggestedActions = [SuggestedActionKind.QuarantineFile]
             };
             string original = JsonSerializer.Serialize(legacy, JsonFile.Options);
             Finding received = JsonSerializer.Deserialize<Finding>(original, JsonFile.Options)!;
@@ -43,8 +49,11 @@ internal static partial class Program
 
         Finding tagged = new()
         {
-            RuleId = "FUTURE-OR-FORGED-ID", ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode,
-            CanRemediate = true, Score = 100, IsKnownMalware = true,
+            RuleId = "FUTURE-OR-FORGED-ID",
+            ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode,
+            CanRemediate = true,
+            Score = 100,
+            IsKnownMalware = true,
             SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         Check("0.3.0 弱证据稳定原因码独立阻止伪装规则ID", !RemediationEvidencePolicy.CanRemediate(tagged));
@@ -55,7 +64,8 @@ internal static partial class Program
 
         Finding review = new()
         {
-            RuleId = "HEUR-SCRIPT-TOKEN-COOCCURRENCE", CanRemediate = false,
+            RuleId = "HEUR-SCRIPT-TOKEN-COOCCURRENCE",
+            CanRemediate = false,
             SuggestedActions = [SuggestedActionKind.ReviewOnly]
         };
         bool reviewRejected = false;
@@ -90,7 +100,8 @@ internal static partial class Program
 
         Finding excessive = new()
         {
-            RuleId = new string('X', 5000) + "\nprivate command", ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode
+            RuleId = new string('X', 5000) + "\nprivate command",
+            ReasonCode = RemediationEvidencePolicy.ReviewOnlyReasonCode
         };
         MessageText bounded = RemediationEvidencePolicy.ReviewOnlyMessage(excessive);
         Check("0.3.0 弱证据拒绝说明有界且只含规则标识", bounded.Message?.Arguments is { Count: 1 } arguments &&
@@ -103,8 +114,14 @@ internal static partial class Program
         RuleSet rules = new() { KnownHashes = [new() { Id = "KNOWN-HASH-FIXTURE", Sha256 = hash, Malware = true }] };
         Finding known = new()
         {
-            RuleId = "KNOWN-HASH-FIXTURE", Target = file, Sha256 = hash, TargetSha256 = hash,
-            CanRemediate = true, IsKnownMalware = true, Score = 100, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            RuleId = "KNOWN-HASH-FIXTURE",
+            Target = file,
+            Sha256 = hash,
+            TargetSha256 = hash,
+            CanRemediate = true,
+            IsKnownMalware = true,
+            Score = 100,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         RemediationPlan plan = await new RemediationPlanBuilder(rules).BuildAsync([known], false);
         Check("0.3.0 精确已知哈希仍可准备文件隔离且不执行动作", plan.Actions.Count == 1 &&

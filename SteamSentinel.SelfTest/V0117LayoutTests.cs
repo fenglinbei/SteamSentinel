@@ -567,7 +567,8 @@ internal sealed class UiLayoutHarness : IDisposable
             // text/template measurement tied to the source's old DPI and is not valid here.
             NativeRect bounds = new()
             {
-                Left = -32000, Top = -32000,
+                Left = -32000,
+                Top = -32000,
                 Right = -32000 + (int)Math.Ceiling(_width * dpi.DpiScaleX),
                 Bottom = -32000 + (int)Math.Ceiling(_height * dpi.DpiScaleY)
             };
@@ -773,9 +774,12 @@ internal sealed class UiLayoutHarness : IDisposable
         nativeClientSizeMatches = HasCorrectPixelSize(),
         optionalPanels = Descendants<ScrollViewer>(Root).Where(viewer => viewer.Name is "ScanOptionsScroll" or "FindingDetailScroll").Select(viewer => new
         {
-            viewer.Name, height = double.IsFinite(viewer.Height) ? (double?)viewer.Height : null,
+            viewer.Name,
+            height = double.IsFinite(viewer.Height) ? (double?)viewer.Height : null,
             maxHeight = double.IsFinite(viewer.MaxHeight) ? (double?)viewer.MaxHeight : null,
-            viewer.ActualHeight, viewer.ViewportHeight, viewer.ScrollableHeight
+            viewer.ActualHeight,
+            viewer.ViewportHeight,
+            viewer.ScrollableHeight
         }).ToArray(),
         buttons = Descendants<Button>(Root).Select(button => new
         {
@@ -852,11 +856,18 @@ internal sealed class UiLayoutHarness : IDisposable
             File.WriteAllText(Path.Combine(output, name + ".blank.json"), JsonSerializer.Serialize(new
             {
                 standaloneSoftwarePixels = probePixels.Count(pixel => (pixel >> 24) != 0),
-                rootVisible = Root.IsVisible, contentVisible = _content.IsVisible,
-                rootVisibility = Root.Visibility.ToString(), contentVisibility = _content.Visibility.ToString(),
-                rootOpacity = Root.Opacity, contentOpacity = _content.Opacity,
-                attached = _source.RootVisual == Root, Root.IsLoaded, Root.IsMeasureValid, Root.IsArrangeValid,
-                renderMode = RenderOptions.ProcessRenderMode.ToString(), tier = RenderCapability.Tier,
+                rootVisible = Root.IsVisible,
+                contentVisible = _content.IsVisible,
+                rootVisibility = Root.Visibility.ToString(),
+                contentVisibility = _content.Visibility.ToString(),
+                rootOpacity = Root.Opacity,
+                contentOpacity = _content.Opacity,
+                attached = _source.RootVisual == Root,
+                Root.IsLoaded,
+                Root.IsMeasureValid,
+                Root.IsArrangeValid,
+                renderMode = RenderOptions.ProcessRenderMode.ToString(),
+                tier = RenderCapability.Tier,
                 rootClip = VisualTreeHelper.GetClip(Root)?.Bounds.ToString(CultureInfo.InvariantCulture),
                 contentClip = VisualTreeHelper.GetClip(_content)?.Bounds.ToString(CultureInfo.InvariantCulture),
                 rootDrawing = VisualTreeHelper.GetDrawing(Root)?.Bounds.ToString(CultureInfo.InvariantCulture),
