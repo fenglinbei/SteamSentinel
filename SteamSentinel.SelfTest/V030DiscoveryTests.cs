@@ -15,7 +15,7 @@ internal static partial class Program
         RuleSet embedded = RuleLoader.LoadEmbedded();
         HashRule[] variant = embedded.KnownHashes.Where(r => r.Id.StartsWith("STEAMRED-VPET-", StringComparison.Ordinal)).ToArray();
         Check("0.3 精确规则包含三包十二核心组件且均为确认身份", variant.Length == 15 && variant.All(r => r.Malware && r.Evidence is { Length: > 0 }) &&
-            variant.Count(r => r.Id.Contains("ARCHIVE", StringComparison.Ordinal)) == 3 && embedded.Version == "2026.09.20.1");
+            variant.Count(r => r.Id.Contains("ARCHIVE", StringComparison.Ordinal)) == 3 && embedded.Version == "2026.09.28.1");
         string[] normalHashes =
         [
             "F24670CC98DB50C3440F22F1B21B2F2A0744F7EE448A8BF757D4894446210DCC",
