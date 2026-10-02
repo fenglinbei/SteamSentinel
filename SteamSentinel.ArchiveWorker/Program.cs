@@ -14,7 +14,15 @@ internal static class Program
     private static readonly BoundedLineReader Input = new(Console.In);
 
     [STAThread]
-    private static async Task<int> Main()
+    private static int Main(string[] args)
+    {
+        if (StartupCompatibility.TryRunProbe(args, StartupRole.Worker, out int exitCode)) return exitCode;
+        if (args.Length != 0) return 2;
+        return RunAsync().GetAwaiter().GetResult();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task<int> RunAsync()
     {
         Console.InputEncoding = System.Text.Encoding.UTF8;
         Console.OutputEncoding = System.Text.Encoding.UTF8;

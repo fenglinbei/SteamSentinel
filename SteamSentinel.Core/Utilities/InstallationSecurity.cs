@@ -53,11 +53,10 @@ public static class InstallationSecurity
 
     internal static bool GrantsWrite(FileSystemRights rights) => (rights & DangerousRights) != 0;
 
-    private static readonly string[] RequiredComponents =
+    private static readonly string[] CommonRequiredComponents =
     [
         "SteamSentinel.exe",
         "SteamSentinel.Broker.exe",
-        "SteamSentinel.ArchiveWorker.exe",
         "SteamSentinel.dll",
         "SteamSentinel.Core.dll",
         "SteamSentinel.Broker.dll",
@@ -70,6 +69,15 @@ public static class InstallationSecurity
         "SteamSentinel.ArchiveWorker.runtimeconfig.json",
         @"zh-Hans\SteamSentinel.Core.resources.dll"
     ];
+
+    internal static IEnumerable<string> RequiredComponents(bool unified) => CommonRequiredComponents.Concat(unified
+        ? Enum.GetValues<StartupRole>().SelectMany(role => Enum.GetValues<StartupMode>().Select(mode => StartupCompatibility.HostFileName(role, mode)))
+        : ["SteamSentinel.ArchiveWorker.exe"]);
+
+    internal static bool HasUnifiedPayload(string root, IReadOnlyDictionary<string, string> expected, string? processPath) =>
+        StartupCompatibility.IsUnifiedHost(processPath) ||
+        Enum.GetValues<StartupRole>().SelectMany(role => Enum.GetValues<StartupMode>().Select(mode => StartupCompatibility.HostFileName(role, mode)))
+            .Any(name => expected.ContainsKey(name) || File.Exists(Path.Combine(root, name)));
 
     public static InstallationSecurityStatus Evaluate(string? baseDirectory = null)
     {
@@ -91,7 +99,8 @@ public static class InstallationSecurity
             if (!sumsAcl.IsProtected) return sumsAcl;
 
             Dictionary<string, string> expected = ReadChecksums(sumsPath);
-            foreach (string component in RequiredComponents)
+            bool unified = HasUnifiedPayload(root, expected, Environment.ProcessPath);
+            foreach (string component in RequiredComponents(unified))
                 if (!expected.ContainsKey(component)) return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.04", (component)));
 
             foreach (string file in EnumerateInstallFilesWithoutReparsePoints(root))
@@ -105,7 +114,7 @@ public static class InstallationSecurity
             }
 
             // Apphosts load managed assemblies and bundled runtime files. Protect the payload,
-            // not only the three EXEs, before either the broker or the UI can elevate.
+            // including every launcher and both host variants, before the broker or UI can elevate.
             HashSet<string> checkedDirectories = new(StringComparer.OrdinalIgnoreCase) { root };
             foreach ((string component, string expectedHash) in expected)
             {

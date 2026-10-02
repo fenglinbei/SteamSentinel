@@ -177,3 +177,55 @@ jobs:
           path: ${{ steps.selftest.outputs.result_path }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Build and probe unified native startup
+        id: startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $payload = Join-Path $env:RUNNER_TEMP 'SteamSentinel-unified-payload'
+          $nativeBuild = Join-Path $env:RUNNER_TEMP 'SteamSentinel-unified-native-build'
+          $results = Join-Path $env:RUNNER_TEMP 'SteamSentinel-unified-startup-results.json'
+          "result_path=$results" >> $env:GITHUB_OUTPUT
+          & ./scripts/Test-WorkerFirewallContract.ps1 -ResultsPath (Join-Path $env:RUNNER_TEMP 'SteamSentinel-worker-firewall-contract-results.json')
+          $buildId = "$env:GITHUB_SHA.ci"
+          $version = '${{ steps.contract.outputs.version }}'
+          $properties = @('-p:SelfContained=true', '-p:UseAppHost=true', '-p:CetCompat=true',
+            '-p:AppendRuntimeIdentifierToOutputPath=false', '-p:ContinuousIntegrationBuild=true',
+            "-p:SteamSentinelSourceRevision=$env:GITHUB_SHA", '-p:SteamSentinelBuildChannel=ci',
+            "-p:SteamSentinelBuildId=$buildId")
+          dotnet restore SteamSentinel.slnx --locked-mode -r win-x64 `
+            --source https://api.nuget.org/v3/index.json @properties
+          if ($LASTEXITCODE -ne 0) { throw "Self-contained restore failed ($LASTEXITCODE)." }
+          foreach ($project in @('SteamSentinel.App', 'SteamSentinel.Broker', 'SteamSentinel.ArchiveWorker')) {
+            dotnet publish "$project/$project.csproj" -c Release -r win-x64 --self-contained true `
+              --no-restore -o $payload '-p:PublishSingleFile=false' '-p:PublishTrimmed=false' @properties
+            if ($LASTEXITCODE -ne 0) { throw "Self-contained publish failed: $project ($LASTEXITCODE)." }
+          }
+          $manifest = & ./scripts/build-unified-startup.ps1 -PublishRoot $payload -BuildRoot $nativeBuild `
+            -Version $version -BuildIdentity "$version+$buildId"
+          if ($manifest.mode -ne 'unified' -or @($manifest.hosts).Count -ne 9) {
+            throw 'Unified native build did not verify all launchers and hosts.'
+          }
+          $hashes = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
+            Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object FullName | ForEach-Object {
+              '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash,
+                $_.FullName.Substring($payload.Length + 1)
+            })
+          [IO.File]::WriteAllLines((Join-Path $payload 'SHA256SUMS.txt'), [string[]]$hashes,
+            [Text.UTF8Encoding]::new($false))
+          & ./scripts/Test-UnifiedStartup.ps1 -PublishRoot $payload -ResultsPath $results
+          if (-not (Test-Path -LiteralPath $results -PathType Leaf)) { throw 'Startup tests did not write results.' }
+          $result = Get-Content -LiteralPath $results -Raw | ConvertFrom-Json
+          if ([int]$result.passed -lt 1 -or [int]$result.failed -ne 0 -or [int]$result.skipped -ne 0) {
+            throw 'Unified startup acceptance requires passing checks with zero failures and zero skips.'
+          }
+
+      - name: Upload unified startup result
+        if: always() && steps.startup.outputs.result_path != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SteamSentinel-unified-startup-${{ github.sha }}
+          path: ${{ steps.startup.outputs.result_path }}
+          if-no-files-found: error
+          retention-days: 30

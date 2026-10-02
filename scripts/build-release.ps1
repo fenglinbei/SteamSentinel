@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet('Preview', 'Release')]
     [string]$Mode = 'Preview',
@@ -57,12 +57,14 @@ function Assert-PreviewSourcePathAllowed {
         $normalized -eq '.editorconfig' -or
         $normalized -match '^docs/[^/]+\.md$' -or
         $normalized -match '^scripts/[^/]+\.ps1$' -or
+        $normalized -match '^native/[^/]+\.(cpp|h|rc|manifest)$' -or
         $normalized -eq 'scripts/check_localization_resources.py' -or
         $normalized -eq 'installer/ChineseSimplified.isl' -or
         $normalized -eq 'installer/Initialize-MachineState.ps1' -or
         $normalized -eq 'installer/MachineStateBootstrap.cs' -or
         $normalized -eq 'installer/Maintain-InstallPayload.ps1' -or
         $normalized -eq 'installer/PayloadMaintenance.cs' -or
+        $normalized -eq 'installer/Verify-WorkerFirewall.ps1' -or
         $normalized -match '^\.github/workflows/[^/]+\.(yml|yaml)$'
     if (-not $allowed) {
         throw "Dirty Preview refuses added file outside the source allowlist: $Path"
@@ -184,12 +186,14 @@ $propsPath = Join-Path $solutionRoot 'Directory.Build.props'
 [xml]$props = Get-Content -LiteralPath $propsPath -Raw -Encoding UTF8
 $version = [string]$props.Project.PropertyGroup.VersionPrefix
 $runtimeFrameworkVersion = [string]$props.Project.PropertyGroup.SteamSentinelRuntimeFrameworkVersion
+$startupMode = [string]$props.Project.PropertyGroup.SteamSentinelStartupMode
 $targetFramework = [string]$props.Project.PropertyGroup.TargetFramework
 $minimumSelfTests = [int]$props.Project.PropertyGroup.SteamSentinelMinimumSelfTests
 if ($version -notmatch '^\d+\.\d+\.\d+$') {
     throw "Directory.Build.props has an invalid VersionPrefix: $version"
 }
 if ($runtimeFrameworkVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'A fixed servicing runtime version is required.' }
+if ($startupMode -ne 'unified') { throw 'The release build requires the unified native startup contract.' }
 if ($minimumSelfTests -lt 2348) { throw 'SteamSentinelMinimumSelfTests cannot be below the 0.3.0 acceptance baseline of 2348.' }
 
 $expectedSdk = [string]((Get-Content -LiteralPath (Join-Path $solutionRoot 'global.json') -Raw -Encoding UTF8 | ConvertFrom-Json).sdk.version)
@@ -307,6 +311,8 @@ try {
     $selfTestPath = Join-Path $stageRoot 'SELFTEST-RESULTS.json'
     $installerTestPath = Join-Path $stageRoot 'INSTALLER-MAINTENANCE-RESULTS.json'
     $machineStateTestPath = Join-Path $stageRoot 'INSTALLER-MACHINE-STATE-RESULTS.json'
+    $startupTestPath = Join-Path $stageRoot 'UNIFIED-STARTUP-RESULTS.json'
+    $workerFirewallTestPath = Join-Path $stageRoot 'WORKER-FIREWALL-CONTRACT-RESULTS.json'
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
     & git -C $solutionRoot archive --format=zip --prefix=SteamSentinel/ -o $sourceArchivePath $sourceTree
@@ -324,6 +330,7 @@ try {
     [xml]$snapshotProps = Get-Content -LiteralPath (Join-Path $snapshotRoot 'Directory.Build.props') -Raw -Encoding UTF8
     if ([string]$snapshotProps.Project.PropertyGroup.VersionPrefix -ne $version -or
         [string]$snapshotProps.Project.PropertyGroup.SteamSentinelRuntimeFrameworkVersion -ne $runtimeFrameworkVersion -or
+        [string]$snapshotProps.Project.PropertyGroup.SteamSentinelStartupMode -ne $startupMode -or
         [string]$snapshotProps.Project.PropertyGroup.TargetFramework -ne $targetFramework) {
         throw 'The source snapshot product/runtime versions differ from the selected build inputs.'
     }
@@ -392,6 +399,13 @@ try {
 
     $signingProfile = Get-ReleaseSigningProfile -Thumbprint $SigningThumbprint `
         -SignToolPath $SignToolPath -TimestampUrl $TimestampUrl -RequirePublicTrust:$isPublicRelease
+    & (Join-Path $snapshotRoot 'scripts\Test-WorkerFirewallContract.ps1') -ResultsPath $workerFirewallTestPath | Out-Host
+    $workerFirewallTests = Get-Content -LiteralPath $workerFirewallTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($workerFirewallTests.schema -ne 'SteamSentinel.WorkerFirewallContractTests/1' -or
+        [int]$workerFirewallTests.passed -lt 20 -or [int]$workerFirewallTests.failed -ne 0 -or
+        [int]$workerFirewallTests.skipped -ne 0 -or $workerFirewallTests.systemFirewallAccessed -ne $false) {
+        throw 'Worker firewall contract tests did not satisfy the inert zero-failure gate.'
+    }
     $solution = Join-Path $snapshotRoot 'SteamSentinel.slnx'
     $msbuildProperties = @(
         "-p:SteamSentinelSourceRevision=$commit",
@@ -400,7 +414,8 @@ try {
         '-p:ContinuousIntegrationBuild=true',
         '-p:SelfContained=true',
         '-p:AppendRuntimeIdentifierToOutputPath=false',
-        '-p:UseAppHost=true'
+        '-p:UseAppHost=true',
+        '-p:CetCompat=true'
     )
     $nuget = 'https://api.nuget.org/v3/index.json'
     Invoke-DotNet restore $solution '--locked-mode' '--source' $nuget '-r' 'win-x64' `
@@ -467,6 +482,13 @@ try {
         @publishArgs '-o' $runtimeStage
     $publishedRuntime = Assert-SelfContainedRuntime -Root $runtimeStage `
         -Applications @('SteamSentinel', 'SteamSentinel.ArchiveWorker', 'SteamSentinel.Broker') -ExpectedVersion $runtimeFrameworkVersion
+    $unifiedStartup = & (Join-Path $snapshotRoot 'scripts\build-unified-startup.ps1') `
+        -PublishRoot $runtimeStage -BuildRoot (Join-Path $workRoot 'unified-startup') `
+        -Version $version -BuildIdentity $buildIdentity -SourceRoot $snapshotRoot
+    if ($unifiedStartup.schema -ne 'SteamSentinel.UnifiedStartup/1' -or
+        $unifiedStartup.mode -ne 'unified' -or @($unifiedStartup.hosts).Count -ne 9) {
+        throw 'Unified startup host construction did not return its verified manifest.'
+    }
 
     $versionedAssemblies = @(
         'SteamSentinel.dll',
@@ -486,11 +508,10 @@ try {
     }
 
     Copy-Item -Path (Join-Path $runtimeStage '*') -Destination $packageDir -Recurse
-    Sign-ReleaseFiles -Profile $signingProfile -Root $packageDir -RelativeFiles @(
-        'SteamSentinel.exe', 'SteamSentinel.dll', 'SteamSentinel.Core.dll',
-        'SteamSentinel.ArchiveWorker.exe', 'SteamSentinel.ArchiveWorker.dll',
-        'SteamSentinel.Broker.exe', 'SteamSentinel.Broker.dll'
-    )
+    $signedProductFiles = @($unifiedStartup.hosts | ForEach-Object { $_.path }) + @(
+        'SteamSentinel.dll', 'SteamSentinel.Core.dll',
+        'SteamSentinel.ArchiveWorker.dll', 'SteamSentinel.Broker.dll')
+    Sign-ReleaseFiles -Profile $signingProfile -Root $packageDir -RelativeFiles $signedProductFiles
     $signatureStatus = Write-ReleaseSigningInfo -Profile $signingProfile -Root $packageDir
 
     $packageAssets = Join-Path $packageDir 'SteamSentinel.App\Assets'
@@ -525,6 +546,10 @@ try {
         "Runtime=win-x64 self-contained .NET $runtimeFrameworkVersion",
         "NETCoreRuntime=$runtimeFrameworkVersion",
         "WindowsDesktopRuntime=$runtimeFrameworkVersion",
+        'StartupMode=unified',
+        'StandardHostCetCompat=true',
+        'CompatibilityHostCetCompat=false',
+        'NativeLauncherRuntime=MSVC static /MT',
         'SelfTestHost=native-apphost self-contained',
         "Sdk=$actualSdk",
         "BuiltAtUtc=$builtAtUtc",
@@ -539,6 +564,28 @@ try {
             '{0} *{1}' -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash, $relative
         }
     Write-Utf8Lines -Path (Join-Path $packageDir 'SHA256SUMS.txt') -Lines $hashLines
+    $startupManifestHash = (Get-FileHash -LiteralPath (Join-Path $packageDir 'SHA256SUMS.txt') -Algorithm SHA256).Hash
+    & (Join-Path $snapshotRoot 'scripts\Test-UnifiedStartup.ps1') -PublishRoot $packageDir -ResultsPath $startupTestPath | Out-Host
+    if (-not (Test-Path -LiteralPath $startupTestPath -PathType Leaf)) {
+        throw 'Unified startup tests did not produce a machine-readable result.'
+    }
+    $startupTests = Get-Content -LiteralPath $startupTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($null -eq $startupTests.PSObject.Properties['passed'] -or [int]$startupTests.passed -lt 1 -or
+        $null -eq $startupTests.PSObject.Properties['failed'] -or [int]$startupTests.failed -ne 0 -or
+        $null -eq $startupTests.PSObject.Properties['skipped'] -or [int]$startupTests.skipped -ne 0 -or
+        (Get-FileHash -LiteralPath (Join-Path $packageDir 'SHA256SUMS.txt') -Algorithm SHA256).Hash -ne $startupManifestHash) {
+        throw 'Unified startup tests failed, skipped an acceptance check, or changed the signed payload manifest.'
+    }
+    $verifiedHashLines = Get-ChildItem -LiteralPath $packageDir -Recurse -File |
+        Where-Object Name -ne 'SHA256SUMS.txt' |
+        Sort-Object FullName |
+        ForEach-Object {
+            $relative = $_.FullName.Substring($packageDir.Length).TrimStart('\', '/')
+            '{0} *{1}' -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash, $relative
+        }
+    if (@(Compare-Object -ReferenceObject $hashLines -DifferenceObject $verifiedHashLines).Count -ne 0) {
+        throw 'Unified startup tests changed, added or removed signed package payload files.'
+    }
     [IO.Compression.ZipFile]::CreateFromDirectory(
         $packageDir,
         $archivePath,
@@ -589,6 +636,9 @@ try {
         runtime = 'win-x64'
         runtimeFrameworkVersion = $runtimeFrameworkVersion
         selfContained = $true
+        unifiedStartup = $unifiedStartup
+        unifiedStartupTests = $startupTests
+        workerFirewallContractTests = $workerFirewallTests
         runtimeVerification = [ordered]@{
             requestedDownloads = $runtimePackRequests
             tested = $testedRuntimes

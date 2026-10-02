@@ -11680,4 +11680,20 @@ DER SHA-256：{3}
   <data name="Ui.RemediationAvailability.ViewRecords" xml:space="preserve">
     <value>查看记录</value>
   </data>
+  <data name="Ui.App.ErrorReport.Saved" xml:space="preserve">
+    <value>已保存本地错误报告（未上传）：
+{0}
+
+是否现在打开报告？你可以先检查内容，再发送给协助排查的人员。</value>
+    <comment>Display only: SteamSentinel.App/App.xaml.cs. The placeholder is a local report path.</comment>
+  </data>
+  <data name="Ui.App.ErrorReport.Unavailable" xml:space="preserve">
+    <value>未能保存错误报告，可能是日志目录无法访问或已达到 50 份报告上限。没有上传任何内容。</value>
+    <comment>Display only: SteamSentinel.App/App.xaml.cs</comment>
+  </data>
+  <data name="Backend.App.RemediationClient.PreflightNotStarted.01" xml:space="preserve">
+    <value>管理员组件启动预检失败，尚未开始执行任何处置操作。请查看以下目录中的本地启动报告：
+{0}</value>
+    <comment>The native wrapper certified that no business child was started. Not a remediation result.</comment>
+  </data>
 </root>

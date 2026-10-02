@@ -11,7 +11,14 @@ internal static class Program
     private const int ResultChannelUnavailableExitCode = 10;
 
     [STAThread]
-    private static async Task<int> Main(string[] args)
+    private static int Main(string[] args)
+    {
+        if (StartupCompatibility.TryRunProbe(args, StartupRole.Broker, out int exitCode)) return exitCode;
+        return RunAsync(args).GetAwaiter().GetResult();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task<int> RunAsync(string[] args)
     {
         if (!TryInitializeDisplayLanguage(args)) return 2;
         string planPath = args[0];

@@ -11680,4 +11680,20 @@ Component error output: </value>
   <data name="Ui.RemediationAvailability.ViewRecords" xml:space="preserve">
     <value>View records</value>
   </data>
+  <data name="Ui.App.ErrorReport.Saved" xml:space="preserve">
+    <value>A local error report was saved (it has not been uploaded):
+{0}
+
+Open the report now? You can review it before sharing it for troubleshooting.</value>
+    <comment>Display only: SteamSentinel.App/App.xaml.cs. The placeholder is a local report path.</comment>
+  </data>
+  <data name="Ui.App.ErrorReport.Unavailable" xml:space="preserve">
+    <value>The error report could not be saved. The log folder may be inaccessible or its 50-report limit may have been reached. Nothing was uploaded.</value>
+    <comment>Display only: SteamSentinel.App/App.xaml.cs</comment>
+  </data>
+  <data name="Backend.App.RemediationClient.PreflightNotStarted.01" xml:space="preserve">
+    <value>The administrator component failed its startup check. No remediation operation was started. Review the local startup report in:
+{0}</value>
+    <comment>The native wrapper certified that no business child was started. Not a remediation result.</comment>
+  </data>
 </root>

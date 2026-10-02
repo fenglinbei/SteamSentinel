@@ -7,6 +7,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <!-- WPF caches this setting at first use. Full-suite fixtures can initialize
+         WPF before the screenshot utilities set their switches in managed code. -->
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Media.ShouldRenderEvenWhenNoDisplayDevicesAreAvailable" Value="true" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />
     <ProjectReference Include="..\SteamSentinel.App\SteamSentinel.App.csproj" />
     <ProjectReference Include="..\SteamSentinel.Broker\SteamSentinel.Broker.csproj" />

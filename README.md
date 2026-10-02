@@ -2,11 +2,13 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，本轮为 [v0.3.0-preview.4 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.4)，规则版本为 `2026.09.28.1`。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.0**，本轮为 [v0.3.0-preview.5 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.5)，规则版本为 `2026.09.28.1`。
 
-处置修订 4 修复“全选后仍无法预览处置”：启动时自动核验旧操作；确认已结束后恢复新方案入口，保留旧未知结果。按钮不可用时直接说明原因，并提供“检查并继续／重新扫描／查看记录”。关闭旧程序、安装完整新包，再重新扫描原目录即可；无需删除病例或手工改配置，旧计划不会重放。详见[处置恢复说明](docs/REMEDIATION-RECOVERY-0.3.0.md)。
+兼容修订 5 使用同一个完整安装包，由原生启动器先核验文件并检测实际宿主；只有确认已知 CET 初始化错误后，才尝试随包提供的兼容宿主。未知启动错误停止并保存本地报告，运行时错误也可取得报告路径，不自动上传。标准宿主保留 CET；兼容模式只关闭本程序宿主的该项保护，不修改系统安全设置。详见[本轮发行说明](docs/RELEASE-0.3.0-preview.5.md)。
 
-修复基线完整自测 **2,615 项**、安装维护 **56 项**、状态迁移 **43 项**均通过；本轮发行从干净提交重新完整构建，精确身份与实际计数以发行附件为准。中英文布局、89 项恢复专项和真实历史记录只读验证均已完成。Windows 10/11 安装 GUI、真实感染恢复及物理跨屏未在本修订重跑，历史结果保留原身份。见[发布状态与验收索引](docs/RELEASE-0.3.0.md)。
+本地准备基线完整原生自测 **2,710 项**、统一启动 **30 项**、Worker 防火墙契约 **22 项**、安装维护 **56 项**、状态迁移 **43 项**均通过。发行须从干净提交重新构建，最终身份及实际计数以发行附件为准。受影响的旧 Win10 CET 实机与最终包的安装、升级、卸载尚未复测；合成 CET 用例不代表这些实机验证已经完成。
+
+处置修订 4 的恢复逻辑继续保留：启动时核验旧操作；确认已结束后恢复新方案入口，旧未知结果保留，旧计划不重放。按钮不可用时提供“检查并继续／重新扫描／查看记录”，无需删除病例或手工改配置。详见[处置恢复说明](docs/REMEDIATION-RECOVERY-0.3.0.md)。
 
 规则修正 3 继续保留：通用词语共现只供复核，不授予隔离或终止宿主资格；`.node` 原生模块兼容、历史路径低风险观察及精确强证据按各自规则处理。旧报告保留原文，新计划拒绝退役弱规则。见[误报修正说明](docs/FALSE-POSITIVE-CORRECTION-0.3.0.md)。
 
@@ -20,7 +22,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 ## 主要能力
 
-0.3.0 提供“语言 / Language”页，可选择自动 / 简体中文 / English，保存后下次启动生效。Markdown 报告和记录包可单独选择本次导出语言；同一报告对象的 JSON 不因显示语言变化。后台消息已接通可选的稳定消息 ID 和有界参数，来源原文与旧记录保留。中英文使用方法见 [语言设置与导出](docs/LANGUAGE-SETTINGS-0.3.0.md)；资源与双语安装器的早期实现记录见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)，发布验收以[当前索引](docs/RELEASE-0.3.0.md)为准。
+0.3.0 提供“语言 / Language”页，可选择自动 / 简体中文 / English，保存后下次启动生效。Markdown 报告和记录包可单独选择本次导出语言；同一报告对象的 JSON 不因显示语言变化。后台消息已接通可选的稳定消息 ID 和有界参数，来源原文与旧记录保留。中英文使用方法见 [语言设置与导出](docs/LANGUAGE-SETTINGS-0.3.0.md)；资源与双语安装器的早期实现记录见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)，发布验收以[本轮说明](docs/RELEASE-0.3.0-preview.5.md)为准。
 
 当前源码已接入第三批精确证书/代理动作、依赖阻断、持久病例与跨会话复验，见 [第三批交付说明](docs/EXACT-REMEDIATION-PHASE3.md)。其中精确证书／代理配置的真实样本与重启验收尚未完成，精确配置规则目录暂为空，当前不会仅凭 PAC 或证书名称开放自动修复。第二批的有界补查、离线宿主签名、组件关联及 MSI 静态规则见 [第二批交付说明](docs/RELATED-COMPONENTS-PHASE2.md)。
 
@@ -55,7 +57,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 可在“代理与证书”页执行本机只读诊断，查看 8 个代理配置来源及当前用户／本机的物理 Root、CA 证书来源。结果会解释“待确认”“暂不支持”和“条件未满足”，不能选择处理的项目会保留原因和下一步；普通信息不计为未处理。诊断不连接外部地址、不修改配置，也不代表确认恶意或处理完成。范围和验证见 [第一批交付说明](docs/TRUST-PROXY-DIAGNOSTICS-PHASE1.md)。
 
-1. 从 [v0.3.0-preview.3 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.3)取得完整安装包，对照带版本前缀的 `RELEASE-SHA256.txt`、`PUBLICATION-IDENTITY.json` 及 `RELEASE-METADATA.json` 核对哈希与来源。本轮为干净提交完整重编译的自签名预发布包，构建身份见[发布索引](docs/RELEASE-0.3.0.md)。升级前退出主程序和管理员窗口，不要只替换 EXE。早期安装器的短路径 `UnsafePath` 问题已在修订 2 修复，本包保留该修复；无需手动删除旧文件或放宽目录权限。
+1. 从 [v0.3.0-preview.5 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.0-preview.5)取得完整安装包，对照带版本前缀的 `RELEASE-SHA256.txt`、`PUBLICATION-IDENTITY.json` 及 `RELEASE-METADATA.json` 核对哈希与来源。构建身份和验收边界见[本轮发行说明](docs/RELEASE-0.3.0-preview.5.md)。升级前退出主程序和管理员窗口，不要只替换 EXE 或混合不同包的宿主。早期安装器的短路径 `UnsafePath` 修复继续保留；无需手动删除旧文件或放宽目录权限。
 2. 使用安装器安装到固定的 Program Files 目录。默认普通权限扫描，处置时自动请求 UAC，也可点击“打开管理员窗口”主动授权，不需要在快捷方式中手动配置。
 3. 首次使用先执行“快速扫描”，随后执行“完整工坊扫描”。单独收到的 MP4、压缩包或安装包可用“扫描文件/目录”。
 4. 检查结果顶部的覆盖状态。`Complete` 只表示已完成支持范围内的检查，`Partial` 不能当作“安全”。
@@ -117,7 +119,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 
 
 ## 审查入口
 
-- [0.3.0 发布状态、下载身份与验收索引](docs/RELEASE-0.3.0.md) / [English release index](docs/RELEASE-0.3.0.en.md)
+- [0.3.0 兼容修订 5：下载身份与验收边界](docs/RELEASE-0.3.0-preview.5.md) / [English release notes](docs/RELEASE-0.3.0-preview.5.en.md)
+- [处置修订 4 与更早验收索引](docs/RELEASE-0.3.0.md)
 - [威胁模型](docs/THREAT-MODEL.md)
 - [测试证据](docs/TEST-EVIDENCE.md)
 - [0.2.0 容器实现与支持边界](docs/ARCHIVE-IMPLEMENTATION-0.2.0.md)

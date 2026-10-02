@@ -3,6 +3,10 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <SteamSentinelRuntimeFrameworkVersion>10.0.12</SteamSentinelRuntimeFrameworkVersion>
+    <SteamSentinelStartupMode>unified</SteamSentinelStartupMode>
+    <!-- Keep development and standard apphosts protected. The release host builder
+         creates an explicit compatibility host from the same pinned template. -->
+    <CetCompat>true</CetCompat>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>

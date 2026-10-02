@@ -49,6 +49,8 @@ internal static partial class Program
             await TestJsonFileSynchronizationContextAsync(root);
             await TestWriteNewAndDirectoryFingerprintAsync(root);
             TestSecurityValidation();
+            await TestStartupCompatibilityAsync(root);
+            await TestManagedErrorReportsAsync(root);
             await TestContentScannerAsync(root, rules);
             await TestDefaultWallpaperSuppressionAsync(root, rules);
             await TestSteamTamperScannerAsync(root, rules);
@@ -752,6 +754,10 @@ internal static partial class Program
     {
         switch (args[0])
         {
+            case "--managed-error-report-tests" when args.Length == 2:
+                return await RunManagedErrorReportTestsAsync(Path.GetFullPath(args[1]));
+            case "--startup-compatibility-tests" when args.Length == 2:
+                return await RunStartupCompatibilityTestsAsync(Path.GetFullPath(args[1]));
             case "--secure-lease-tests" when args.Length == 2:
                 string leaseRoot = Path.GetFullPath(args[1]);
                 if (Directory.Exists(leaseRoot) || File.Exists(leaseRoot)) throw new IOException("A new inert test directory is required.");

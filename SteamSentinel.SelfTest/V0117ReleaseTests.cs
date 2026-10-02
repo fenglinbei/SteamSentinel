@@ -69,6 +69,33 @@ internal static partial class Program
             !installer.Contains("icacls.exe", StringComparison.Ordinal) &&
             !installRunSection.Contains("netsh.exe", StringComparison.Ordinal));
 
+        string[] workerRules = (from variant in new[] { "", " Standard", " Compat" }
+                                from direction in new[] { "inbound", "outbound" }
+                                select $"SteamSentinel ArchiveWorker{variant} {direction} block").ToArray();
+        Check("启动兼容 Worker 六条保留阻断不会进入恶意规则恢复范围", workerRules.All(name =>
+            !SteamSentinel.Core.Scanning.ProtectionConfiguration.IsRelatedFirewall(@"C:\Steam",
+                new(name, name, @"C:\Steam\steam.exe", 2, 2, 1, 7))));
+        SteamSentinel.Broker.BrokerEngine firewallBroker = new();
+        System.Reflection.MethodInfo validateRecord = typeof(SteamSentinel.Broker.BrokerEngine).GetMethod(
+            "ValidateQuarantineRecord", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Guid firewallIncident = Guid.NewGuid();
+        bool AcceptsFirewallRollback(string name)
+        {
+            try
+            {
+                validateRecord.Invoke(firewallBroker, [new SteamSentinel.Core.Models.QuarantineRecord
+                {
+                    Type = SteamSentinel.Core.Models.RemediationActionType.AddProgramFirewallBlock,
+                    OriginalTarget = @"C:\Program Files\SteamSentinel\SteamSentinel.ArchiveWorker.exe",
+                    FirewallRuleName = name
+                }, Path.GetTempPath(), firewallIncident]);
+                return true;
+            }
+            catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException is InvalidDataException) { return false; }
+        }
+        Check("启动兼容 Broker 回滚拒绝删除六条 Worker 保留阻断", workerRules.All(name => !AcceptsFirewallRollback(name)));
+        Check("启动兼容 Broker 仍接受本事件专属阻断回滚", AcceptsFirewallRollback($"SteamSentinel-{firewallIncident:N}-{Guid.NewGuid():N}"));
+
         string[] projects = ["SteamSentinel.App", "SteamSentinel.ArchiveWorker", "SteamSentinel.Broker", "SteamSentinel.Core", "SteamSentinel.SelfTest"];
         Check("0.1.17 所有项目提交有效 NuGet 锁文件", projects.All(project =>
         {

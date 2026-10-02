@@ -58,3 +58,11 @@ Release builds require elevated Windows execution of the archived maintenance te
 机器状态迁移另有归档源码专项 `Test-InstallerMachineState.ps1`，使用隔离的无害目录及测试注册表键，结果保存为 `INSTALLER-MACHINE-STATE-RESULTS.json`，独立要求零失败、零跳过及源码绑定。真实旧版升级仍必须从未经手动修复权限的现场验证，不能用已经收紧过权限的实验机替代。
 
 Machine-state migration has a separate archived-source test gate using isolated inert directories and test registry keys. `INSTALLER-MACHINE-STATE-RESULTS.json` binds the tested source and requires zero failures and skips. Real upgrade acceptance must also start from unchanged legacy permissions; an already-hardened lab machine does not establish that migration works.
+
+统一启动布局继续使用原 AppId 和安装目录。安装器保留旧名 ArchiveWorker 的入/出站阻断，同时为 `.Standard.exe`、`.Compat.exe` 各创建入/出站阻断，共六条。内嵌且绑定哈希的 `Verify-WorkerFirewall.ps1` 只读核验六条规则的精确路径与完整阻断条件；失败时不自动启动应用。卸载按六个保留名称精确清理，不碰 Broker 按事件 GUID 命名的处置规则。规则契约测试使用假对象，不连接或修改本机防火墙，另存 `WORKER-FIREWALL-CONTRACT-RESULTS.json`；真实安装、升级、模式切换和卸载仍须在可回滚 Windows 环境检查有效策略。
+
+The unified startup layout retains the existing AppId and installation directory. Setup keeps both rules for the legacy ArchiveWorker name and adds inbound/outbound rules for each Standard and Compat host, for six reserved rules in total. A hash-bound embedded helper verifies the exact application paths and complete blocking conditions without modifying policy. Uninstallation removes only those six reserved names. Inert contract tests do not access the host firewall; effective policy still requires isolated installation, upgrade, mode-switch, and uninstall acceptance.
+
+运行中检查使用 Inno Setup 的 Windows Restart Manager：`CloseApplications=yes` 配合 `CloseApplicationsFilter=*.exe,*.dll`，将 `[Files]` 中需要更新的目标路径注册为资源，覆盖原生入口、两组宿主和共享 DLL，不依赖固定进程名列表。`PayloadMaintenance.cs` 另按安装树枚举文件，以排斥写入/替换的句柄核验；它不是进程枚举器，也不会主动终止进程。现场若仍有占用或拒绝关闭，安装应停止或提示，不能把静态配置视为已完成真实升级验收。
+
+In-use detection uses Inno Setup's Windows Restart Manager integration. The executable/DLL filter covers destination files from the recursive payload entry, including native launchers, both host groups, and shared DLLs. It does not rely on a fixed process-name list. Payload maintenance separately validates the installation tree under write-excluding handles; it does not enumerate or terminate processes.

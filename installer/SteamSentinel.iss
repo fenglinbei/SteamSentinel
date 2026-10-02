@@ -14,11 +14,30 @@
 #define AppName "SteamSentinel Steam 红信安全工具"
 #define WorkerRuleOut "SteamSentinel ArchiveWorker outbound block"
 #define WorkerRuleIn "SteamSentinel ArchiveWorker inbound block"
+#define WorkerStandardRuleOut "SteamSentinel ArchiveWorker Standard outbound block"
+#define WorkerStandardRuleIn "SteamSentinel ArchiveWorker Standard inbound block"
+#define WorkerCompatRuleOut "SteamSentinel ArchiveWorker Compat outbound block"
+#define WorkerCompatRuleIn "SteamSentinel ArchiveWorker Compat inbound block"
+#define WorkerFirewallScriptHash GetSHA256OfFile(SourcePath + "Verify-WorkerFirewall.ps1")
 #define MachineStateScriptHash GetSHA256OfFile(SourcePath + "Initialize-MachineState.ps1")
 #define MachineStateSourceHash GetSHA256OfFile(SourcePath + "MachineStateBootstrap.cs")
 #define PayloadScriptHash GetSHA256OfFile(SourcePath + "Maintain-InstallPayload.ps1")
 #define PayloadSourceHash GetSHA256OfFile(SourcePath + "PayloadMaintenance.cs")
 #define IncomingManifestHash GetSHA256OfFile(PayloadDir + "\SHA256SUMS.txt")
+; The incoming checksum manifest verifies all bytes at install time. Reject an
+; incomplete unified launch layout before an installer can be distributed.
+#if !FileExists(PayloadDir + "\SteamSentinel.exe") || !FileExists(PayloadDir + "\SteamSentinel.Broker.exe") || !FileExists(PayloadDir + "\SteamSentinel.ArchiveWorker.exe")
+  #error The native launchers and legacy Worker alias are required.
+#endif
+#if !FileExists(PayloadDir + "\SteamSentinel.Standard.exe") || !FileExists(PayloadDir + "\SteamSentinel.Compat.exe")
+  #error Both UI runtime hosts are required.
+#endif
+#if !FileExists(PayloadDir + "\SteamSentinel.Broker.Standard.exe") || !FileExists(PayloadDir + "\SteamSentinel.Broker.Compat.exe")
+  #error Both Broker runtime hosts are required.
+#endif
+#if !FileExists(PayloadDir + "\SteamSentinel.ArchiveWorker.Standard.exe") || !FileExists(PayloadDir + "\SteamSentinel.ArchiveWorker.Compat.exe")
+  #error Both ArchiveWorker runtime hosts are required.
+#endif
 
 [Setup]
 AppId={{9C3982D3-D18D-4B4E-A516-E8653A383683}
@@ -50,6 +69,8 @@ SetupLogging=yes
 ShowLanguageDialog=yes
 LanguageDetectionMethod=uilanguage
 CloseApplications=yes
+; Restart Manager checks each destination payload path, including every host variant.
+CloseApplicationsFilter=*.exe,*.dll
 RestartApplications=no
 UninstallDisplayIcon={app}\SteamSentinel.exe
 SetupIconFile={#PayloadDir}\SteamSentinel.App\Assets\App.ico
@@ -114,6 +135,7 @@ Source: "Initialize-MachineState.ps1"; Flags: dontcopy
 Source: "MachineStateBootstrap.cs"; Flags: dontcopy
 Source: "Maintain-InstallPayload.ps1"; Flags: dontcopy
 Source: "PayloadMaintenance.cs"; Flags: dontcopy
+Source: "Verify-WorkerFirewall.ps1"; Flags: dontcopy
 Source: "{#PayloadDir}\SHA256SUMS.txt"; DestName: "incoming-payload-sha256.txt"; Flags: dontcopy
 ; No blind deletion of the 17 formerly listed root documentation files. Without
 ; an approved historical content hash, these are preserved and preflight refuses.
@@ -327,15 +349,32 @@ end;
 
 procedure ConfigureWorkerFirewall;
 var
-  WorkerPath: String;
+  WorkerPath, StandardPath, CompatPath, VerifyScript: String;
 begin
   WorkerPath := ExpandConstant('{app}\SteamSentinel.ArchiveWorker.exe');
-  if not FileExists(WorkerPath) then
+  StandardPath := ExpandConstant('{app}\SteamSentinel.ArchiveWorker.Standard.exe');
+  CompatPath := ExpandConstant('{app}\SteamSentinel.ArchiveWorker.Compat.exe');
+  if not FileExists(WorkerPath) or not FileExists(StandardPath) or not FileExists(CompatPath) then
     RaiseException(CustomMessage('WorkerMissing'));
   RemoveFirewallRuleIfPresent('{#WorkerRuleOut}');
   RemoveFirewallRuleIfPresent('{#WorkerRuleIn}');
   AddAndVerifyFirewallRule('{#WorkerRuleOut}', 'out', WorkerPath);
   AddAndVerifyFirewallRule('{#WorkerRuleIn}', 'in', WorkerPath);
+  RemoveFirewallRuleIfPresent('{#WorkerStandardRuleOut}');
+  RemoveFirewallRuleIfPresent('{#WorkerStandardRuleIn}');
+  AddAndVerifyFirewallRule('{#WorkerStandardRuleOut}', 'out', StandardPath);
+  AddAndVerifyFirewallRule('{#WorkerStandardRuleIn}', 'in', StandardPath);
+  RemoveFirewallRuleIfPresent('{#WorkerCompatRuleOut}');
+  RemoveFirewallRuleIfPresent('{#WorkerCompatRuleIn}');
+  AddAndVerifyFirewallRule('{#WorkerCompatRuleOut}', 'out', CompatPath);
+  AddAndVerifyFirewallRule('{#WorkerCompatRuleIn}', 'in', CompatPath);
+  ExtractTemporaryFile('Verify-WorkerFirewall.ps1');
+  VerifyScript := ExpandConstant('{tmp}\Verify-WorkerFirewall.ps1');
+  if CompareText(GetSHA256OfFile(VerifyScript), '{#WorkerFirewallScriptHash}') <> 0 then
+    RaiseException(CustomMessage('PayloadComponentInvalid'));
+  RunRequiredHidden(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + VerifyScript +
+    '" -InstallRoot "' + ExpandConstant('{app}') + '"', CustomMessage('FirewallVerifyFailed'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -355,3 +394,7 @@ Filename: "{app}\SteamSentinel.exe"; Description: "{cm:LaunchProgram,SteamSentin
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#WorkerRuleOut}"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveWorkerOutboundRule"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#WorkerRuleIn}"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveWorkerInboundRule"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#WorkerStandardRuleOut}"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveWorkerStandardOutboundRule"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#WorkerStandardRuleIn}"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveWorkerStandardInboundRule"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#WorkerCompatRuleOut}"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveWorkerCompatOutboundRule"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#WorkerCompatRuleIn}"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveWorkerCompatInboundRule"

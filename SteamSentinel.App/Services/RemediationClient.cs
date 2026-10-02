@@ -84,6 +84,7 @@ internal sealed class RemediationClient
             WorkingDirectory = AppContext.BaseDirectory,
             WindowStyle = ProcessWindowStyle.Hidden
         };
+        bool usesNativeWrapper = AddStartupPreference(startInfo, Environment.ProcessPath);
         startInfo.ArgumentList.Add(planPath);
         startInfo.ArgumentList.Add(planSha256);
         startInfo.ArgumentList.Add("--ui-language");
@@ -124,6 +125,9 @@ internal sealed class RemediationClient
             if (!HasUnresolvedExecution) try { File.Delete(planPath); } catch { }
         }
 
+        if (TryCompleteNativePreflightExit(plan.PlanId, brokerExitCode, usesNativeWrapper, planPath))
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.PreflightNotStarted.01",
+                Path.Combine(AppPaths.UserStateRoot, "Logs")), text => new BrokerPreflightNotStartedException(text));
         if (brokerExitCode == 10)
             throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.07"), sourceText => new InvalidOperationException(sourceText));
         if (brokerExitCode is not (0 or 1 or 3))
@@ -138,4 +142,28 @@ internal sealed class RemediationClient
 
     internal static Task WaitForBrokerAsync(Task processExit, TimeSpan timeout, CancellationToken token) =>
         processExit.WaitAsync(timeout, token);
+
+    internal bool TryCompleteNativePreflightExit(Guid planId, int exitCode, bool usesNativeWrapper, string planPath)
+    {
+        // Only the fixed, integrity-checked native wrapper may certify this before business launch.
+        // Unknown errors, timeouts and all business exits continue to require a protected receipt.
+        if (!usesNativeWrapper || exitCode != StartupCompatibility.BrokerPreflightNotStartedExitCode ||
+            !_unresolvedPlans.Remove(planId)) return false;
+        try { File.Delete(planPath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return true;
+    }
+
+    internal static bool AddStartupPreference(ProcessStartInfo startInfo, string? appProcessPath)
+    {
+        if (!StartupCompatibility.TryIdentifyHost(appProcessPath, StartupRole.App, out StartupMode mode, out bool unified) || !unified)
+            return false;
+        // The native wrapper removes these arguments, probes under the elevated token and starts
+        // the managed broker once. This preference never replaces any broker authorization checks.
+        startInfo.ArgumentList.Add("--startup-mode");
+        startInfo.ArgumentList.Add(StartupCompatibility.ModeName(mode));
+        return true;
+    }
 }
+
+internal sealed class BrokerPreflightNotStartedException(string message) : InvalidOperationException(message);

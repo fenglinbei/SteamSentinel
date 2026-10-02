@@ -4,6 +4,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>SteamSentinel</AssemblyName>
     <RootNamespace>SteamSentinel.App</RootNamespace>
+    <StartupObject>SteamSentinel.App.StartupProgram</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\App.ico</ApplicationIcon>
   </PropertyGroup>

@@ -79,9 +79,9 @@ internal sealed class ArchiveWorkerClient
     {
         ContainerRequestValidation.Validate(options);
         _ = ScanHardTimeout(options);
-        string workerPath = _workerPathOverride ?? Path.Combine(AppContext.BaseDirectory, "SteamSentinel.ArchiveWorker.exe");
+        string workerPath = _workerPathOverride ?? StartupCompatibility.WorkerPath(AppContext.BaseDirectory, Environment.ProcessPath);
         if (!File.Exists(workerPath)) throw new WorkerFailureException(WorkerStage.Preflight, null, MessageText.Create("Backend.App.ArchiveWorkerClient.RunAsync.01"), new FileNotFoundException(null, workerPath));
-        string workerAssembly = Path.ChangeExtension(workerPath, ".dll");
+        string workerAssembly = StartupCompatibility.WorkerAssemblyPath(workerPath);
         if (!File.Exists(workerAssembly))
             throw new WorkerFailureException(WorkerStage.Preflight, null, MessageText.Create("Backend.App.ArchiveWorkerClient.RunAsync.02"), new FileNotFoundException(null, workerAssembly));
         await using WorkerWorkspace workspace = new();
