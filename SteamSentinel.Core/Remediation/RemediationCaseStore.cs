@@ -15,6 +15,20 @@ namespace SteamSentinel.Core.Remediation;
 public sealed class RemediationCaseStore
 {
     private static readonly JsonSerializerOptions SnapshotComparison = CreateSnapshotComparison();
+    private static readonly JsonSerializerOptions RecoveryReadOptions = CreateRecoveryReadOptions();
+    private static JsonSerializerOptions CreateRecoveryReadOptions()
+    {
+        var resolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver();
+        resolver.Modifiers.Add(info =>
+        {
+            // Removing properties makes the streaming parser skip their values without building
+            // report graphs. Do not use a custom value converter: it could buffer a whole report.
+            if (info.Type != typeof(RemediationCaseRecord) && info.Type != typeof(CaseVerificationEpisode)) return;
+            for (int i = info.Properties.Count - 1; i >= 0; i--)
+                if (info.Properties[i].PropertyType == typeof(ScanReport)) info.Properties.RemoveAt(i);
+        });
+        return new(JsonFile.Options) { TypeInfoResolver = resolver };
+    }
     private static JsonSerializerOptions CreateSnapshotComparison()
     {
         var resolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver();
@@ -28,6 +42,9 @@ public sealed class RemediationCaseStore
     }
     public const int MaximumCases = 128, MaximumPlans = 512, MaximumActions = 32768, MaximumEpisodes = 32;
     public const long MaximumCaseBytes = 64L * 1024 * 1024;
+    // Legacy inline files retain their original bound. New histories are streamed in verified
+    // pieces; this bound limits total input on loading user-owned data, not available disk space.
+    public const long MaximumStoredCaseBytes = RemediationCaseChunks.MaximumBytes;
     private const int MaximumSummaryBytes = 32 * 1024;
     private readonly string _root;
     private readonly Func<string> _currentUserSid;
@@ -44,6 +61,19 @@ public sealed class RemediationCaseStore
 
     public async Task SaveAsync(RemediationCaseRecord record, CancellationToken token = default)
     {
+        SaveAttempt attempt = new();
+        try { await SaveCoreAsync(record, attempt, token).ConfigureAwait(false); }
+        catch
+        {
+            // SaveCore's leases have closed. Only this invocation's new, never-committed
+            // directory is eligible; existing incomplete history is never guessed disposable.
+            CleanupFailedInitialSave(attempt);
+            throw;
+        }
+    }
+
+    private async Task SaveCoreAsync(RemediationCaseRecord record, SaveAttempt attempt, CancellationToken token)
+    {
         ArgumentNullException.ThrowIfNull(record);
         string sid = _currentUserSid();
         ValidateRecord(record, sid);
@@ -53,13 +83,22 @@ public sealed class RemediationCaseStore
         using SafeFileHandle rootLease = OpenDirectory(_root);
         if (!Directory.Exists(directory) && Directory.EnumerateDirectories(_root).Take(MaximumCases).Count() >= MaximumCases)
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.SaveAsync.01", (MaximumCases)), sourceText => new InvalidDataException(sourceText));
-        Directory.CreateDirectory(directory);
+        attempt.Directory = directory;
+        if (CreateDirectory(LocalNativePath.Encode(directory), IntPtr.Zero)) attempt.CreatedDirectory = true;
+        else
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error != 183) throw new Win32Exception(error);
+        }
         using SafeFileHandle directoryLease = OpenDirectory(directory);
-        using FileStream writeLock = OpenWriteLock(Path.Combine(directory, "case.lock"));
+        attempt.Identity = DirectoryIdentity(directoryLease);
+        using FileStream writeLock = OpenWriteLock(Path.Combine(directory, "case.lock"), out bool createdLock);
+        attempt.CreatedLock = createdLock;
         token.ThrowIfCancellationRequested();
         RequireSameSid(sid);
         string path = Path.Combine(directory, "case.json");
         RemediationCaseRecord? previous = await ReadRecordAsync(path, token).ConfigureAwait(false);
+        attempt.HadPrevious = previous is not null;
         if (previous is not null)
         {
             ValidateRecord(previous, sid);
@@ -77,15 +116,20 @@ public sealed class RemediationCaseStore
             ValidateDirectoryLeases(rootLease, directoryLease, directory);
             // Keep exact identities and original command snapshots locally. Public export applies
             // ReportPrivacy separately; redacted values must never replace comparison snapshots.
+            RemediationCaseChunks.Manifest manifest = await RemediationCaseChunks.WriteAsync(directory, record,
+                CheckPath, token, attempt.CreatedParts).ConfigureAwait(false);
+            RequireSameSid(sid);
+            ValidateDirectoryLeases(rootLease, directoryLease, directory);
             await AtomicFile.WriteAsync(path, async stream =>
             {
                 RelatedArtifactReader.ValidatePath(stream.SafeFileHandle, Path.GetFullPath(stream.Name));
-                using CappedWriteStream bounded = new(stream, MaximumCaseBytes);
-                await JsonSerializer.SerializeAsync(bounded, record, JsonFile.Options, token).ConfigureAwait(false);
+                using CappedWriteStream bounded = new(stream, RemediationCaseChunks.MaximumManifestBytes);
+                await JsonSerializer.SerializeAsync(bounded, manifest, JsonFile.Options, token).ConfigureAwait(false);
                 RequireSameSid(sid);
                 ValidateDirectoryLeases(rootLease, directoryLease, directory);
             }, token).ConfigureAwait(false);
             committed = true;
+            attempt.Committed = true;
             RemediationCaseSummary summary = Summary(record);
             await AtomicFile.WriteAsync(Path.Combine(directory, "summary.json"), async stream =>
             {
@@ -95,6 +139,8 @@ public sealed class RemediationCaseStore
                 RequireSameSid(sid);
                 ValidateDirectoryLeases(rootLease, directoryLease, directory);
             }, token).ConfigureAwait(false);
+            ValidateDirectoryLeases(rootLease, directoryLease, directory);
+            RemediationCaseChunks.Prune(directory, manifest, CheckPath, token);
         }
         catch
         {
@@ -105,14 +151,78 @@ public sealed class RemediationCaseStore
         }
     }
 
-    public async Task<RemediationCaseRecord?> LoadAsync(Guid caseId, CancellationToken token = default)
+    private sealed class SaveAttempt
+    {
+        internal string? Directory;
+        internal bool CreatedDirectory, CreatedLock, HadPrevious, Committed;
+        internal string? Identity;
+        internal List<string> CreatedParts { get; } = [];
+    }
+
+    private void CleanupFailedInitialSave(SaveAttempt attempt)
+    {
+        if (!attempt.CreatedDirectory || attempt.HadPrevious || attempt.Committed || attempt.Identity is null ||
+            attempt.Directory is not { } directory || Path.GetDirectoryName(directory) != _root) return;
+        try
+        {
+            CheckPath(_root); CheckPath(directory);
+            using SafeFileHandle rootLease = OpenDirectory(_root);
+            using (SafeFileHandle directoryLease = OpenDirectory(directory))
+            {
+                if (DirectoryIdentity(directoryLease) != attempt.Identity) return;
+                string lockPath = Path.Combine(directory, "case.lock");
+                using (FileStream writeLock = OpenWriteLock(lockPath, out _))
+                {
+                    // Another writer may have completed after our original leases closed.
+                    if (File.Exists(Path.Combine(directory, "case.json")) || File.Exists(Path.Combine(directory, "summary.json"))) return;
+                    foreach (string path in attempt.CreatedParts)
+                    {
+                        if (Path.GetDirectoryName(path) != directory) return;
+                        CheckPath(path);
+                        if (File.Exists(path)) File.Delete(path);
+                    }
+                    ValidateDirectoryLeases(rootLease, directoryLease, directory);
+                }
+                if (!attempt.CreatedLock) return;
+                CheckPath(lockPath);
+                File.Delete(lockPath);
+            }
+            // Nonrecursive removal cannot erase unexpected files or a competing writer's data.
+            CheckPath(directory);
+            Directory.Delete(directory, recursive: false);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception) { }
+    }
+
+    public Task<RemediationCaseRecord?> LoadAsync(Guid caseId, CancellationToken token = default) => LoadCoreAsync(caseId, false, token);
+
+    /// <summary>Checks the authoritative record and every piece, without materializing scan reports.</summary>
+    public async Task<IReadOnlyList<RemediationPlan>> GetRecoveryPlansAsync(Guid caseId, CancellationToken token = default)
+    {
+        RemediationCaseRecord record = await LoadCoreAsync(caseId, true, token).ConfigureAwait(false)
+            ?? throw MessageExceptions.Create(MessageText.Create("Ui.Cases.RefreshCaseRecordsAsync.02"), text => new InvalidDataException(text));
+        HashSet<Guid> pending = record.PendingPlanIds.ToHashSet();
+        foreach (RemediationRunResult result in AllResults(record))
+            if (result.Disposition == RemediationRunDisposition.ExecutionUnknown) pending.Add(result.PlanId);
+        return AllPlans(record).Where(plan => pending.Contains(plan.PlanId)).ToArray();
+    }
+
+    /// <summary>Used to locate a receipt's case before loading its large report snapshots.</summary>
+    public async Task<bool> ContainsPlanAsync(Guid caseId, Guid planId, CancellationToken token = default)
+    {
+        RemediationCaseRecord? record = await LoadCoreAsync(caseId, true, token).ConfigureAwait(false);
+        return record is not null && AllPlans(record).Any(plan => plan.PlanId == planId);
+    }
+
+    private async Task<RemediationCaseRecord?> LoadCoreAsync(Guid caseId, bool recoveryOnly, CancellationToken token)
     {
         string sid = _currentUserSid(), directory = CaseDirectory(caseId);
         CheckPath(_root); CheckPath(directory);
         if (!Directory.Exists(directory)) return null;
         using SafeFileHandle rootLease = OpenDirectory(_root);
         using SafeFileHandle directoryLease = OpenDirectory(directory);
-        RemediationCaseRecord? result = await ReadRecordAsync(Path.Combine(directory, "case.json"), token).ConfigureAwait(false);
+        using FileStream readLock = OpenReadLock(Path.Combine(directory, "case.lock"));
+        RemediationCaseRecord? result = await ReadRecordAsync(Path.Combine(directory, "case.json"), token, recoveryOnly).ConfigureAwait(false);
         RequireSameSid(sid);
         ValidateDirectoryLeases(rootLease, directoryLease, directory);
         if (result is null) return null;
@@ -140,6 +250,7 @@ public sealed class RemediationCaseStore
             {
                 CheckPath(directory);
                 using SafeFileHandle directoryLease = OpenDirectory(directory);
+                using FileStream readLock = OpenReadLock(Path.Combine(directory, "case.lock"));
                 await using FileStream stream = RelatedArtifactReader.Open(Path.Combine(directory, "summary.json"));
                 if (stream.Length > MaximumSummaryBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.02"), sourceText => new InvalidDataException(sourceText));
                 RemediationCaseSummary summary = await JsonFile.ReadAsync<RemediationCaseSummary>(stream, MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.03"), token).ConfigureAwait(false);
@@ -248,7 +359,7 @@ public sealed class RemediationCaseStore
             return first;
         }).ToArray();
 
-    private async Task<RemediationCaseRecord?> ReadRecordAsync(string path, CancellationToken token)
+    private async Task<RemediationCaseRecord?> ReadRecordAsync(string path, CancellationToken token, bool recoveryOnly = false)
     {
         CheckPath(path);
         FileStream stream;
@@ -257,7 +368,18 @@ public sealed class RemediationCaseStore
         await using (stream)
         {
             if (stream.Length is <= 0 or > MaximumCaseBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ReadRecordAsync.01"), sourceText => new InvalidDataException(sourceText));
-            return await JsonFile.ReadAsync<RemediationCaseRecord>(stream, MessageText.Create("Backend.Core.RemediationCaseStore.ReadRecordAsync.02"), token).ConfigureAwait(false);
+            using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: token).ConfigureAwait(false);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) throw RemediationCaseChunks.Invalid();
+            if (document.RootElement.EnumerateObject().Any(property => property.Name.Equals("StorageFormat", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Equals("Parts", StringComparison.OrdinalIgnoreCase) || property.Name.Equals("TotalBytes", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (stream.Length > RemediationCaseChunks.MaximumManifestBytes) throw RemediationCaseChunks.Invalid();
+                RemediationCaseChunks.Manifest manifest = RemediationCaseChunks.ParseManifest(document.RootElement);
+                return await RemediationCaseChunks.ReadAsync(Path.GetDirectoryName(path)!, manifest, CheckPath, token,
+                    recoveryOnly ? RecoveryReadOptions : JsonFile.Options).ConfigureAwait(false);
+            }
+            return document.RootElement.Deserialize<RemediationCaseRecord>(recoveryOnly ? RecoveryReadOptions : JsonFile.Options)
+                ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ReadRecordAsync.02"), sourceText => new InvalidDataException(sourceText));
         }
     }
 
@@ -274,8 +396,16 @@ public sealed class RemediationCaseStore
                 r.CompletedAtUtc is null && r.Disposition != RemediationRunDisposition.NotStarted ||
                 r.Actions.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown))
             ? CaseReverificationState.ExecutionUncertain : record.Episodes.LastOrDefault()?.State ?? CaseReverificationState.NotChecked,
-        DetailText = record.Episodes.LastOrDefault()?.SummaryText ?? MessageText.Create("Backend.Core.RemediationCaseStore.Summary.01")
+        DetailText = SummaryDetail(record.Episodes.LastOrDefault()?.SummaryText ?? MessageText.Create("Backend.Core.RemediationCaseStore.Summary.01"))
     };
+
+    private static MessageText SummaryDetail(MessageText detail)
+    {
+        // Only the disposable list index is abbreviated. The authoritative history keeps the
+        // complete original text and localization descriptor in its verified pieces.
+        if (detail.OriginalText.Length <= 1024 && (detail.Message?.Validate() ?? 0) <= 1024) return detail;
+        return new MessageText(detail.OriginalText[..Math.Min(detail.OriginalText.Length, 1024)]);
+    }
 
     private string CaseDirectory(Guid id) => id == Guid.Empty ? throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.CaseDirectory.01"), sourceText => new ArgumentException(sourceText, nameof(id))) : Path.Combine(_root, id.ToString("N"));
     private static bool IsCaseDirectory(string path) => Guid.TryParseExact(Path.GetFileName(path), "N", out Guid id) && id != Guid.Empty;
@@ -303,22 +433,61 @@ public sealed class RemediationCaseStore
     private static SafeFileHandle OpenDirectory(string directory)
     {
         CheckPath(directory);
-        SafeFileHandle handle = CreateFile(directory, 0x80, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        SafeFileHandle handle = CreateFile(LocalNativePath.Encode(directory), 0x80, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
         if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenDirectory.01"), sourceText => new Win32Exception(error, sourceText)); }
         try { RelatedArtifactReader.ValidatePath(handle, directory); return handle; }
         catch { handle.Dispose(); throw; }
     }
 
-    private static FileStream OpenWriteLock(string path)
+    private static FileStream OpenWriteLock(string path, out bool created)
     {
-        SafeFileHandle handle = CreateFile(path, 0xC0000000, 0, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
-        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), sourceText => new Win32Exception(error, sourceText)); }
+        SafeFileHandle handle = CreateFile(LocalNativePath.Encode(path), 0xC0000000, 0, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
+        int error = Marshal.GetLastWin32Error();
+        created = error != 183;
+        if (handle.IsInvalid) { handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), sourceText => new Win32Exception(error, sourceText)); }
         try { RelatedArtifactReader.ValidatePath(handle, path); return new FileStream(handle, FileAccess.ReadWrite); }
+        catch { handle.Dispose(); throw; }
+    }
+
+    private static FileStream OpenReadLock(string path)
+    {
+        // OPEN_ALWAYS also supports legacy inline records without a lock file. Sharing is read
+        // only: concurrent readers coexist, while save/collection must obtain exclusive access.
+        CheckPath(path);
+        SafeFileHandle handle = CreateFile(LocalNativePath.Encode(path), 0x80000000, 1, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
+        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), text => new Win32Exception(error, text)); }
+        try { RelatedArtifactReader.ValidatePath(handle, path); return new FileStream(handle, FileAccess.Read); }
         catch { handle.Dispose(); throw; }
     }
 
     private void ValidateDirectoryLeases(SafeFileHandle root, SafeFileHandle directory, string path)
     { RelatedArtifactReader.ValidatePath(root, _root); RelatedArtifactReader.ValidatePath(directory, path); CheckPath(path); }
+
+    private static string DirectoryIdentity(SafeFileHandle handle)
+    {
+        if (!GetFileInformationByHandle(handle, out FileInformation info) ||
+            (info.Attributes & (uint)FileAttributes.Directory) == 0 || (info.Attributes & (uint)FileAttributes.ReparsePoint) != 0)
+            throw RemediationCaseChunks.Invalid();
+        return $"{info.VolumeSerialNumber:X8}:{info.FileIndexHigh:X8}{info.FileIndexLow:X8}";
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileTime { public uint Low, High; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileInformation
+    {
+        public uint Attributes;
+        public FileTime CreationTime, LastAccessTime, LastWriteTime;
+        public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateDirectory(string path, IntPtr security);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileInformation information);
 
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);

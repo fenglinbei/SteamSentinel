@@ -200,7 +200,7 @@ internal sealed class ArchiveWorkerClient
         Task errorTask = errors.DrainAsync(worker.StandardError, errorCancellation.Token);
         WorkerStage stage = WorkerStage.Handshake;
         BoundedLineReader output = new(worker.StandardOutput);
-        ReportBatchReader batches = new(options.MaximumReportRecords);
+        ReportBatchReader batches = new(options.MaximumReportRecords, options.MaximumReportTextCharacters);
         ScanProgress? lastProgress = null;
         WorkerDiagnostics? diagnostics = null;
         string launcherIntegrity = ProcessIntegrity.GetCurrent().ToString();
@@ -305,6 +305,7 @@ internal sealed class ArchiveWorkerClient
                                     if (memory is not null) job.SetMemoryLimit(memory.After);
                                     ScanLimitAccess.Apply(options, resourceResponse.Changes);
                                     batches.IncreaseRecordBudget(options.MaximumReportRecords);
+                                    batches.IncreaseTextBudget(options.MaximumReportTextCharacters);
                                 }
                             }
                             resourceResponse = resourceResponse with { ReasonCode = resourceResponse.ReasonCode ?? ResourceDecisionReasons.For(resourceResponse.Decision) };

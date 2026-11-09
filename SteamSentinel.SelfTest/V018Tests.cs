@@ -211,6 +211,7 @@ internal static partial class Program
 
     private static async Task<int> RunWorkerFixtureAsync(string mode)
     {
+        if (mode == "textbudget") return await RunV031WorkerTextBudgetFixtureAsync();
         if (mode == "environment")
         {
             await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new

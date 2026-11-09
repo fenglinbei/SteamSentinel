@@ -86,6 +86,8 @@ internal static partial class Program
             await TestV030LanguageSettingsAsync(root);
             await TestV030BackendMessagesAsync(root);
             await TestV030AdaptiveScanAsync(root);
+            TestV031ReportBudgets();
+            await TestV031WorkerTextBudgetsAsync(root);
             await TestV030FalsePositiveStringsAsync(root);
             await TestV030FalsePositiveFormatPathAsync(root);
             await TestV030FalsePositiveAssociationAsync(root);
@@ -111,6 +113,7 @@ internal static partial class Program
             TestPhase3ProxyRepair();
             await TestPhase3ConfigurationBrokerAsync();
             await TestPhase3CasesAsync(root);
+            await TestV031CasePersistenceAsync(root);
             await TestPhase3CaseExportAsync(root);
             await TestV0117ScannerAsync(root);
             await TestV0117SecurityAsync(root);
@@ -754,6 +757,21 @@ internal static partial class Program
     {
         switch (args[0])
         {
+            case "--report-budget-tests" when args.Length == 2:
+                return await RunV031ReportBudgetTestsAsync(Path.GetFullPath(args[1]));
+            case "--case-persistence-tests" when args.Length == 2:
+                string caseTestRoot = Path.GetFullPath(args[1]);
+                if (Directory.Exists(caseTestRoot) || File.Exists(caseTestRoot)) throw new IOException("A new inert test directory is required.");
+                Directory.CreateDirectory(caseTestRoot);
+                try { await TestPhase3CasesAsync(caseTestRoot); await TestV031CasePersistenceAsync(caseTestRoot); }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(caseTestRoot, "results.json"), new
+                { passed = _passed, failed = Failures.Count, skipped = _skipped, failures = Failures, version = ProductInfo.Version, buildIdentity = ProductInfo.BuildIdentity });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--large-scan-tests" when args.Length is 3 or 4 or 6:
+                return await RunV031LargeScanAsync(Path.GetFullPath(args[1]), int.Parse(args[2]),
+                    args.Length >= 4 ? Path.GetFullPath(args[3]) : null,
+                    args.Length == 6 ? args[4] : null, args.Length == 6 ? args[5] : null);
             case "--managed-error-report-tests" when args.Length == 2:
                 return await RunManagedErrorReportTestsAsync(Path.GetFullPath(args[1]));
             case "--startup-compatibility-tests" when args.Length == 2:

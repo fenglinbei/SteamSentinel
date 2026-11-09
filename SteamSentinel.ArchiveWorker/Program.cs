@@ -121,13 +121,13 @@ internal static class Program
             void Checkpoint(ScanReport state)
             {
                 live = state;
+                state.WorkerDiagnostics = diagnostics ??= WorkerDiagnostics.Capture(lastProgress);
+                if (lastProgress is not null) state.WorkerDiagnostics = state.WorkerDiagnostics with
+                { Stage = lastProgress.Stage, LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
                 resources.Check(state);
                 long coverageOccurrences = state.CoverageAggregates.Sum(item => item.Count);
                 if (state.Findings.Count == lastFindings && coverageOccurrences == lastCoverageOccurrences &&
                     Environment.TickCount64 - lastCheckpoint < 1000) return;
-                state.WorkerDiagnostics = diagnostics ??= WorkerDiagnostics.Capture(lastProgress);
-                if (lastProgress is not null) state.WorkerDiagnostics = state.WorkerDiagnostics with
-                { Stage = lastProgress.Stage, LastPath = lastProgress.CurrentItem, Operation = lastProgress.Message };
                 batches.Send(state);
                 lastFindings = state.Findings.Count;
                 lastCoverageOccurrences = coverageOccurrences;
@@ -136,9 +136,11 @@ internal static class Program
             ScanCoordinator coordinator = new(allowRelatedSignatureProbe: true);
             ScanReport report = await coordinator.RunAsync(scanOptions, passwordProvider, progress,
                 cancellationToken: scanCancellation.Token, checkpoint: Checkpoint);
-            if (resourceSession is not null) resourceSession.Audit.Phase = ScanResourcePhase.Finished;
             scanCancellation.Token.ThrowIfCancellationRequested();
             report.WorkerDiagnostics = WorkerDiagnostics.Capture(lastProgress);
+            resources.Check(report);
+            report.ContentScanSettings = ScanEnhancements.ForExecution(scanOptions);
+            if (resourceSession is not null) resourceSession.Audit.Phase = ScanResourcePhase.Finished;
             batches.Send(report, final: true);
             await WriteAsync(new WorkerMessage { Type = WorkerMessageTypes.Completed, BatchCount = batches.Count });
             GC.KeepAlive(emergencyReserve);

@@ -68,7 +68,9 @@ public sealed class ScanResourceGuard(bool checkProcessMemory = false)
         }
         _findings = report.Findings.Count; _notes = report.CoverageNotes.Count;
         _sources = report.ContentSources.Count; _roots = report.Roots.Count; _summaries = report.RootSummaries.Count;
-        long text = checked(_characters + report.ValidateTextMessages());
+        // Worker diagnostics are a replacing snapshot, not cumulative history.
+        // Include the current descriptor in the same grant requested before send.
+        long text = checked(_characters + report.ValidateTextMessages() + (report.WorkerDiagnostics?.ValidateDisplayMessages() ?? 0));
         long textLimit = report.ContentScanSettings?.MaximumReportTextCharacters ?? MaximumTextCharacters;
         if (text > textLimit && !ScanResourceSession.Allow("MaximumReportTextCharacters", text, textLimit, known: false))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.ScanResourceGuard.Check.03"), sourceText => new ScanResourceLimitException(sourceText));

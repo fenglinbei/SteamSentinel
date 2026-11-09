@@ -47,20 +47,12 @@ public partial class MainWindow
         CaseListComboBox.SelectedItem = items.FirstOrDefault(i => i.Summary.CaseId == selected) ?? items.FirstOrDefault();
         if (restorePending)
         {
-            long recoveryBytes = 0;
             foreach (RemediationCaseSummary summary in summaries)
             {
-                string casePath = Path.Combine(_caseStore.RootDirectory, summary.CaseId.ToString("N"), "case.json");
-                recoveryBytes = checked(recoveryBytes + new FileInfo(casePath).Length);
-                if (recoveryBytes > 128L * 1024 * 1024)
-                    throw new InvalidDataException(DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.01"));
-                RemediationCaseRecord? record = await _caseStore.LoadAsync(summary.CaseId);
-                if (record is null) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.02"));
                 // User-owned history is never proof that an execution ended. Reopen its
                 // protected channel on every startup, including previously recovered unknowns.
-                foreach (RemediationPlan plan in CasePlans(record).Where(p => record.PendingPlanIds.Contains(p.PlanId) ||
-                    record.ExecutionResults.Concat(record.BatchSession?.Results ?? []).Any(r =>
-                        r.PlanId == p.PlanId && r.Disposition == RemediationRunDisposition.ExecutionUnknown)))
+                // Verify the complete stored stream but skip report graphs during recovery.
+                foreach (RemediationPlan plan in await _caseStore.GetRecoveryPlansAsync(summary.CaseId))
                     _remediationClient.RestoreUnresolvedPlan(plan);
             }
         }
@@ -199,11 +191,9 @@ public partial class MainWindow
         await _remediationClient.PersistResultAsync(recovered, async () =>
         {
             IReadOnlyList<RemediationCaseSummary> summaries = await _caseStore.ListAsync();
-            long recoveryBytes = 0;
             foreach (RemediationCaseSummary summary in summaries)
             {
-                recoveryBytes = checked(recoveryBytes + new FileInfo(Path.Combine(_caseStore.RootDirectory, summary.CaseId.ToString("N"), "case.json")).Length);
-                if (recoveryBytes > 128L * 1024 * 1024) throw new InvalidDataException(DisplayText.Get("Ui.Cases.RecordRecoveredResultAsync.01"));
+                if (!await _caseStore.ContainsPlanAsync(summary.CaseId, recovered.PlanId)) continue;
                 // Always load durable history; cached revisions can lag another window.
                 RemediationCaseRecord? record = await _caseStore.LoadAsync(summary.CaseId);
                 if (record is null || !CasePlans(record).Any(p => p.PlanId == recovered.PlanId)) continue;

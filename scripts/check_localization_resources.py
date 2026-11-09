@@ -51,8 +51,10 @@ for key in set(re.findall(r'MessageText\.Status\("([^"\r\n]+)"\s*[,)]', all_sour
 # Enum-derived keys are exhaustively checked by --resource-tests.
 dynamic_prefixes = ("Amsi.Verdict.", "Execution.", "Run.", "Session.", "Backend.List.", "Backend.Join.",
                     "Resource.Assessment.", "Resource.Performance.", "Resource.Reason.")
-# Retained for rendering reports saved before duplicate path checks were removed.
-legacy_keys = {"Backend.Core.ContentScanner.Containers.ScanContainerFileAsync.04"}
+# Retained for rendering reports saved before duplicate path checks and the
+# whole-report startup recovery read budget were replaced.
+legacy_keys = {"Backend.Core.ContentScanner.Containers.ScanContainerFileAsync.04",
+               "Ui.Cases.RefreshCaseRecordsAsync.01", "Ui.Cases.RecordRecoveredResultAsync.01"}
 unused = [key for key in catalogs["PresentationMessages"] if not key.startswith(dynamic_prefixes)
           and key not in legacy_keys and '"' + key + '"' not in all_source and key not in references]
 if unused:

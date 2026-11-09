@@ -11696,4 +11696,10 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
 {0}</value>
     <comment>The native wrapper certified that no business child was started. Not a remediation result.</comment>
   </data>
+  <data name="Backend.Core.RemediationCaseChunks.Invalid.01" xml:space="preserve">
+    <value>The case storage manifest or a data chunk is incomplete, changed, or invalid. Preserve the case directory and the error report for review.</value>
+  </data>
+  <data name="Backend.Core.RemediationCaseChunks.Capacity.01" xml:space="preserve">
+    <value>This case history exceeds the 2 GiB serialized storage safety limit. Export the available results and run a new scan with a smaller scope.</value>
+  </data>
 </root>

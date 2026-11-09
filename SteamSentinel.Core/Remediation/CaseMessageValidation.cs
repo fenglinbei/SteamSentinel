@@ -13,7 +13,9 @@ internal static class CaseMessageValidation
         void Charge(long amount)
         {
             characters = checked(characters + amount);
-            if (characters > RemediationCaseStore.MaximumCaseBytes) throw Invalid();
+            // Persisted reports may span multiple bounded chunks. The old inline-file ceiling
+            // was not a display-message budget and must not reject a large, valid scan here.
+            if (characters > RemediationCaseStore.MaximumStoredCaseBytes) throw Invalid();
         }
         void Message(DisplayMessage? message) => Charge(message?.Validate() ?? 0);
         Charge(DisplayMessageMap.Validate(record.Notes, record.NoteMessages));

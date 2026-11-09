@@ -16,7 +16,7 @@ internal static class RelatedArtifactReader
     {
         if (!ContentDiscovery.IsLocalSafePath(path)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RelatedArtifactReader.Open.01"), sourceText => new UnauthorizedAccessException(sourceText));
         string requested = Path.GetFullPath(path);
-        SafeFileHandle handle = CreateFile(requested, 0x80000000, 1, IntPtr.Zero, 3,
+        SafeFileHandle handle = CreateFile(LocalNativePath.Encode(requested), 0x80000000, 1, IntPtr.Zero, 3,
             0x00200000 | 0x08000000 | 0x40000000, IntPtr.Zero);
         if (handle.IsInvalid)
         {

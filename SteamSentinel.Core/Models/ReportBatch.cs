@@ -277,19 +277,31 @@ public sealed class ReportBatchWriter(Action<ReportBatch> send)
     }
 }
 
-public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.MaximumRecords)
+public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.MaximumRecords,
+    long maximumTextCharacters = ScanResourceGuard.MaximumTextCharacters)
 {
+    private long _maximumTextCharacters = ValidateTextBudget(maximumTextCharacters);
     public void IncreaseRecordBudget(int records)
     {
         if (records < maximumRecords || records > int.MaxValue - 257) throw new InvalidDataException("Invalid report budget increase.");
         maximumRecords = records;
     }
+    // Only the trusted client may grant more space. Worker-supplied settings and
+    // audit records describe the scan; they cannot authorize a receiving budget.
+    public void IncreaseTextBudget(long characters)
+    {
+        if (characters < _maximumTextCharacters) throw new InvalidDataException("Invalid report text budget increase.");
+        _maximumTextCharacters = ValidateTextBudget(characters);
+    }
+    private static long ValidateTextBudget(long characters) => characters is >= 1 and <= long.MaxValue - 1048576
+        ? characters : throw new InvalidDataException("Invalid report text budget.");
     public ScanReport? Report { get; private set; }
     public int Count { get; private set; }
     private TrustProxyDiagnosticAssembly? _diagnostic;
     private RelatedComponentAssembly? _related;
     private ContainerScanAssembly? _container;
     private long _displayMessageCharacters;
+    private long _workerDiagnosticCharacters;
     public bool HasIncompleteTrustProxyDiagnostics => _diagnostic is { IsComplete: false };
     public bool HasIncompleteRelatedComponentDiagnostics => _related is { IsComplete: false };
     public bool HasIncompleteContainers => _container is { IsComplete: false };
@@ -334,11 +346,14 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
         foreach (Finding replaced in target.Findings.Skip(o.Findings).Take(data.Findings.Count))
             displayCharacters -= replaced.ValidateDisplayMessages();
         displayCharacters += data.ValidateTextMessages();
-        displayCharacters += data.WorkerDiagnostics?.ValidateDisplayMessages() ?? 0;
+        // Diagnostics replace the last snapshot (null means keep it), unlike
+        // append-only findings. Charge only the snapshot retained after commit.
+        long diagnosticCharacters = data.WorkerDiagnostics?.ValidateDisplayMessages() ?? _workerDiagnosticCharacters;
+        displayCharacters += diagnosticCharacters - _workerDiagnosticCharacters;
         displayCharacters -= DisplayMessageMap.RangeCharacters(target.CoverageNoteMessages, o.Notes, data.CoverageNotes.Count) +
             DisplayMessageMap.RangeCharacters(target.ScopeNoteMessages, o.Scope, data.ScopeNotes.Count) +
             DisplayMessageMap.RangeCharacters(target.ContentSourceMessages, o.Sources, data.ContentSources.Count);
-        if (displayCharacters > ScanResourceGuard.MaximumTextCharacters)
+        if (displayCharacters > _maximumTextCharacters)
             throw new InvalidDataException("Display message aggregate limit exceeded.");
         Validate(target.Roots, data.Roots, o.Roots); Validate(target.ContentSources, data.ContentSources, o.Sources);
         Validate(target.RootSummaries, data.RootSummaries, o.Summaries); Validate(target.CandidateRoots, data.CandidateRoots, o.Candidates);
@@ -379,6 +394,7 @@ public sealed class ReportBatchReader(int maximumRecords = ScanResourceGuard.Max
         }
         // No report, finding, offset, or diagnostic state changes occur before all validation succeeds.
         _displayMessageCharacters = displayCharacters;
+        _workerDiagnosticCharacters = diagnosticCharacters;
         Put(target.Findings, data.Findings, o.Findings); Put(target.CoverageNotes, data.CoverageNotes, o.Notes);
         Put(target.Roots, data.Roots, o.Roots); Put(target.ContentSources, data.ContentSources, o.Sources);
         Put(target.RootSummaries, data.RootSummaries, o.Summaries); Put(target.CandidateRoots, data.CandidateRoots, o.Candidates);
