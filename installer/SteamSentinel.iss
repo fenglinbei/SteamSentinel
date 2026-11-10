@@ -5,7 +5,7 @@
   #error OutputDir must be supplied by the release build.
 #endif
 #ifndef AppVersion
-#define AppVersion "0.3.1"
+#define AppVersion "0.3.2"
 #endif
 #ifndef ArtifactBaseName
 #define ArtifactBaseName "SteamSentinel-" + AppVersion

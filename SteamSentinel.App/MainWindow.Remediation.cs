@@ -67,7 +67,7 @@ public partial class MainWindow
                 { return ScanFailureReports.PreserveSystemResults(null, ScanMode.Custom, paths, _coordinator.Rules.Version, ex, false); }
             }
             RemediationBatchSession batch = await Task.Run(() => new RemediationBatchPlanner(_coordinator.Rules)
-                .PrepareAsync(selected, original, block, Inspect, progress, _scanCancellation.Token));
+                .PrepareAsync(selected, original, block, Inspect, progress, _scanCancellation.Token, requestExplicitFileTargets: true));
             _caseBatch = batch; _caseScan = original; _casePlan = null; _caseResult = null; _caseFollowUp = null; _caseContentFollowUp = null;
             UpdateBatchResults();
             if (batch.Plans.Count == 0)
@@ -77,7 +77,7 @@ public partial class MainWindow
                 return;
             }
             ShowActivity(ActivityPhase.Confirmation);
-            RemediationPreviewWindow preview = new(batch) { Owner = this };
+            RemediationPreviewWindow preview = new(batch, _coordinator.Rules, _findingScopeLayout) { Owner = this };
             if (preview.ShowDialog() != true) { batch.AddNote(MessageText.Create("Remediation.ExecuteSelectedRemediationAsync.10")); return; }
             await BeginPersistentCaseAsync(batch, original);
             _scanCancellation.Dispose(); _scanCancellation = null; CancelScanButton.IsEnabled = false;

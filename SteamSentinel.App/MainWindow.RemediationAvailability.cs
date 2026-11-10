@@ -22,7 +22,7 @@ public partial class MainWindow
         RemediationAvailabilityState State, RemediationAvailabilityAction Action, bool CanRemediate);
 
     internal RemediationAvailability GetRemediationAvailability() =>
-        GetRemediationAvailability(FindingHandlingPresentation.Count(Findings.Select(item => item.Finding)));
+        GetRemediationAvailability(FindingHandlingPresentation.Count(Findings.Select(item => item.Handling)));
 
     private RemediationAvailability GetRemediationAvailability(FindingHandlingCounts counts)
     {
@@ -35,7 +35,7 @@ public partial class MainWindow
             ? new(RemediationAvailabilityState.ScanRequired, RemediationAvailabilityAction.None, false)
             : new(_hasEndedUnknownExecution ? RemediationAvailabilityState.EndedUnknownRescanRequired : RemediationAvailabilityState.RescanRequired,
                 RemediationAvailabilityAction.Rescan, false);
-        if (counts.Actionable == 0)
+        if (counts.SelectableCount == 0)
         {
             if (_hasEndedUnknownExecution) return new(RemediationAvailabilityState.EndedUnknownNoActionableFindings, RemediationAvailabilityAction.ViewRecords, false);
             return new(_lastReport is null ? RemediationAvailabilityState.ScanRequired

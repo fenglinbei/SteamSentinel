@@ -20,6 +20,8 @@ namespace SteamSentinel.App;
 public partial class MainWindow : Window
 {
     private readonly ScanCoordinator _coordinator = new();
+    private SteamLayout _findingScopeLayout = new();
+    private ScanReport? _findingHandlingReport;
     private readonly ArchiveWorkerClient _workerClient = new();
     private readonly RemediationClient _remediationClient = new();
     private InstallationSecurityStatus _installationSecurity = new(false, DisplayText.Get("Ui.xaml._installationSecurity.01"));
@@ -71,6 +73,7 @@ public partial class MainWindow : Window
             SetBusy(true);
             ShowActivity(ActivityPhase.Working, DisplayText.Get("Ui.xaml.MainWindow_Loaded.01"));
             SteamLayout layout = await Task.Run(SteamLocator.Discover);
+            _findingScopeLayout = layout;
             List<WorkshopScopeItem> scopes = [new("", DisplayText.Get("Ui.xaml.MainWindow_Loaded.02"))];
             foreach (string appId in layout.WorkshopRoots.Select(ContentDiscovery.WorkshopAppId).Where(id => id.Length > 0).Distinct())
                 scopes.Add(new(appId, (layout.Games.FirstOrDefault(game => game.AppId == appId)?.Name ?? (appId == "431960" ? "Wallpaper Engine" : DisplayText.Get("Ui.xaml.MainWindow_Loaded.03"))) + " · " + appId));
@@ -404,9 +407,11 @@ public partial class MainWindow : Window
     {
         InvalidateStaleRemediationReport(report);
         Findings.Clear();
-        foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage)) Findings.Add(new FindingItemViewModel(finding));
+        foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage))
+            Findings.Add(new FindingItemViewModel(finding, _coordinator.Rules, _findingScopeLayout));
+        _findingHandlingReport = report;
         FindingCountText.Text = DisplayText.Format("Ui.xaml.PopulateFindings.01", (Findings.Count));
-        FindingHandlingSummaryText.Text = FindingHandlingPresentation.Count(report.Findings).Summary;
+        FindingHandlingSummaryText.Text = FindingHandlingPresentation.Count(Findings.Select(item => item.Handling)).Summary;
         DisplayTrustProxyDiagnostics(report.TrustProxyDiagnostics);
         DisplayRelatedComponentDiagnostics(report.RelatedComponentDiagnostics);
         DisplayContainers(report.Containers);
@@ -429,7 +434,10 @@ public partial class MainWindow : Window
     {
         bool confirmed = report.Findings.Any(finding => finding.IsKnownMalware);
         bool suspicious = report.Findings.Any(finding => finding.Category != FindingCategory.Coverage && finding.Severity >= FindingSeverity.Medium);
-        FindingHandlingCounts handling = FindingHandlingPresentation.Count(report.Findings);
+        FindingHandlingCounts handling = ReferenceEquals(report, _findingHandlingReport)
+            ? FindingHandlingPresentation.Count(Findings.Select(item => item.Handling))
+            : FindingHandlingPresentation.Count(report.Findings.Where(f => f.Category != FindingCategory.Coverage)
+                .Select(f => FindingHandlingPresentation.Get(f, _coordinator.Rules, _findingScopeLayout)));
         if (confirmed)
         {
             bool hostEvidence = report.Findings.Any(f => f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam && f.Severity >= FindingSeverity.High);
@@ -449,12 +457,14 @@ public partial class MainWindow : Window
         else if (handling.AttentionCount > 0)
         {
             HeaderStatusText.Text = DisplayText.Format("Ui.xaml.UpdateSummary.08", (handling.AttentionCount));
-            HeaderDetailText.Text = DisplayText.Format("Ui.xaml.UpdateSummary.09", (handling.NeedsReview), (handling.Unsupported), (handling.Blocked));
+            HeaderDetailText.Text = handling.PendingConfirmation > 0 || handling.NeedsVerification > 0 ? handling.Summary
+                : DisplayText.Format("Ui.xaml.UpdateSummary.09", (handling.NeedsReview), (handling.Unsupported), (handling.Blocked));
         }
-        else if (handling.Actionable > 0)
+        else if (handling.SelectableCount > 0)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.10");
-            HeaderDetailText.Text = DisplayText.Format("Ui.xaml.UpdateSummary.11", (handling.Actionable));
+            HeaderDetailText.Text = handling.PendingConfirmation > 0 ? handling.Summary
+                : DisplayText.Format("Ui.xaml.UpdateSummary.11", (handling.Actionable));
         }
         else if (report.TrustProxyDiagnostics is { } diagnostic && (diagnostic.CompletedAtUtc is null ||
             !diagnostic.Checks.Any(check => check.Required) || IncompleteDiagnosticChecks(diagnostic) > 0))

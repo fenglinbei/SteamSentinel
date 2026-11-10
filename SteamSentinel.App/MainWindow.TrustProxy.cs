@@ -28,8 +28,8 @@ public partial class MainWindow
     private void UpdateRemediationEligibility()
     {
         if (RemediateButton is null || SelectAllButton is null || Findings is null) return;
-        FindingHandlingCounts counts = FindingHandlingPresentation.Count(Findings.Select(item => item.Finding));
-        bool available = counts.Actionable > 0;
+        FindingHandlingCounts counts = FindingHandlingPresentation.Count(Findings.Select(item => item.Handling));
+        bool available = counts.SelectableCount > 0;
         RemediationAvailability availability = GetRemediationAvailability(counts);
         RemediateButton.IsEnabled = availability.CanRemediate;
         RemediateButton.ToolTip = availability.State == RemediationAvailabilityState.InstallationUnavailable
@@ -40,7 +40,7 @@ public partial class MainWindow
         SelectAllButton.IsEnabled = !_busy && !_reportNeedsRefresh && available;
         SelectAllButton.ToolTip = !available ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.08") + (counts.AttentionCount > 0 ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.09") : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.10"))
             : _busy ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.11")
-            : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.12") : DisplayText.Format("Ui.TrustProxy.UpdateRemediationEligibility.13", (counts.Actionable));
+            : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.12") : DisplayText.Format("Ui.TrustProxy.UpdateRemediationEligibility.13", (counts.SelectableCount));
     }
 
     private void UpdateFindingActions()

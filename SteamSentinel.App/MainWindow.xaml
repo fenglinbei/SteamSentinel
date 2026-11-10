@@ -168,7 +168,7 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel ToolTip="{Binding HandlingDetails}" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding HandlingLabel}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding HandlingLabel}" FontWeight="SemiBold" TextWrapping="Wrap" TextTrimming="None" />
                                             <TextBlock Text="{Binding HandlingReason}" FontSize="11" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                     </DataTemplate>

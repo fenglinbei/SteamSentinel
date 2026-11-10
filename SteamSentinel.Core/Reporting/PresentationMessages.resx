@@ -11702,4 +11702,115 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
   <data name="Backend.Core.RemediationCaseChunks.Capacity.01" xml:space="preserve">
     <value>This case history exceeds the 2 GiB serialized storage safety limit. Export the available results and run a new scan with a smaller scope.</value>
   </data>
+  <data name="Scope.Automatic" xml:space="preserve">
+    <value>The location is allowed. File identity, permissions and occupancy must still be verified before execution.</value>
+  </data>
+  <data name="Scope.ExplicitConsent" xml:space="preserve">
+    <value>This location requires confirmation for this operation. Select it to preview the exact files.</value>
+  </data>
+  <data name="Scope.SensitiveConsent" xml:space="preserve">
+    <value>This file is in a Windows or application directory. Protection and impact must be verified, and the exact operation confirmed.</value>
+  </data>
+  <data name="Scope.NeedsVerification" xml:space="preserve">
+    <value>The remediation conditions for this target have not yet been verified.</value>
+  </data>
+  <data name="Scope.UnsupportedPath" xml:space="preserve">
+    <value>This operation supports exact files on local disks. Network paths, device paths and entire root directories are unsupported.</value>
+  </data>
+  <data name="Scope.ProductProtected" xml:space="preserve">
+    <value>This target belongs to the tool or its trusted state and cannot be quarantined through this operation.</value>
+  </data>
+  <data name="Scope.RedirectedPath" xml:space="preserve">
+    <value>The target or a parent directory is redirected. The exact object for this operation cannot be verified.</value>
+  </data>
+  <data name="Scope.SystemProtected" xml:space="preserve">
+    <value>This target is a protected or critical system resource and requires a dedicated repair or offline workflow. This operation will not change it.</value>
+  </data>
+  <data name="Scope.Ui.RequiresConsent.Label" xml:space="preserve">
+    <value>Confirmation needed</value>
+  </data>
+  <data name="Scope.Ui.Sensitive.Label" xml:space="preserve">
+    <value>Sensitive location · verification needed</value>
+  </data>
+  <data name="Scope.Ui.NeedsVerification.Label" xml:space="preserve">
+    <value>Verification needed</value>
+  </data>
+  <data name="Scope.Ui.Blocked.Label" xml:space="preserve">
+    <value>Blocked</value>
+  </data>
+  <data name="Scope.Ui.Request.Next" xml:space="preserve">
+    <value>Select to preview these exact files. File identity and protection checks still apply after confirmation.</value>
+  </data>
+  <data name="Scope.Ui.Blocked.Next" xml:space="preserve">
+    <value>Review the blocking reason without changing the target. This target cannot enter this remediation.</value>
+  </data>
+  <data name="Scope.Ui.Counts" xml:space="preserve">
+    <value>Ready to prepare {0} · Confirmation needed {1} · Verification needed {2} · Review needed {3} · Unsupported {4} · Blocked {5} · Informational {6}</value>
+  </data>
+  <data name="Scope.Ui.PreviewNotice" xml:space="preserve">
+    <value>File remediation is limited to the exact files in this list. Files in sensitive locations require verification; quarantine may affect Windows or applications.</value>
+  </data>
+  <data name="Scope.Ui.PreviewConfirm" xml:space="preserve">
+    <value>I reviewed the targets, impact and excluded items in every batch, and agree only to this file list and the other listed actions.</value>
+  </data>
+  <data name="Scope.Ui.PreviewCounts" xml:space="preserve">
+    <value>File scope: {0} require confirmation, {1} are in sensitive locations, and {2} require other verification.</value>
+  </data>
+  <data name="Scope.IdentityChanged" xml:space="preserve">
+    <value>The file or its parent directory has changed. Scan again and review a new remediation preview.</value>
+  </data>
+  <data name="Scope.InvalidIdentity" xml:space="preserve">
+    <value>A valid local file identity is required to authorize this file operation.</value>
+  </data>
+  <data name="Scope.NotAuthorized" xml:space="preserve">
+    <value>This file operation is not part of the confirmed plan.</value>
+  </data>
+  <data name="Scope.HardLinks" xml:space="preserve">
+    <value>This file has multiple hard links. Exact quarantine and restoration cannot be guaranteed; the original is retained.</value>
+  </data>
+  <data name="Scope.UnsupportedMetadata" xml:space="preserve">
+    <value>This file has streams or special attributes that cannot be fully restored. Inspection is supported; the original is retained.</value>
+  </data>
+  <data name="Scope.MetadataUnavailable" xml:space="preserve">
+    <value>The original file security information could not be read or verified; the original is retained.</value>
+  </data>
+  <data name="Scope.RestoreMetadataInvalid" xml:space="preserve">
+    <value>The trusted quarantine record has incomplete restoration information. The quarantine copy is retained.</value>
+  </data>
+  <data name="Scope.ProtectedPath" xml:space="preserve">
+    <value>This target is protected by Windows or by the tool's own safety policy. This file operation is unavailable.</value>
+  </data>
+  <data name="Scope.ConfirmationTitle" xml:space="preserve">
+    <value>Confirm this remediation batch</value>
+  </data>
+  <data name="Scope.ConfirmationIntro" xml:space="preserve">
+    <value>Review the complete action list below. Only the listed files and operations are authorized; other targets are not included.</value>
+  </data>
+  <data name="Scope.ConfirmationScope" xml:space="preserve">
+    <value>This batch includes {0} exact file targets, including {1} in Windows or program directories. Execute this list?</value>
+  </data>
+  <data name="Scope.ActionColumn" xml:space="preserve">
+    <value>Action</value>
+  </data>
+  <data name="Scope.TargetColumn" xml:space="preserve">
+    <value>Full target</value>
+  </data>
+  <data name="Scope.VerificationColumn" xml:space="preserve">
+    <value>Verification</value>
+  </data>
+  <data name="Scope.Confirm" xml:space="preserve">
+    <value>Execute batch</value>
+  </data>
+  <data name="Scope.Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="Scope.VerifiedFile" xml:space="preserve">
+    <value>File identity and content verified</value>
+  </data>
+  <data name="Scope.VerifiedSensitiveFile" xml:space="preserve">
+    <value>Sensitive location; file identity and content verified</value>
+  </data>
+  <data name="Scope.ExistingAction" xml:space="preserve">
+    <value>Validated using the rules for this action</value>
+  </data>
 </root>

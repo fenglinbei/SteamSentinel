@@ -12,22 +12,32 @@ internal sealed class SecureFileLease : IAsyncDisposable
     private readonly bool _canIgnoreReadOnly;
     private bool _deleteRequested;
 
-    private SecureFileLease(FileStream stream, string finalPath, bool canIgnoreReadOnly)
+    private SecureFileLease(FileStream stream, string finalPath, bool canIgnoreReadOnly, bool hasSecurityAccess)
     {
         _stream = stream;
         FinalPath = finalPath;
         _canIgnoreReadOnly = canIgnoreReadOnly;
+        HasSecurityAccess = hasSecurityAccess;
     }
 
     public string FinalPath { get; }
     public long Length => _stream.Length;
+    internal SafeFileHandle Handle => _stream.SafeFileHandle;
+    internal bool HasSecurityAccess { get; }
 
-    public static SecureFileLease Open(string path, bool allowPackagedLocalAppDataRedirection = false)
+    internal static SecureFileLease OpenWithSecurity(string path)
+    {
+        using BrokerRestorePrivilege security = BrokerRestorePrivilege.EnableSecurity();
+        return Open(path, includeSecurityAccess: true);
+    }
+
+    public static SecureFileLease Open(string path, bool allowPackagedLocalAppDataRedirection = false,
+        bool includeSecurityAccess = false)
     {
         string requested = Path.GetFullPath(path);
         SafeFileHandle handle = CreateFile(
-            requested,
-            GenericRead | Delete | FileReadAttributes | FileWriteAttributes,
+            EncodeLocalPath(requested),
+            GenericRead | Delete | FileReadAttributes | FileWriteAttributes | (includeSecurityAccess ? AccessSystemSecurity : 0),
             FileShareRead,
             IntPtr.Zero,
             OpenExisting,
@@ -39,7 +49,7 @@ internal sealed class SecureFileLease : IAsyncDisposable
         if (handle.IsInvalid && Marshal.GetLastWin32Error() == ErrorAccessDenied)
         {
             handle.Dispose();
-            handle = CreateFile(requested, GenericRead | Delete | FileReadAttributes,
+            handle = CreateFile(EncodeLocalPath(requested), GenericRead | Delete | FileReadAttributes | (includeSecurityAccess ? AccessSystemSecurity : 0),
                 FileShareRead, IntPtr.Zero, OpenExisting,
                 FileFlagOpenReparsePoint | FileFlagSequentialScan | FileFlagOverlapped, IntPtr.Zero);
         }
@@ -69,7 +79,7 @@ internal sealed class SecureFileLease : IAsyncDisposable
                 throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.Open.04", (requested), (finalPath)), sourceText => new UnauthorizedAccessException(sourceText));
 
             FileStream stream = new(handle, FileAccess.Read, 128 * 1024, isAsync: true);
-            return new SecureFileLease(stream, finalPath, canIgnoreReadOnly);
+            return new SecureFileLease(stream, finalPath, canIgnoreReadOnly, includeSecurityAccess);
         }
         catch
         {
@@ -94,7 +104,8 @@ internal sealed class SecureFileLease : IAsyncDisposable
         return value;
     }
 
-    public async Task CopyToAsync(string destination, string expectedSha256, CancellationToken cancellationToken)
+    public async Task CopyToAsync(string destination, string expectedSha256, CancellationToken cancellationToken,
+        Action<SafeFileHandle>? restoreMetadata = null)
     {
         string fullDestination = Path.GetFullPath(destination);
         string parent = Path.GetDirectoryName(fullDestination)
@@ -106,8 +117,9 @@ internal sealed class SecureFileLease : IAsyncDisposable
 
         bool completed = false;
         SafeFileHandle destinationHandle = CreateFile(
-            fullDestination,
-            GenericRead | GenericWrite | Delete | FileReadAttributes,
+            EncodeLocalPath(fullDestination),
+            GenericRead | GenericWrite | Delete | FileReadAttributes |
+                (restoreMetadata is null ? 0 : FileWriteAttributes | ReadControl | WriteDac | WriteOwner | AccessSystemSecurity),
             0,
             IntPtr.Zero,
             CreateNew,
@@ -145,17 +157,20 @@ internal sealed class SecureFileLease : IAsyncDisposable
                 string copiedHash = await Hashing.Sha256StreamAsync(output, cancellationToken).ConfigureAwait(false);
                 if (!copiedHash.Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.CopyToAsync.06"), sourceText => new IOException(sourceText));
+                restoreMetadata?.Invoke(output.SafeFileHandle);
+                if (restoreMetadata is not null) output.Flush(flushToDisk: true);
                 completed = true;
             }
             catch
             {
-                TryMarkDelete(output.SafeFileHandle);
+                _ = TryMarkDelete(output.SafeFileHandle, restoreMetadata is not null, out _);
                 throw;
             }
         }
         finally
         {
-            if (!completed && !destinationHandle.IsClosed) TryMarkDelete(destinationHandle);
+            if (!completed && !destinationHandle.IsClosed)
+                _ = TryMarkDelete(destinationHandle, restoreMetadata is not null, out _);
             destinationHandle.Dispose();
         }
     }
@@ -165,6 +180,16 @@ internal sealed class SecureFileLease : IAsyncDisposable
         if (!TryMarkDelete(_stream.SafeFileHandle, _canIgnoreReadOnly, out int error))
             throw MessageExceptions.Win32(error, MessageText.Create("Backend.Broker.SecureFileLease.DeleteOnClose.01", (error)));
         _deleteRequested = true;
+    }
+
+    internal void CancelDelete()
+    {
+        if (!_deleteRequested) return;
+        FileDispositionInfo disposition = new() { DeleteFile = false };
+        if (!SetFileInformationByHandle(_stream.SafeFileHandle, FileDispositionInfoClass,
+                ref disposition, (uint)Marshal.SizeOf<FileDispositionInfo>()))
+            throw MessageExceptions.Win32(Marshal.GetLastWin32Error(), MessageText.Create("Scope.IdentityChanged"));
+        _deleteRequested = false;
     }
 
     private static bool TryMarkDelete(SafeFileHandle handle) => TryMarkDelete(handle, false, out _);
@@ -231,6 +256,10 @@ internal sealed class SecureFileLease : IAsyncDisposable
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
             StringComparison.OrdinalIgnoreCase);
 
+    private static string EncodeLocalPath(string path) =>
+        path.Length >= 248 && path.Length >= 3 && path[1] == ':' && !path.StartsWith(@"\\", StringComparison.Ordinal)
+            ? @"\\?\" + path : path;
+
     private static bool IsPackagedLocalAppDataRedirection(string requested, string actual)
     {
         string localAppData = Path.TrimEndingDirectorySeparator(Path.GetFullPath(
@@ -261,6 +290,10 @@ internal sealed class SecureFileLease : IAsyncDisposable
     private const uint Delete = 0x00010000;
     private const uint FileReadAttributes = 0x00000080;
     private const uint FileWriteAttributes = 0x00000100;
+    private const uint ReadControl = 0x00020000;
+    private const uint WriteDac = 0x00040000;
+    private const uint WriteOwner = 0x00080000;
+    private const uint AccessSystemSecurity = 0x01000000;
     private const uint FileShareRead = 0x00000001;
     private const uint OpenExisting = 3;
     private const uint CreateNew = 1;

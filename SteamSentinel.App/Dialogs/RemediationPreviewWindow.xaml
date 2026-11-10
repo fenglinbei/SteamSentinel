@@ -19,7 +19,7 @@
 
         <TextBlock FontSize="18" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.RemediationPreviewWindow.002}" TextWrapping="Wrap" />
         <Border Grid.Row="1" Margin="0,6,0,6" Background="#FFF4ED" BorderBrush="#FFB088" BorderThickness="1" CornerRadius="6" Padding="8">
-            <TextBlock Text="{ui:Text Ui.Xaml.RemediationPreviewWindow.003}" TextWrapping="Wrap" />
+            <TextBlock x:Name="PreviewScopeNotice" Text="{Binding NoticeText}" TextWrapping="Wrap" />
         </Border>
 
         <TabControl x:Name="PreviewTabs" Grid.Row="2">
@@ -36,6 +36,7 @@
                                     <TextBlock Text="{Binding Target, StringFormat={ui:Text Ui.Xaml.RemediationPreviewWindow.005}}" TextWrapping="Wrap" />
                                     <TextBlock Text="{Binding Group, StringFormat={ui:Text Ui.Xaml.RemediationPreviewWindow.006}}" TextWrapping="Wrap" Margin="0,6,0,0" />
                                     <TextBlock Text="{Binding ExpectedIdentity, StringFormat={ui:Text Ui.Xaml.RemediationPreviewWindow.007}}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                    <TextBlock Text="{Binding ScopeDetails}" TextWrapping="Wrap" Margin="0,6,0,0" />
                                 </StackPanel>
                             </ScrollViewer>
                         </DataTemplate>
@@ -51,14 +52,16 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="{ui:Text Ui.Xaml.RemediationPreviewWindow.010}" Binding="{Binding Confidence}" Width="92" MinWidth="92" HeaderStyle="{StaticResource GridCenteredHeader}">
-                            <DataGridTextColumn.ElementStyle>
-                                <Style TargetType="TextBlock" BasedOn="{StaticResource GridCenteredText}">
-                                    <Setter Property="TextWrapping" Value="Wrap" />
-                                    <Setter Property="TextTrimming" Value="None" />
-                                </Style>
-                            </DataGridTextColumn.ElementStyle>
-                        </DataGridTextColumn>
+                        <DataGridTemplateColumn Header="{ui:Text Ui.Xaml.RemediationPreviewWindow.010}" Width="112" MinWidth="112" HeaderStyle="{StaticResource GridCenteredHeader}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Confidence}" Style="{StaticResource GridCenteredText}" TextWrapping="Wrap" TextTrimming="None" />
+                                        <TextBlock Text="{Binding ScopeLabel}" Style="{StaticResource GridCenteredText}" TextWrapping="Wrap" TextTrimming="None" Foreground="#9A3412" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="{ui:Text Ui.Xaml.RemediationPreviewWindow.011}" Width="*" MinWidth="120">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -119,6 +122,7 @@
                 <ScrollViewer x:Name="PreviewNoticeScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10">
                     <StackPanel>
                         <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding ScopeSummary}" TextWrapping="Wrap" Margin="0,8,0,0" />
                         <TextBlock Text="{ui:Text Ui.Xaml.RemediationPreviewWindow.018}" TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,0" />
                         <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{ui:Text Ui.Xaml.RemediationPreviewWindow.019}" />
                         <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{Binding PlanNotes}" />
@@ -129,7 +133,7 @@
 
         <CheckBox x:Name="ConfirmCheckBox" Grid.Row="3" Margin="0,10,0,0" HorizontalContentAlignment="Stretch"
                   Checked="ConfirmCheckBox_Changed" Unchecked="ConfirmCheckBox_Changed">
-            <TextBlock Text="{ui:Text Ui.Xaml.RemediationPreviewWindow.020}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding ConfirmationText}" TextWrapping="Wrap" />
         </CheckBox>
 
         <WrapPanel x:Name="PreviewActionsBar" Grid.Row="4" HorizontalAlignment="Right" Margin="0,10,0,0">

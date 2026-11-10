@@ -110,11 +110,15 @@ internal static partial class Program
                 UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, new(false, true));
                 layout.Refresh();
                 typeof(MainWindow).GetMethod("SelectAll_Click", TrustProxyUiPrivate)!.Invoke(window, [selectAll, new RoutedEventArgs()]);
+                // This inert file is outside the original automatic scope. It remains selectable,
+                // but 0.3.2 correctly counts it as requiring this operation's confirmation.
+                FindingHandlingCounts mixedCounts = FindingHandlingPresentation.Count(window.Findings.Select(item => item.Handling));
                 Check($"诊断UI {viewport} 混合发现只选择有资格目标且单独计数其他状态",
                     remediate.IsEnabled && selectAll.IsEnabled && window.Findings.Count(item => item.IsSelected) == 1 &&
                     window.Findings.Single(item => item.IsSelected).Finding.Id == file.Id &&
-                    counts.Text.Contains(UiExpected("可处理 1 项", "Eligible 1"), StringComparison.Ordinal) && counts.Text.Contains(UiExpected("暂不支持 1 项", "Unsupported 1"), StringComparison.Ordinal) &&
-                    counts.Text.Contains(UiExpected("条件未满足 1 项", "Prerequisites unmet 1"), StringComparison.Ordinal) && counts.Text.Contains(UiExpected("普通说明 1 项", "Informational 1"), StringComparison.Ordinal));
+                    mixedCounts.Actionable == 0 && mixedCounts.PendingConfirmation == 1 && mixedCounts.NeedsVerification == 0 &&
+                    mixedCounts.NeedsReview == 1 && mixedCounts.Unsupported == 1 && mixedCounts.Blocked == 1 && mixedCounts.Informational == 1 &&
+                    counts.Text == DisplayText.Format("Scope.Ui.Counts", 0, 1, 0, 1, 1, 1, 1));
                 Check($"诊断UI {viewport} 资格原因不会被称为执行失败或待重启",
                     window.Findings.Where(item => !item.CanSelect).All(item =>
                         !item.HandlingLabel.Contains(UiExpected("失败", "failed"), StringComparison.Ordinal) && !item.HandlingLabel.Contains(UiExpected("重启", "restart"), StringComparison.Ordinal)));

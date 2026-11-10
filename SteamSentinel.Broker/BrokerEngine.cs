@@ -42,14 +42,24 @@ internal sealed partial class BrokerEngine
         _incidentStateSecurity = incidentStateSecurity ?? throw new ArgumentNullException(nameof(incidentStateSecurity));
     }
 
-    public Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default) =>
-        BrokerExecutionBoundary.RunAsync(plan, () => ValidateBeforeExecution(plan),
-            () => ExecuteValidatedAsync(plan, cancellationToken));
+    public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await BrokerExecutionBoundary.RunAsync(plan, () =>
+            {
+                ValidateBeforeExecution(plan);
+                _confirmedFileTargets?.BeginExecution(plan);
+            }, () => ExecuteValidatedAsync(plan, cancellationToken));
+        }
+        finally { _confirmedFileTargets = null; }
+    }
 
     internal void ValidateBeforeExecution(RemediationPlan plan)
     {
         // This entire phase must remain read-only. No incident directory, backup or action may be created here.
         ValidatePlan(plan);
+        RequireFileAuthorization(plan);
         _requestedBySid = plan.RequestedBySid;
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         ValidateConfigurationPlan(plan);
@@ -170,7 +180,7 @@ internal sealed partial class BrokerEngine
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.02"), sourceText => new InvalidDataException(sourceText));
                 break;
             case RemediationActionType.QuarantineFile:
-                ValidateQuarantinePath(action.Target, isDirectory: false, action.ExpectedSha256);
+                ValidateQuarantinePath(action.Target, isDirectory: false, action.ExpectedSha256, action);
                 break;
             case RemediationActionType.QuarantineDirectory:
                 ValidateQuarantinePath(action.Target, isDirectory: true, action.ExpectedSha256);
@@ -202,7 +212,7 @@ internal sealed partial class BrokerEngine
             case RemediationActionType.AddProgramFirewallBlock:
                 if (!Path.IsPathFullyQualified(action.Target) || !Validation.IsHexSha256(action.ExpectedSha256))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.06"), sourceText => new InvalidDataException(sourceText));
-                if (!IsAllowedFileTarget(action.Target, action.ExpectedSha256))
+                if (!IsAllowedActionFileTarget(action, action.Target, action.ExpectedSha256))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.07"), sourceText => new UnauthorizedAccessException(sourceText));
                 break;
             case RemediationActionType.BlockKnownDomains:
@@ -279,9 +289,19 @@ internal sealed partial class BrokerEngine
     private async Task<MessageText> QuarantineFileAsync(RemediationAction action, CancellationToken cancellationToken)
     {
         string source = Path.GetFullPath(action.Target);
+        if (_confirmedFileTargets is not null)
+        {
+            string explicitItemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
+            MachineStateSecurity.PreparePayloadDirectory(explicitItemRoot);
+            string explicitDestination = Path.Combine(explicitItemRoot, SafeName(Path.GetFileName(source)) + ".quarantined");
+            await QuarantineExplicitFileAsync(action, _confirmedFileTargets, explicitDestination,
+                async (record, token) => { _manifest.Records.Add(record); await PersistManifestAsync(token); },
+                MachineStateSecurity.ProtectPayloadFile, cancellationToken);
+            return MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.04", explicitDestination);
+        }
         if (!File.Exists(source)) return MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.01");
         await using SecureFileLease lease = SecureFileLease.Open(source);
-        if (!IsAllowedFileTarget(lease.FinalPath, action.ExpectedSha256))
+        if (!IsAllowedActionFileTarget(action, lease.FinalPath, action.ExpectedSha256))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.02"), sourceText => new UnauthorizedAccessException(sourceText));
         string currentHash = await lease.ComputeSha256Async(cancellationToken);
         if (!currentHash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
@@ -457,7 +477,12 @@ internal sealed partial class BrokerEngine
 
     private async Task<MessageText> AddFirewallRuleAsync(RemediationAction action, CancellationToken cancellationToken)
     {
-        if (File.Exists(action.Target))
+        using BrokerDirectoryLease? parent = _confirmedFileTargets is null ? null :
+            BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity);
+        await using SecureFileLease? authorizedFile = _confirmedFileTargets is null ? null : SecureFileLease.Open(action.Target);
+        if (authorizedFile is not null)
+            await _confirmedFileTargets!.VerifyLockedAsync(action, authorizedFile, parent!, cancellationToken);
+        else if (File.Exists(action.Target))
         {
             if (Validation.ContainsReparsePoint(action.Target))
                 throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.AddFirewallRuleAsync.01"), sourceText => new UnauthorizedAccessException(sourceText));
@@ -631,6 +656,11 @@ sourceText));
 
     private async Task RestoreFileAsync(QuarantineRecord record, CancellationToken cancellationToken)
     {
+        if (record.ExplicitFileAuthorization)
+        {
+            await RestoreExplicitFileAsync(record, cancellationToken);
+            return;
+        }
         if (record.QuarantinedPath is null || !File.Exists(record.QuarantinedPath))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RestoreFileAsync.01"), sourceText => new FileNotFoundException(sourceText, record.QuarantinedPath));
         if (File.Exists(record.OriginalTarget) || Directory.Exists(record.OriginalTarget))
@@ -729,7 +759,9 @@ sourceText));
         switch (record.Type)
         {
             case RemediationActionType.QuarantineFile:
-                if (!Validation.IsHexSha256(record.Sha256) || !IsAllowedFileTarget(record.OriginalTarget, record.Sha256))
+                if (record.ExplicitFileAuthorization)
+                    ValidateExplicitRestoreRecord(record);
+                else if (!Validation.IsHexSha256(record.Sha256) || !IsAllowedFileTarget(record.OriginalTarget, record.Sha256))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateQuarantineRecord.04"), sourceText => new InvalidDataException(sourceText));
                 break;
             case RemediationActionType.QuarantineDirectory:
@@ -782,7 +814,7 @@ sourceText));
         }
     }
 
-    private void ValidateQuarantinePath(string path, bool isDirectory, string? expectedHash)
+    private void ValidateQuarantinePath(string path, bool isDirectory, string? expectedHash, RemediationAction? action = null)
     {
         if (!Validation.IsSafeExactTarget(path) || Validation.ContainsReparsePoint(path))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateQuarantinePath.01"), sourceText => new UnauthorizedAccessException(sourceText));
@@ -793,7 +825,8 @@ sourceText));
         }
         else
         {
-            if (!File.Exists(path) || !Validation.IsHexSha256(expectedHash) || !IsAllowedFileTarget(path, expectedHash))
+            if (!File.Exists(path) || !Validation.IsHexSha256(expectedHash) ||
+                !(action is null ? IsAllowedFileTarget(path, expectedHash) : IsAllowedActionFileTarget(action, path, expectedHash)))
                 throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateQuarantinePath.03"), sourceText => new UnauthorizedAccessException(sourceText));
         }
     }

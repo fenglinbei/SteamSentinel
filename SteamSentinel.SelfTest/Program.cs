@@ -122,6 +122,8 @@ internal static partial class Program
             await TestRestrictedWorkerClientAsync(root);
             await TestPlanBuilderAsync(root, rules);
             TestV030RemediationScope();
+            await TestV032CoreScopeAsync(root);
+            await TestV032BrokerScopeAsync(root);
             await TestBoundBrokerPlanAsync();
             await TestSecureFileLeaseAsync(root);
             await TestReportExportAsync(root, rules);
@@ -757,6 +759,10 @@ internal static partial class Program
     {
         switch (args[0])
         {
+            case "--v032-scope-ui" when args.Length == 2:
+                return RunV032ScopeUi(args[1]);
+            case "--scope-authorization-tests" when args.Length is 2 or 4:
+                return await RunV032ScopeAuthorizationAsync(Path.GetFullPath(args[1]), args.Length == 4 ? args[2] : null, args.Length == 4 ? args[3] : null);
             case "--report-budget-tests" when args.Length == 2:
                 return await RunV031ReportBudgetTestsAsync(Path.GetFullPath(args[1]));
             case "--case-persistence-tests" when args.Length == 2:
@@ -1188,6 +1194,7 @@ internal static partial class Program
 
     private static void Check(string name, bool condition)
     {
+        _scopeAcceptanceChecks?.Add(new(name, condition));
         if (condition)
         {
             _passed++;

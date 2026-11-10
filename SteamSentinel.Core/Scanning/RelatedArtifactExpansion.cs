@@ -29,6 +29,10 @@ public sealed partial class RelatedArtifactScanner
     private readonly HashSet<string> _blockedPaths = new(StringComparer.OrdinalIgnoreCase);
     private Finding[] _previous = [];
     private bool _closureOnly;
+    private readonly HashSet<string> _explicitFileTargets = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool MayReadExplicitFile(string path) => ContentDiscovery.IsLocalSafePath(path) &&
+        _explicitFileTargets.Contains(Path.GetFullPath(path)) && FileScopeSafety.EvaluatePath(path).Allowed;
 
     // Sessions are independent: concurrent callers cannot share budgets or stale cached hashes.
     public Task CollectAsync(SteamLayout layout, ScanReport report, ScanOptions options, CancellationToken token) =>
@@ -39,10 +43,15 @@ public sealed partial class RelatedArtifactScanner
 
     /// <summary>Read-only snapshot validation. CandidatePaths must be checked by the UI's Low Worker before a second expansion.</summary>
     public async Task<RelatedArtifactExpansion> ExpandAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token = default,
-        long maximumVerificationBytes = MaximumVerificationBytes)
+        long maximumVerificationBytes = MaximumVerificationBytes, bool requestExplicitFileTargets = false)
     {
         RelatedArtifactScanner session = new(rules) { _verificationByteLimit = Math.Clamp(maximumVerificationBytes, 0, MaximumVerificationBytes) };
-        try { return await session.ExpandCoreAsync(selectedFindings, report, token); }
+        Finding[] selected = selectedFindings.Take(257).ToArray();
+        if (requestExplicitFileTargets)
+            foreach (Finding finding in selected.Where(f => RemediationEvidencePolicy.CanRemediate(f) &&
+                f.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile) && ContentDiscovery.IsLocalSafePath(f.Target)))
+                session._explicitFileTargets.Add(Path.GetFullPath(finding.Target));
+        try { return await session.ExpandCoreAsync(selected, report, token); }
         finally
         {
             foreach (var identity in session._lockedIdentities.Values) await identity.Stream.DisposeAsync();
@@ -90,7 +99,7 @@ public sealed partial class RelatedArtifactScanner
             foreach (MessageText note in notes.Texts) Note(report, note);
         }
         if (paths.Count > 64) Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.GetCandidatePathsCoreAsync.04"));
-        return paths.Where(p => ContentDiscovery.IsLocalSafePath(p) && !RelatedArtifactReader.IsProtected(p) && File.Exists(p))
+        return paths.Where(p => ContentDiscovery.IsLocalSafePath(p) && (!RelatedArtifactReader.IsProtected(p) || MayReadExplicitFile(p)) && File.Exists(p))
             .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).Take(64).ToArray();
     }
 

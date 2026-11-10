@@ -11702,4 +11702,115 @@ DER SHA-256：{3}
   <data name="Backend.Core.RemediationCaseChunks.Capacity.01" xml:space="preserve">
     <value>本份病例历史超过 2 GiB 的序列化存储安全上限。请导出已有结果，并缩小范围重新扫描。</value>
   </data>
+  <data name="Scope.Automatic" xml:space="preserve">
+    <value>范围允许；执行前仍须核验文件身份、权限和占用情况。</value>
+  </data>
+  <data name="Scope.ExplicitConsent" xml:space="preserve">
+    <value>此目录需要本次确认；可勾选并预览具体文件。</value>
+  </data>
+  <data name="Scope.SensitiveConsent" xml:space="preserve">
+    <value>此文件位于系统或程序目录；需核验保护状态和影响，并确认本次具体操作。</value>
+  </data>
+  <data name="Scope.NeedsVerification" xml:space="preserve">
+    <value>尚不能确认此目标的处置条件，需要进一步核验。</value>
+  </data>
+  <data name="Scope.UnsupportedPath" xml:space="preserve">
+    <value>此处置方式仅支持本地磁盘中的精确文件；网络、设备路径及整个根目录不受支持。</value>
+  </data>
+  <data name="Scope.ProductProtected" xml:space="preserve">
+    <value>此目标属于工具自身或可信状态数据，不能通过文件隔离处理。</value>
+  </data>
+  <data name="Scope.RedirectedPath" xml:space="preserve">
+    <value>此目标或其父目录存在路径重定向，无法确认本次操作的精确对象。</value>
+  </data>
+  <data name="Scope.SystemProtected" xml:space="preserve">
+    <value>此目标属于受保护或关键系统资源，需要专门的系统修复或离线处置；本次不会修改。</value>
+  </data>
+  <data name="Scope.Ui.RequiresConsent.Label" xml:space="preserve">
+    <value>待确认</value>
+  </data>
+  <data name="Scope.Ui.Sensitive.Label" xml:space="preserve">
+    <value>敏感位置 · 需核验</value>
+  </data>
+  <data name="Scope.Ui.NeedsVerification.Label" xml:space="preserve">
+    <value>需核验</value>
+  </data>
+  <data name="Scope.Ui.Blocked.Label" xml:space="preserve">
+    <value>已阻断</value>
+  </data>
+  <data name="Scope.Ui.Request.Next" xml:space="preserve">
+    <value>勾选后预览本次精确文件；确认后仍须通过文件身份与保护检查。</value>
+  </data>
+  <data name="Scope.Ui.Blocked.Next" xml:space="preserve">
+    <value>请只读核对阻断原因；此目标不能进入本次处置。</value>
+  </data>
+  <data name="Scope.Ui.Counts" xml:space="preserve">
+    <value>可准备 {0} · 待确认 {1} · 需核验 {2} · 需人工复核 {3} · 暂不支持 {4} · 已阻断 {5} · 信息 {6}</value>
+  </data>
+  <data name="Scope.Ui.PreviewNotice" xml:space="preserve">
+    <value>文件处置仅限本次清单中的精确文件。敏感位置中的文件需核验；隔离可能影响 Windows 或应用运行。</value>
+  </data>
+  <data name="Scope.Ui.PreviewConfirm" xml:space="preserve">
+    <value>我已核对所有批次的目标、处置影响和未纳入项，同意仅处理本次文件清单及列出的其他动作。</value>
+  </data>
+  <data name="Scope.Ui.PreviewCounts" xml:space="preserve">
+    <value>文件范围：待确认 {0}，敏感位置需核验 {1}，其他需核验 {2}。</value>
+  </data>
+  <data name="Scope.IdentityChanged" xml:space="preserve">
+    <value>文件或其父目录已经变化。请重新扫描并查看处置预览。</value>
+  </data>
+  <data name="Scope.InvalidIdentity" xml:space="preserve">
+    <value>缺少有效的本机文件身份，不能授权此文件操作。</value>
+  </data>
+  <data name="Scope.NotAuthorized" xml:space="preserve">
+    <value>此文件操作未包含在已确认的本次计划中。</value>
+  </data>
+  <data name="Scope.HardLinks" xml:space="preserve">
+    <value>此文件有多个硬链接，不能保证精确隔离和恢复，已保留原文件。</value>
+  </data>
+  <data name="Scope.UnsupportedMetadata" xml:space="preserve">
+    <value>此文件包含无法完整恢复的数据流或特殊属性，当前仅支持检查，已保留原文件。</value>
+  </data>
+  <data name="Scope.MetadataUnavailable" xml:space="preserve">
+    <value>无法读取或验证此文件的原始安全信息，已保留原文件。</value>
+  </data>
+  <data name="Scope.RestoreMetadataInvalid" xml:space="preserve">
+    <value>可信隔离记录中的恢复信息不完整，不能安全恢复。隔离副本保持不变。</value>
+  </data>
+  <data name="Scope.ProtectedPath" xml:space="preserve">
+    <value>此目标受系统或工具自身保护，不能执行该文件操作。</value>
+  </data>
+  <data name="Scope.ConfirmationTitle" xml:space="preserve">
+    <value>确认本批处置</value>
+  </data>
+  <data name="Scope.ConfirmationIntro" xml:space="preserve">
+    <value>请查看下方完整动作清单。仅执行列出的文件和操作；未列出的目标不会因此获得授权。</value>
+  </data>
+  <data name="Scope.ConfirmationScope" xml:space="preserve">
+    <value>本批包含 {0} 个明确文件目标，其中 {1} 个位于系统或程序目录。是否执行此清单？</value>
+  </data>
+  <data name="Scope.ActionColumn" xml:space="preserve">
+    <value>操作</value>
+  </data>
+  <data name="Scope.TargetColumn" xml:space="preserve">
+    <value>完整目标</value>
+  </data>
+  <data name="Scope.VerificationColumn" xml:space="preserve">
+    <value>核验</value>
+  </data>
+  <data name="Scope.Confirm" xml:space="preserve">
+    <value>执行本批</value>
+  </data>
+  <data name="Scope.Cancel" xml:space="preserve">
+    <value>取消</value>
+  </data>
+  <data name="Scope.VerifiedFile" xml:space="preserve">
+    <value>文件身份与内容已核对</value>
+  </data>
+  <data name="Scope.VerifiedSensitiveFile" xml:space="preserve">
+    <value>敏感目录；文件身份与内容已核对</value>
+  </data>
+  <data name="Scope.ExistingAction" xml:space="preserve">
+    <value>按此操作的专用规则核验</value>
+  </data>
 </root>

@@ -279,7 +279,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
     {
         token.ThrowIfCancellationRequested();
         if (!ContentDiscovery.IsLocalSafePath(path) || !File.Exists(path)) return null;
-        if (RelatedArtifactReader.IsProtected(path)) return null;
+        if (RelatedArtifactReader.IsProtected(path) && !MayReadExplicitFile(path)) return null;
         path = Path.GetFullPath(path);
         try
         {

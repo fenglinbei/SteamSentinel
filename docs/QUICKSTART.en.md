@@ -1,12 +1,14 @@
-# SteamSentinel 0.3.0 — English quick start
+# SteamSentinel 0.3.2 — English quick start
 
 SteamSentinel is a local Windows tool for inspecting known fake Steam alert malware, related Workshop content, mods and plugins, and supported Steam modifications. It can quarantine precisely selected eligible files and retain records for review and rollback.
 
-Product version is **0.3.1**. This revision is [v0.3.1-preview.1 self-signed Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.1-preview.1), with rules `2026.09.28.1`.
+Product version is **0.3.2**. This revision is [v0.3.2-preview.1 self-signed Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1), with rules `2026.09.28.1`. Existing stable/latest designations remain unchanged. Updated 2026-11-10; [简体中文](../README.md).
 
 Revision 5 uses one complete package with a native startup check. It verifies the payload and probes the actual hosts before starting the application. Only a confirmed, known CET initialization failure allows one compatibility attempt. Standard hosts retain CET; compatibility hosts opt out for this application without changing system security settings. Unknown startup errors stop and produce a local report instead of replaying business operations. Managed errors also provide a report path when available; reports are not uploaded automatically.
 
-Version 0.3.1 fixes repeated diagnostic counting, approved text-budget propagation and large-case persistence. Release gates include the full native suite, startup/firewall/installer checks, more than 100,000 report fragments and case nodes, and at least 60,000 harmless files scanned by the final worker. Exact identities, counts and limitations are in the [release notes](RELEASE-0.3.1-preview.1.en.md) and attachments. Older CET hardware and installer UI are not claimed as revalidated. New cases use multipart storage; export a full record bundle before downgrading to 0.3.0.
+Version 0.3.2 lets eligible exact files enter preview from any ordinary local directory, including unprotected ordinary files in Windows or Program Files. Results distinguish confirmation, sensitive-location verification and blocked items. Scope information is integrated into the existing confirmation window, with no extra authorization dialog and no increase in ordinary per-batch confirmations. See the [current release notes](RELEASE-0.3.2-preview.1.en.md).
+
+The 0.3.1 fixes for diagnostic counting, approved text budgets and large-case persistence remain. New cases use multipart storage; export a full record bundle and retain the entire case directory before downgrading to 0.3.0. Current scope acceptance is recorded in `SCOPE-AUTHORIZATION-RESULTS.json`; the final worker's large scan and same-report case persistence are recorded in `LARGE-SCAN-RESULTS.json`. Exact coverage, identities and counts come from current release attachments, not older test results.
 
 Revision 4's recovery behavior is retained: startup checks old operations, and a confirmed finished operation no longer blocks a new scan and plan. Historical unknown outcomes remain unknown. Disabled controls explain the reason and offer **Check and continue**, **Scan again**, or **View records**. You do not need to delete cases or edit configuration, and saved plans are never replayed.
 
@@ -16,7 +18,7 @@ The optional system AMSI enhancement is currently paused: its controls are hidde
 
 ## Install or upgrade
 
-Use the complete installer from the [v0.3.1-preview.1 release page](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.1-preview.1). Check its identity and SHA-256 against `PUBLICATION-IDENTITY.json`, `RELEASE-METADATA.json` and the version-prefixed `RELEASE-SHA256.txt`. Read `SIGNING.txt` for signing status. Close both ordinary and administrator application windows before upgrading, and install the whole package without replacing individual EXEs/DLLs or mixing hosts from different packages. The older installer's `Code=UnsafePath; Path=; Mode=Preflight` short-path issue was fixed in revision 2 and that fix is retained; do not manually delete old files or weaken directory permissions.
+Use the complete installer from the [v0.3.2-preview.1 release page](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1). Check its identity and SHA-256 against `PUBLICATION-IDENTITY.json`, `RELEASE-METADATA.json` and the version-prefixed `RELEASE-SHA256.txt`. Read `SIGNING.txt` for signing status. Close both ordinary and administrator application windows before upgrading, and install the whole package without replacing individual EXEs/DLLs or mixing hosts from different packages. The older installer's `Code=UnsafePath; Path=; Mode=Preflight` short-path issue was fixed in revision 2 and that fix is retained; do not manually delete old files or weaken directory permissions.
 
 The installer supports English and Simplified Chinese and uses the same installation location and upgrade identity for both. Its language does not change another Windows user's application preference. Administrator remediation requires a protected, intact installation in Program Files. The portable package can scan and export reports, but administrator remediation and quarantine rollback are unavailable there.
 
@@ -57,7 +59,11 @@ New reports record AMSI as disabled while the enhancement is paused. Older repor
 
 ## Review, quarantine and rescan
 
-Eligible known malicious findings may be selected by default. Heuristic findings require independent strong evidence and remediation eligibility before they can be selected manually, and are not preselected. General token co-occurrence remains review-only and cannot be selected for quarantine. Review the action preview, paths, hashes and reasons, and close affected Steam or game processes when requested. A process or file changing between scanning and execution can cause an action to be refused; inspect the result and scan again.
+Eligible known malicious findings within the existing automatic scope may be selected by default. **Confirmation needed** and **Sensitive location · verification needed** items are not preselected; select them individually or through **Select all** to review a plan. **Blocked** items cannot be selected. Heuristic findings still require independent strong evidence and remain initially unselected. General token co-occurrence remains review-only and cannot be selected for quarantine.
+
+Review every batch's exact targets, impacts and excluded items in the existing preview. Scope authorization adds no separate dialog; the ordinary administrator confirmation for each batch remains. Windows UAC follows the actual elevation flow, so this does not mean one confirmation or one UAC prompt for the entire task. Consent covers only listed exact files and the other listed actions, not a whole directory or future plans. Close affected Steam or game processes when requested.
+
+Windows Resource Protection files, critical system paths, the tool's own files/state, network/device paths, reparse points and files with multiple hard links remain blocked. Expanded-scope quarantine also refuses files with additional data streams or special metadata it cannot fully restore, or when required original security information cannot be verified. Changing a file or its parent directory after inspection can cause refusal; inspect the result and scan again. The application does not provide automatic system repair or an offline remediation queue.
 
 A standard Windows account must open an administrator window, provide administrator credentials in the Windows prompt, then scan again there. The original report, selection and passwords are not transferred across accounts. Include the original user's Steam and Workshop folders if the administrator's automatically discovered scope differs.
 
@@ -71,7 +77,9 @@ Workshop subscriptions or another local copy can reinstall an unwanted mod. Revi
 
 Normal reports contain metadata and use the application's redaction rules; they do not include malware samples or archive passwords. Review an export before sharing it, because paths and original evidence can still contain identifying details.
 
-Use **Quarantine & rollback** only after reviewing why the item was quarantined. Restoring malware can make it runnable again. Rollback refuses to overwrite a conflicting destination and records its outcome. This version does not permanently delete active quarantine records; only verified empty, fully rolled-back incidents can be removed. Do not restore malware merely to make an incident deletable.
+Use **Quarantine & rollback** only after reviewing why the item was quarantined. Restoring malware can make it runnable again. Expanded-scope restoration requires fresh confirmation against a verified, trusted quarantine manifest, then checks the copy's hash, original parent-directory identity and saved restoration information. It restores supported permissions, attributes and times, refuses to overwrite an existing destination, and retains the quarantine copy when verification fails. Old reports and saved plans do not grant new authorization or replay automatically; rescan and confirm a new plan for new remediation.
+
+This version does not permanently delete active quarantine records; only verified empty, fully rolled-back incidents can be removed. Do not restore malware merely to make an incident deletable.
 
 Uninstalling the application retains quarantine and machine records. Keep those records until the investigation and any necessary recovery are complete.
 
@@ -80,4 +88,4 @@ Uninstalling the application retains quarantine and machine records. Keep those 
 - User settings and reports: `%LOCALAPPDATA%\SteamSentinel`.
 - Restricted worker temporary data: `%USERPROFILE%\AppData\LocalLow\SteamSentinel`.
 - Machine quarantine and results: `%PROGRAMDATA%\SteamSentinel\Quarantine` and `%PROGRAMDATA%\SteamSentinel\Results`.
-- [Release identity and acceptance index](RELEASE-0.3.0.en.md), [Chinese overview and build instructions](../README.md), [historical implementation plan](PLAN-0.3.0.md), [signing](SIGNING.md), [third-party notices](../THIRD-PARTY-NOTICES.md), [Apache 2.0 license](../LICENSE).
+- [Current release identity and acceptance](RELEASE-0.3.2-preview.1.en.md), [Chinese overview and build instructions](../README.md), [historical implementation plan](PLAN-0.3.0.md), [signing](SIGNING.md), [third-party notices](../THIRD-PARTY-NOTICES.md), [Apache 2.0 license](../LICENSE).

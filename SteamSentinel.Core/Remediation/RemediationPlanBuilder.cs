@@ -14,9 +14,10 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         IEnumerable<Finding> selectedFindings,
         bool addKnownDomainBlock,
         CancellationToken cancellationToken = default,
-        IEnumerable<Finding>? allFindings = null)
+        IEnumerable<Finding>? allFindings = null,
+        bool requestExplicitFileTargets = false)
     {
-        RemediationPlan plan = new();
+        RemediationPlan plan = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets };
         Dictionary<string, RemediationAction> deduplication = new(StringComparer.OrdinalIgnoreCase);
         bool shouldBlockDomains = addKnownDomainBlock;
         Finding[] selected = selectedFindings.Take(257).ToArray();
@@ -101,7 +102,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.DisableService => BoundAction(finding, RemediationActionType.DisableService, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableService.01")),
                     SuggestedActionKind.RemoveRelatedDefenderExclusion => BoundAction(finding, RemediationActionType.RemoveRelatedDefenderExclusion, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveRelatedDefenderExclusion.01")),
                     SuggestedActionKind.DisableRelatedFirewallRule => BoundAction(finding, RemediationActionType.DisableRelatedFirewallRule, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableRelatedFirewallRule.01")),
-                    SuggestedActionKind.QuarantineFile when File.Exists(finding.Target) => await CreateFileActionAsync(finding, cancellationToken),
+                    SuggestedActionKind.QuarantineFile when File.Exists(finding.Target) => await CreateFileActionAsync(finding, cancellationToken, requestExplicitFileTargets),
                     SuggestedActionKind.QuarantineDirectory when Directory.Exists(finding.Target) =>
                         await CreateDirectoryActionAsync(finding, cancellationToken),
                     SuggestedActionKind.RestoreSecurityControls => new RemediationAction
@@ -120,6 +121,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                 if (deduplication.TryGetValue(key, out RemediationAction? previous))
                 {
                     if (!string.Equals(previous.ExpectedSha256, action.ExpectedSha256, StringComparison.OrdinalIgnoreCase) ||
+                        previous.ExpectedFileIdentity != action.ExpectedFileIdentity || previous.ExpectedParentIdentity != action.ExpectedParentIdentity ||
                         previous.ProcessStartedAtUtc != action.ProcessStartedAtUtc || previous.ExpectedValueData != action.ExpectedValueData ||
                         previous.ConfigurationSnapshot != action.ConfigurationSnapshot)
                         throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.03"), sourceText => new InvalidDataException(sourceText));
@@ -131,13 +133,15 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             if (finding.IsKnownMalware && !finding.SuggestedActions.Contains(SuggestedActionKind.StopHostProcess) &&
                 finding.Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(finding.Target))
             {
-                string hash = await VerifyTargetIdentityAsync(finding, cancellationToken);
+                string hash = await VerifyTargetIdentityAsync(finding, cancellationToken, requestExplicitFileTargets);
                 RemediationAction firewall = new()
                 {
                     Type = RemediationActionType.AddProgramFirewallBlock,
                     DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.05"),
                     Target = Path.GetFullPath(finding.Target),
                     ExpectedSha256 = hash,
+                    ExpectedFileIdentity = requestExplicitFileTargets ? FileScopeSafety.CaptureIdentity(finding.Target) : null,
+                    ExpectedParentIdentity = requestExplicitFileTargets ? FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(Path.GetFullPath(finding.Target))!, true) : null,
                     IsKnownMalware = true,
                     ConfidenceScore = finding.Score
                 };
@@ -184,11 +188,14 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         _ => 4
     };
 
-    private async Task<RemediationAction> CreateFileActionAsync(Finding finding, CancellationToken cancellationToken)
+    private async Task<RemediationAction> CreateFileActionAsync(Finding finding, CancellationToken cancellationToken, bool requestExplicitFileTargets)
     {
         string path = Path.GetFullPath(finding.Target);
-        string hash = await VerifyTargetIdentityAsync(finding, cancellationToken);
-        if (!FileRemediationScope.IsAllowed(path, hash, rules, _steamLayout.Value))
+        FileScopeAssessment assessment = FileRemediationScope.Assess(path, finding.TargetSha256 ?? finding.Sha256, rules, _steamLayout.Value);
+        if (requestExplicitFileTargets && !assessment.CanRequest)
+            throw MessageExceptions.Create(assessment.Message, sourceText => new FileRemediationScopeException(sourceText));
+        string hash = await VerifyTargetIdentityAsync(finding, cancellationToken, requestExplicitFileTargets);
+        if (!requestExplicitFileTargets && !FileRemediationScope.IsAllowed(path, hash, rules, _steamLayout.Value))
             throw MessageExceptions.Create(MessageText.Create("Remediation.FileScopeNotApproved",
                     path.Length <= 4096 ? path : path[..2046] + " … " + path[^2046..]),
                 sourceText => new FileRemediationScopeException(sourceText));
@@ -198,6 +205,8 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.CreateFileActionAsync.01"),
             Target = path,
             ExpectedSha256 = hash,
+            ExpectedFileIdentity = requestExplicitFileTargets ? FileScopeSafety.CaptureIdentity(path) : null,
+            ExpectedParentIdentity = requestExplicitFileTargets ? FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, true) : null,
             IsKnownMalware = finding.IsKnownMalware,
             ConfidenceScore = finding.Score
         };
@@ -239,15 +248,15 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         };
     }
 
-    private static async Task<string> VerifyTargetIdentityAsync(Finding finding, CancellationToken cancellationToken)
+    private static async Task<string> VerifyTargetIdentityAsync(Finding finding, CancellationToken cancellationToken, bool explicitFileTarget = false)
     {
         string? expected = finding.TargetSha256 ?? (finding.ContentPath is null || RelatedArtifactRelations.SamePath(finding.Target, finding.ContentPath) ? finding.Sha256 : null);
-        return await VerifyFileIdentityAsync(finding.Target, expected, cancellationToken);
+        return await VerifyFileIdentityAsync(finding.Target, expected, cancellationToken, explicitFileTarget);
     }
 
-    private static async Task<string> VerifyFileIdentityAsync(string path, string? expected, CancellationToken cancellationToken)
+    private static async Task<string> VerifyFileIdentityAsync(string path, string? expected, CancellationToken cancellationToken, bool explicitFileTarget = false)
     {
-        if (!Validation.IsHexSha256(expected) || RelatedArtifactReader.IsProtected(path))
+        if (!Validation.IsHexSha256(expected) || (explicitFileTarget ? !FileScopeSafety.EvaluatePath(path).Allowed : RelatedArtifactReader.IsProtected(path)))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.VerifyFileIdentityAsync.01", (path)), sourceText => new InvalidDataException(sourceText));
         await using FileStream stream = RelatedArtifactReader.Open(path);
         if (stream.Length > 256L * 1024 * 1024) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.VerifyFileIdentityAsync.02") + path, sourceText => new InvalidDataException(sourceText));

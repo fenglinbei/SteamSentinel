@@ -29,6 +29,7 @@ internal static class Program
         RemediationRunResult? result = null;
         BrokerResultChannel? resultChannel = null;
         BrokerMutationLease? mutationLease = null;
+        bool executionStarted = false;
 
         try
         {
@@ -72,7 +73,9 @@ internal static class Program
                     return ResultChannelUnavailableExitCode;
                 return 1;
             }
-            if (!ConfirmPlan(plan))
+            BrokerEngine engine = new();
+            BrokerFileScopeAuthorization? prepared = await engine.PrepareForConfirmationAsync(plan);
+            if (!ConfirmPlan(plan, prepared))
             {
                 result = new RemediationRunResult
                 {
@@ -88,7 +91,8 @@ internal static class Program
                 return 3;
             }
 
-            BrokerEngine engine = new();
+            engine.ConfirmFileTargets(plan, prepared);
+            executionStarted = true;
             result = await engine.ExecuteAsync(plan);
             if (!await TryWriteResultAsync(resultChannel, result))
                 return ResultChannelUnavailableExitCode;
@@ -101,7 +105,7 @@ internal static class Program
                 PlanId = boundPlanId,
                 PlanIdentitySha256 = boundPlanIdentity,
                 Success = false,
-                Disposition = RemediationRunDisposition.ExecutionUnknown,
+                Disposition = executionStarted ? RemediationRunDisposition.ExecutionUnknown : RemediationRunDisposition.NotStarted,
                 CompletedAtUtc = DateTimeOffset.UtcNow
             };
             result.AddError(MessageText.Create("Backend.Exception", ex.GetType().Name, MessageExceptions.Describe(ex)).Limit(1700));
@@ -146,8 +150,13 @@ internal static class Program
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    private static bool ConfirmPlan(RemediationPlan plan)
+    private static bool ConfirmPlan(RemediationPlan plan, BrokerFileScopeAuthorization? prepared)
     {
+        if (!(plan.Actions.Count == 1 && plan.Actions[0].Type is RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident))
+        {
+            using BrokerConfirmationWindow window = new(plan, prepared);
+            return window.ShowDialog() == System.Windows.Forms.DialogResult.OK;
+        }
         return System.Windows.Forms.MessageBox.Show(
             BuildConfirmationMessage(plan),
             DisplayText.Get("Backend.Broker.Program.ConfirmPlan.01"),

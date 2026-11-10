@@ -17,7 +17,8 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
 
     public async Task<RemediationBatchSession> PrepareAsync(IEnumerable<Finding> selection, ScanReport original,
         bool blockDomains, Func<IReadOnlyList<string>, CancellationToken, Task<ScanReport>>? inspectCandidates = null,
-        IProgress<ScanProgress>? progress = null, CancellationToken token = default)
+        IProgress<ScanProgress>? progress = null, CancellationToken token = default,
+        bool requestExplicitFileTargets = false)
     {
         Finding[] requested = selection.Take(MaximumSelectedFindings + 1).ToArray();
         if (requested.Length > MaximumSelectedFindings) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.01"), sourceText => new InvalidDataException(sourceText));
@@ -48,7 +49,18 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         }
         foreach (Finding finding in selected.Where(RemediationEvidencePolicy.IsReviewOnlyEvidence))
             Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
-        List<Finding[]> batches = PackSelection(selected.Where(RemediationEvidencePolicy.CanRemediate).ToArray(), notes, session.PreparationNotes);
+        HashSet<string> scopeBlocked = new(StringComparer.Ordinal);
+        if (requestExplicitFileTargets)
+            foreach (Finding finding in selected.Where(f => f.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile)))
+            {
+                FileScopeSafetyResult safety = FileScopeSafety.EvaluatePath(finding.Target);
+                if (!safety.Allowed && safety.ReasonCode != "NeedsVerification")
+                {
+                    scopeBlocked.Add(finding.Id);
+                    Record([finding], [safety.Message], ReasonCodes.ActionsNotIncluded);
+                }
+            }
+        List<Finding[]> batches = PackSelection(selected.Where(f => RemediationEvidencePolicy.CanRemediate(f) && !scopeBlocked.Contains(f.Id)).ToArray(), notes, session.PreparationNotes);
         for (int index = 0; index < batches.Count; index++)
         {
             token.ThrowIfCancellationRequested();
@@ -57,12 +69,14 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             timeout.CancelAfter(TimeSpan.FromMinutes(3));
             try
             {
-                RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(rules).ExpandAsync(batches[index], original, timeout.Token);
+                RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(rules).ExpandAsync(batches[index], original, timeout.Token,
+                    requestExplicitFileTargets: requestExplicitFileTargets);
                 if (inspectCandidates is not null && expansion.CandidatePaths.Count > 0)
                 {
                     ScanReport additional = await inspectCandidates(expansion.CandidatePaths, timeout.Token);
                     ScanReport combined = ScanReportMerger.Merge(original, additional);
-                    expansion = await new RelatedArtifactScanner(rules).ExpandAsync(batches[index], combined, timeout.Token);
+                    expansion = await new RelatedArtifactScanner(rules).ExpandAsync(batches[index], combined, timeout.Token,
+                        requestExplicitFileTargets: requestExplicitFileTargets);
                     Record(batches[index], additional.CoverageTexts, ReasonCodes.EvidenceUnavailable);
                 }
                 verified.AddRange(expansion.Findings);
@@ -85,7 +99,8 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             token.ThrowIfCancellationRequested();
             try
             {
-                RemediationPlan plan = await planBuilder.BuildAsync(Coalesce(group), false, token, allFindings: group);
+                RemediationPlan plan = await planBuilder.BuildAsync(Coalesce(group), false, token, allFindings: group,
+                    requestExplicitFileTargets: requestExplicitFileTargets);
                 needDomains |= plan.Actions.Any(a => a.Type == RemediationActionType.BlockKnownDomains);
                 List<RemediationAction> actions = plan.Actions.Where(a => a.Type != RemediationActionType.BlockKnownDomains).ToList();
                 if (actions.Count > 0) actionGroups.Add(actions);
@@ -97,7 +112,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception)
             { Record(group, [MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.07") + MessageExceptions.Describe(ex)], ReasonCodes.EvidenceUnavailable); }
         }
-        session.Plans.AddRange(PackActions(actionGroups));
+        session.Plans.AddRange(PackActions(actionGroups, requestExplicitFileTargets));
         if (session.Plans.Count > 0 && needDomains && rules.KnownDomains.Count > 0)
         {
             RemediationAction block = new()
@@ -193,15 +208,15 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         return batches;
     }
 
-    internal static List<RemediationPlan> PackActions(IEnumerable<List<RemediationAction>> groups)
+    internal static List<RemediationPlan> PackActions(IEnumerable<List<RemediationAction>> groups, bool requestExplicitFileTargets = false)
     {
-        List<RemediationPlan> plans = []; RemediationPlan current = new(); long bytes = 0;
+        List<RemediationPlan> plans = []; RemediationPlan current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets }; long bytes = 0;
         foreach (List<RemediationAction> group in groups)
         {
             if (group.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PackActions.01"), sourceText => new InvalidDataException(sourceText));
             long groupBytes = group.Select(a => a.RelatedFilePath ?? a.Target).Distinct(StringComparer.OrdinalIgnoreCase).Sum(FileBytes);
             if (current.Actions.Count > 0 && (current.Actions.Count + group.Count > 64 || bytes + groupBytes > PreparationBatchBytes))
-            { RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions); plans.Add(current); current = new(); bytes = 0; }
+            { RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions); plans.Add(current); current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets }; bytes = 0; }
             current.Actions.AddRange(group); bytes += groupBytes;
         }
         if (current.Actions.Count > 0) { RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions); plans.Add(current); }

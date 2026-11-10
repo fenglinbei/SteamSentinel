@@ -38,6 +38,9 @@ public sealed class RemediationPlan
     public string RequestedBy { get; init; } = Environment.UserName;
     [JsonRequired]
     public string RequestedBySid { get; init; } = WindowsIdentity.GetCurrent().User?.Value ?? string.Empty;
+    // Request only. The Broker grants authority only after its own checks and ordinary confirmation.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ExplicitFileTargetsRequested { get; init; }
     [JsonRequired]
     public List<RemediationAction> Actions { get; init; } = [];
 }
@@ -49,6 +52,10 @@ public sealed partial class RemediationAction
     public string DisplayName { get; init; } = string.Empty;
     public string Target { get; init; } = string.Empty;
     public string? ExpectedSha256 { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ExpectedFileIdentity { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ExpectedParentIdentity { get; init; }
     public string? ExpectedValueData { get; init; }
     public bool IsKnownMalware { get; init; }
     public int ConfidenceScore { get; init; }
@@ -154,6 +161,21 @@ public sealed class QuarantineManifest
 
 public sealed class QuarantineRecord
 {
+    // These fields are trusted only inside a Broker-protected, authenticated quarantine manifest.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ExplicitFileAuthorization { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OriginalFileIdentity { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OriginalParentIdentity { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OriginalSecurityDescriptor { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? OriginalAttributes { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? OriginalCreationTimeUtc { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? OriginalLastWriteTimeUtc { get; init; }
     public Guid ActionId { get; init; }
     public RemediationActionType Type { get; init; }
     public string OriginalTarget { get; init; } = string.Empty;

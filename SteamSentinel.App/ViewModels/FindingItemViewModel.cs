@@ -3,17 +3,20 @@ using System.Runtime.CompilerServices;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Reporting;
+using SteamSentinel.Core.Steam;
 
 namespace SteamSentinel.App.ViewModels;
 
 public sealed class FindingItemViewModel : INotifyPropertyChanged
 {
     private bool _isSelected;
+    private readonly FileScopeAssessment? _scope;
 
-    public FindingItemViewModel(Finding finding)
+    public FindingItemViewModel(Finding finding, RuleSet? rules = null, SteamLayout? layout = null)
     {
         Finding = finding;
-        _isSelected = finding.IsKnownMalware && CanSelect;
+        _scope = rules is not null && layout is not null ? FindingHandlingPresentation.AssessFileScope(finding, rules, layout) : null;
+        _isSelected = finding.IsKnownMalware && CanSelect && _scope?.Status is null or FileScopeStatus.Automatic;
     }
 
     public Finding Finding { get; }
@@ -22,13 +25,13 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
         get => _isSelected;
         set
         {
-            if (value && RemediationEvidencePolicy.IsReviewOnlyEvidence(Finding)) return;
+            if (value && !CanSelect) return;
             if (_isSelected == value) return;
             _isSelected = value;
             OnPropertyChanged();
         }
     }
-    public FindingHandlingInfo Handling => FindingHandlingPresentation.Get(Finding);
+    public FindingHandlingInfo Handling => FindingHandlingPresentation.Get(Finding, _scope);
     public bool CanSelect => Handling.CanSelect;
     public string HandlingLabel => Handling.Label;
     public string HandlingReason => Handling.Reason;

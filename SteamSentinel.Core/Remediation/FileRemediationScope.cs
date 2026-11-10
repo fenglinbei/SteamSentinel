@@ -1,6 +1,7 @@
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
+using SteamSentinel.Core.Reporting;
 
 namespace SteamSentinel.Core.Remediation;
 
@@ -11,6 +12,17 @@ namespace SteamSentinel.Core.Remediation;
 /// </summary>
 public static class FileRemediationScope
 {
+    public static FileScopeAssessment Assess(string path, string? hash, RuleSet rules, SteamLayout layout)
+    {
+        FileScopeSafetyResult safety = FileScopeSafety.EvaluatePath(path);
+        if (!safety.Allowed) return new(safety.ReasonCode == "NeedsVerification" ? FileScopeStatus.NeedsVerification : FileScopeStatus.Blocked,
+            safety.ReasonCode, safety.Sensitive);
+        if (safety.Sensitive) return new(FileScopeStatus.SensitiveRequiresConsent, "SensitiveConsent", true);
+        return IsAllowed(path, hash, rules, layout)
+            ? new(FileScopeStatus.Automatic, "Automatic", false)
+            : new(FileScopeStatus.RequiresConsent, "ExplicitConsent", false);
+    }
+
     public static bool IsAllowed(string path, string? hash, RuleSet rules, SteamLayout layout) =>
         IsAllowed(path, hash, rules, layout,
             Environment.GetFolderPath(Environment.SpecialFolder.Windows), AppPaths.MachineStateRoot,
@@ -56,3 +68,12 @@ public static class FileRemediationScope
 }
 
 internal sealed class FileRemediationScopeException(string message) : UnauthorizedAccessException(message);
+
+public enum FileScopeStatus { Automatic, RequiresConsent, SensitiveRequiresConsent, NeedsVerification, Blocked }
+
+public sealed record FileScopeAssessment(FileScopeStatus Status, string ReasonCode, bool Sensitive)
+{
+    public bool CanRequest => Status != FileScopeStatus.Blocked;
+    public bool RequiresExplicitConsent => Status is FileScopeStatus.RequiresConsent or FileScopeStatus.SensitiveRequiresConsent;
+    public MessageText Message => FileScopeSafety.MessageFor(ReasonCode);
+}
