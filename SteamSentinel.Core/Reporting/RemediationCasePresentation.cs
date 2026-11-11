@@ -73,6 +73,8 @@ public static class RemediationCasePresentation
     {
         string identity = (action.ExpectedSha256 ?? action.ExpectedValueData ?? string.Empty) +
             (action.RelatedFilePath is null ? "" : DisplayText.Format("RemediationCase.ActionIdentity.01", (action.RelatedFilePath), (action.RelatedFileSha256)));
+        if (action.Type == RemediationActionType.RepairSteamScript)
+            identity += "\n" + DisplayText.Format("SteamScript.RepairedIdentity", action.RepairedSha256 ?? string.Empty);
         if (action.BoundCertificate is { } certificate)
             identity += DisplayText.Format("RemediationCase.ActionIdentity.02", (certificate.TargetUserSid), (certificate.StoreLocation), (certificate.StoreName), (certificate.DerSha256), (certificate.PropertiesSha256));
         if (action.BoundProxy is { } proxy)

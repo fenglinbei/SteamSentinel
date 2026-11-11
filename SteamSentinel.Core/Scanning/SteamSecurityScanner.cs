@@ -4,6 +4,7 @@ using System.Text;
 using System.Security.Cryptography;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
@@ -142,7 +143,7 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         }
     }
 
-    private async Task ScanSteamUiAsync(string steamRoot, ScanReport report, CancellationToken cancellationToken)
+    internal async Task ScanSteamUiAsync(string steamRoot, ScanReport report, CancellationToken cancellationToken)
     {
         long totalBytes = 0;
         int checkedFiles = 0;
@@ -189,10 +190,10 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                     continue;
                 }
 
-                string text, sha256; long capturedLength;
+                string text, sha256; long capturedLength; string? repairedHash;
                 try
                 {
-                    (text, sha256, capturedLength) = await ReadSteamUiSnapshotAsync(path,
+                    (text, sha256, capturedLength, repairedHash) = await ReadSteamUiSnapshotAsync(path,
                         Math.Min(MaximumScriptBytes, MaximumTotalScriptBytes - totalBytes), cancellationToken);
                     report.Metrics.BytesHashed += capturedLength;
                 }
@@ -208,14 +209,16 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 HashRule? known = FindKnownHash(sha256);
                 bool isScript = Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase);
                 LoopbackScriptReference? loopback = isScript ? SteamUiLoopbackInspector.Find(text) : null;
-                if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback));
+                if (isScript && repairedHash is not null)
+                    report.Findings.Add(SteamScriptRepairTarget.CreateFinding(path, sha256, repairedHash));
+                else if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback));
                 List<MessageText> signals = isScript ? AnalyzeSteamUiMessages(text) : [];
                 if (known?.Malware != true && signals.Count == 0) continue;
 
                 bool highConfidence = known?.Malware == true || signals.Count >= 2;
                 // A script loader can be a small edit in an otherwise necessary Steam chunk.
                 // Existing semantic observations of that same chunk must not propose deleting it.
-                bool canQuarantine = highConfidence && (loopback is null || known?.Malware == true);
+                bool canQuarantine = repairedHash is null && highConfidence && (loopback is null || known?.Malware == true);
                 report.Findings.Add(new Finding
                 {
                     RuleId = known?.Id ?? "STEAM-UI-SEMANTIC-TAMPERING",
@@ -267,7 +270,7 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         if (skippedFiles > 0) report.Coverage = ScanCoverage.Partial;
     }
 
-    private static async Task<(string Text, string Hash, long Length)> ReadSteamUiSnapshotAsync(string path, long maximumBytes, CancellationToken token)
+    private static async Task<(string Text, string Hash, long Length, string? RepairedHash)> ReadSteamUiSnapshotAsync(string path, long maximumBytes, CancellationToken token)
     {
         await using FileStream stream = RelatedArtifactReader.Open(path);
         if (stream.Length > maximumBytes || stream.Length > int.MaxValue) throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadSteamUiSnapshotAsync.01"), sourceText => new IOException(sourceText));
@@ -279,7 +282,9 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
             string text = new UTF8Encoding(false, true).GetString(bytes);
             string hash = Convert.ToHexString(SHA256.HashData(bytes));
             RelatedArtifactReader.ValidatePath(stream.SafeFileHandle, Path.GetFullPath(path));
-            return (text, hash, bytes.Length);
+            string? repairedHash = SteamScriptRepair.TryRepair(bytes, out byte[] repaired)
+                ? Convert.ToHexString(SHA256.HashData(repaired)) : null;
+            return (text, hash, bytes.Length, repairedHash);
         }
         finally { Array.Clear(bytes); }
     }

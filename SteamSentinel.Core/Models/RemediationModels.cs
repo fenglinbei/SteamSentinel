@@ -21,7 +21,8 @@ public enum RemediationActionType
     RemoveRelatedDefenderExclusion,
     DisableRelatedFirewallRule,
     RemoveBoundCertificate,
-    RestoreBoundProxyConfiguration
+    RestoreBoundProxyConfiguration,
+    RepairSteamScript
 }
 
 public sealed class RemediationPlan
@@ -52,6 +53,8 @@ public sealed partial class RemediationAction
     public string DisplayName { get; init; } = string.Empty;
     public string Target { get; init; } = string.Empty;
     public string? ExpectedSha256 { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RepairedSha256 { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ExpectedFileIdentity { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -181,6 +184,8 @@ public sealed class QuarantineRecord
     public string OriginalTarget { get; init; } = string.Empty;
     public string? QuarantinedPath { get; init; }
     public string? Sha256 { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RepairedSha256 { get; init; }
     public string? RegistryHive { get; init; }
     public string? RegistryView { get; init; }
     public string? RegistryKey { get; init; }
@@ -193,6 +198,10 @@ public sealed class QuarantineRecord
     public List<string> HostsDomains { get; init; } = [];
     public bool RolledBack { get; set; }
     public bool MutationConfirmed { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool FileMutationAttempted { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool FileRollbackAttempted { get; set; }
     public string? RelatedFilePath { get; init; }
     public string? RelatedFileSha256 { get; init; }
     public string? ConfigurationKind { get; init; }

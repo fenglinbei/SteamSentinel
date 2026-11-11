@@ -119,9 +119,30 @@ public sealed partial class RelatedArtifactScanner
         if (input.Findings.Count > 20000) Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.02"));
         _closureOnly = true;
         HashSet<string> candidates = new(StringComparer.OrdinalIgnoreCase);
+        SteamLayout? familyLayout = null;
         foreach (Finding finding in selected)
         {
             token.ThrowIfCancellationRequested();
+            if (finding.SuggestedActions.Contains(SuggestedActionKind.RepairSteamScript))
+            {
+                familyLayout ??= layout ?? SteamLocator.Discover();
+                try
+                {
+                    if (finding.RuleId != SteamScriptRepair.RuleId || finding.Category != FindingCategory.Steam ||
+                        finding.RelatedFilePath is not null || finding.ContentPath is not null &&
+                        !RelatedArtifactRelations.SamePath(finding.Target, finding.ContentPath))
+                        throw MessageExceptions.Create(MessageText.Create("SteamScript.Unconfirmed"), text => new InvalidDataException(text));
+                    SteamScriptRepairSnapshot proof = await SteamScriptRepairTarget.CaptureAsync(finding.Target,
+                        finding.TargetSha256 ?? finding.Sha256, familyLayout, token);
+                    report.Findings.Add(SteamScriptRepairTarget.CreateFinding(finding.Target, proof.OriginalSha256, proof.RepairedSha256));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
+                {
+                    if (ContentDiscovery.IsLocalSafePath(finding.Target)) _blockedPaths.Add(Path.GetFullPath(finding.Target));
+                    Note(report, MessageExceptions.Describe(ex));
+                }
+                continue;
+            }
             foreach (string path in await GetCandidatePathsCoreAsync(finding, report, token))
             {
                 if (candidates.Count < 64) candidates.Add(path);
@@ -179,9 +200,23 @@ public sealed partial class RelatedArtifactScanner
             }
         }
 
-        SteamLayout? familyLayout = null;
         if (SteamSecurityScanner.IsCurrentUserReport(input))
         {
+            if (report.Findings.Any(finding => finding.RuleId == SteamScriptRepair.RuleId))
+            {
+                familyLayout ??= layout ?? SteamLocator.Discover();
+                foreach (string role in new[] { SteamAlertInstallation.LoaderRule, SteamAlertInstallation.ResidentRule })
+                    foreach (string peer in SteamAlertInstallation.ProbePaths(role, familyLayout, residentDirectory))
+                    {
+                        if (candidates.Contains(peer) || !File.Exists(peer)) continue;
+                        if (candidates.Count >= 64)
+                        { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.03")); break; }
+                        string? hash = await HashAsync(peer, report, token);
+                        if (hash is not null && _known.TryGetValue(hash, out HashRule? rule) && rule.Id == role) candidates.Add(peer);
+                    }
+                foreach (Finding peer in SteamAlertInstallation.InstalledPeers(_previous, _known, familyLayout, residentDirectory).Take(64 - candidates.Count))
+                    candidates.Add(Path.GetFullPath(peer.Target));
+            }
             foreach (Finding seed in selected)
             {
                 string? role = SteamAlertInstallation.InstalledSeedRole(seed, _known);
@@ -235,6 +270,20 @@ public sealed partial class RelatedArtifactScanner
                 report.Findings.Add(current);
         }
 
+        if (familyLayout is not null && SteamSecurityScanner.IsCurrentUserReport(input) &&
+            _proofs.Values.Any(f => SteamAlertInstallation.IsFamilyFile(f, _known) &&
+                SteamAlertInstallation.IsInstalled(f.RuleId, f.Target, familyLayout, residentDirectory)))
+        {
+            ScanReport scripts = new();
+            foreach (string steamRoot in familyLayout.SteamRoots)
+                await new SteamSecurityScanner(rules).ScanSteamUiAsync(steamRoot, scripts, token);
+            foreach (Finding repair in scripts.Findings.Where(f => f.RuleId == SteamScriptRepair.RuleId &&
+                !_blockedPaths.Contains(Path.GetFullPath(f.Target))))
+                if (!report.Findings.Any(f => f.RuleId == SteamScriptRepair.RuleId && RelatedArtifactRelations.SamePath(f.Target, repair.Target)))
+                    report.Findings.Add(repair);
+            foreach (MessageText note in scripts.CoverageTexts) Note(report, note);
+        }
+
         if (familyLayout is not null && _proofs.Values.Any(f => f.RuleId == SteamAlertInstallation.ResidentRule &&
             SteamAlertInstallation.IsInstalled(f.RuleId, f.Target, familyLayout, residentDirectory)))
             foreach (string patch in _previous.Where(f => f.RuleId == "STEAM-UI-LOOPBACK-SCRIPT" && f.ReasonCode == "SteamAlertResidentCorrelated" &&
@@ -257,6 +306,8 @@ public sealed partial class RelatedArtifactScanner
                 if (!await PreserveOrphanEntryAsync(finding, report, token))
                     Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.19") + finding.Target);
             }
+        report.Findings.RemoveAll(finding => finding.RuleId == SteamScriptRepair.RuleId &&
+            _blockedPaths.Contains(Path.GetFullPath(finding.Target)));
         report.AddScopeNote(MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.20"));
         return new(report.Findings.DistinctBy(f => f.Id).ToArray(), candidates.ToArray(), report.CoverageNotes.Distinct().ToArray())
         {

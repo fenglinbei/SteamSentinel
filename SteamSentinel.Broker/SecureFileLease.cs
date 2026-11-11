@@ -31,22 +31,29 @@ internal sealed class SecureFileLease : IAsyncDisposable
         return Open(path, includeSecurityAccess: true);
     }
 
+    internal static SecureFileLease OpenForUpdate(string path)
+    {
+        using BrokerRestorePrivilege security = BrokerRestorePrivilege.EnableSecurity();
+        return Open(path, includeSecurityAccess: true, exclusiveWrite: true);
+    }
+
     public static SecureFileLease Open(string path, bool allowPackagedLocalAppDataRedirection = false,
-        bool includeSecurityAccess = false)
+        bool includeSecurityAccess = false, bool exclusiveWrite = false)
     {
         string requested = Path.GetFullPath(path);
         SafeFileHandle handle = CreateFile(
             EncodeLocalPath(requested),
-            GenericRead | Delete | FileReadAttributes | FileWriteAttributes | (includeSecurityAccess ? AccessSystemSecurity : 0),
-            FileShareRead,
+            GenericRead | Delete | FileReadAttributes | FileWriteAttributes | (exclusiveWrite ? GenericWrite : 0) |
+                (includeSecurityAccess ? AccessSystemSecurity : 0),
+            exclusiveWrite ? 0 : FileShareRead,
             IntPtr.Zero,
             OpenExisting,
-            FileFlagOpenReparsePoint | FileFlagSequentialScan | FileFlagOverlapped,
+            FileFlagOpenReparsePoint | FileFlagSequentialScan | FileFlagOverlapped | (exclusiveWrite ? FileFlagWriteThrough : 0),
             IntPtr.Zero);
         bool canIgnoreReadOnly = !handle.IsInvalid;
         // Read-only disposition requires FILE_WRITE_ATTRIBUTES. Keep ordinary files
         // usable when their ACL grants DELETE but intentionally denies that extra right.
-        if (handle.IsInvalid && Marshal.GetLastWin32Error() == ErrorAccessDenied)
+        if (handle.IsInvalid && !exclusiveWrite && Marshal.GetLastWin32Error() == ErrorAccessDenied)
         {
             handle.Dispose();
             handle = CreateFile(EncodeLocalPath(requested), GenericRead | Delete | FileReadAttributes | (includeSecurityAccess ? AccessSystemSecurity : 0),
@@ -78,7 +85,7 @@ internal sealed class SecureFileLease : IAsyncDisposable
                 !(allowPackagedLocalAppDataRedirection && IsPackagedLocalAppDataRedirection(requested, finalPath)))
                 throw MessageExceptions.Create(MessageText.Create("Backend.Broker.SecureFileLease.Open.04", (requested), (finalPath)), sourceText => new UnauthorizedAccessException(sourceText));
 
-            FileStream stream = new(handle, FileAccess.Read, 128 * 1024, isAsync: true);
+            FileStream stream = new(handle, exclusiveWrite ? FileAccess.ReadWrite : FileAccess.Read, 128 * 1024, isAsync: true);
             return new SecureFileLease(stream, finalPath, canIgnoreReadOnly, includeSecurityAccess);
         }
         catch
@@ -94,6 +101,28 @@ internal sealed class SecureFileLease : IAsyncDisposable
         string hash = await Hashing.Sha256StreamAsync(_stream, cancellationToken).ConfigureAwait(false);
         _stream.Position = 0;
         return hash;
+    }
+
+    internal async Task<byte[]> ReadBytesAsync(int maximumBytes, CancellationToken token)
+    {
+        if (Length is <= 0 || Length > maximumBytes) throw new InvalidDataException();
+        byte[] bytes = new byte[checked((int)Length)];
+        _stream.Position = 0;
+        await _stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+        _stream.Position = 0;
+        return bytes;
+    }
+
+    // The same exclusive handle remains open throughout backup, write, verification and recovery.
+    // Never truncate: interrupted writes can only mix the two authenticated same-length images.
+    internal async Task WriteSameLengthAsync(byte[] bytes, CancellationToken token)
+    {
+        if (!_stream.CanWrite || bytes.LongLength != Length) throw new InvalidOperationException();
+        _stream.Position = 0;
+        await _stream.WriteAsync(bytes, token).ConfigureAwait(false);
+        await _stream.FlushAsync(token).ConfigureAwait(false);
+        _stream.Flush(flushToDisk: true);
+        _stream.Position = 0;
     }
 
     public async Task<T> ReadJsonAsync<T>(CancellationToken cancellationToken)

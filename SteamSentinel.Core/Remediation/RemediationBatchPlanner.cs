@@ -12,6 +12,15 @@ namespace SteamSentinel.Core.Remediation;
 /// <summary>Preparation only. Every returned child plan still passes the unchanged Broker limits and identity checks.</summary>
 public sealed class RemediationBatchPlanner(RuleSet rules)
 {
+    private readonly SteamLayout? _steamLayout;
+    private readonly string _residentDirectory = SteamAlertInstallation.ResidentDirectory;
+
+    internal RemediationBatchPlanner(RuleSet rules, SteamLayout layout, string residentDirectory) : this(rules)
+    {
+        _steamLayout = layout;
+        _residentDirectory = residentDirectory;
+    }
+
     public const int MaximumSelectedFindings = 20000;
     public const long PreparationBatchBytes = 512L * 1024 * 1024;
 
@@ -69,14 +78,14 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             timeout.CancelAfter(TimeSpan.FromMinutes(3));
             try
             {
-                RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(rules).ExpandAsync(batches[index], original, timeout.Token,
-                    requestExplicitFileTargets: requestExplicitFileTargets);
+                RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(rules).ExpandLocalAsync(batches[index], original, timeout.Token,
+                    RelatedArtifactScanner.MaximumVerificationBytes, requestExplicitFileTargets, _steamLayout, _residentDirectory);
                 if (inspectCandidates is not null && expansion.CandidatePaths.Count > 0)
                 {
                     ScanReport additional = await inspectCandidates(expansion.CandidatePaths, timeout.Token);
                     ScanReport combined = ScanReportMerger.Merge(original, additional);
-                    expansion = await new RelatedArtifactScanner(rules).ExpandAsync(batches[index], combined, timeout.Token,
-                        requestExplicitFileTargets: requestExplicitFileTargets);
+                    expansion = await new RelatedArtifactScanner(rules).ExpandLocalAsync(batches[index], combined, timeout.Token,
+                        RelatedArtifactScanner.MaximumVerificationBytes, requestExplicitFileTargets, _steamLayout, _residentDirectory);
                     Record(batches[index], additional.CoverageTexts, ReasonCodes.EvidenceUnavailable);
                 }
                 verified.AddRange(expansion.Findings);
@@ -94,10 +103,13 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         // Live discovery may connect initial batches through a shared host/entry. Regroup ALL verified edges before packing actions.
         List<List<RemediationAction>> actionGroups = [];
         bool needDomains = blockDomains;
-        RemediationPlanBuilder planBuilder = new(rules);
+        RemediationPlanBuilder planBuilder = _steamLayout is null ? new(rules) : new(rules, _steamLayout);
         foreach (Finding finding in verified.Where(RemediationEvidencePolicy.IsReviewOnlyEvidence))
             Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
-        foreach (Finding[] group in DependencyGroups(verified.Where(RemediationEvidencePolicy.CanRemediate).ToArray()))
+        // Source groups precede independent script repairs. Completed earlier batches are
+        // verified before the next runs, and the Broker rechecks live sources for every repair.
+        foreach (Finding[] group in DependencyGroups(verified.Where(RemediationEvidencePolicy.CanRemediate).ToArray())
+            .OrderBy(group => group.Any(f => f.SuggestedActions.Contains(SuggestedActionKind.RepairSteamScript))))
         {
             token.ThrowIfCancellationRequested();
             try
@@ -115,7 +127,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception)
             { Record(group, [MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.07") + MessageExceptions.Describe(ex)], ReasonCodes.EvidenceUnavailable); }
         }
-        session.Plans.AddRange(PackActions(actionGroups, requestExplicitFileTargets));
+        session.Plans.AddRange(PackActions(actionGroups, requestExplicitFileTargets, rules));
         if (session.Plans.Count > 0 && needDomains && rules.KnownDomains.Count > 0)
         {
             RemediationAction block = new()
@@ -211,7 +223,8 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         return batches;
     }
 
-    internal static List<RemediationPlan> PackActions(IEnumerable<List<RemediationAction>> groups, bool requestExplicitFileTargets = false)
+    internal static List<RemediationPlan> PackActions(IEnumerable<List<RemediationAction>> groups, bool requestExplicitFileTargets = false,
+        RuleSet? rules = null)
     {
         List<RemediationPlan> plans = []; RemediationPlan current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets }; long bytes = 0;
         foreach (List<RemediationAction> group in groups)
@@ -219,11 +232,18 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             if (group.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PackActions.01"), sourceText => new InvalidDataException(sourceText));
             long groupBytes = group.Select(a => a.RelatedFilePath ?? a.Target).Distinct(StringComparer.OrdinalIgnoreCase).Sum(FileBytes);
             if (current.Actions.Count > 0 && (current.Actions.Count + group.Count > 64 || bytes + groupBytes > PreparationBatchBytes))
-            { RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions); plans.Add(current); current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets }; bytes = 0; }
+            { CompletePlan(); current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets }; bytes = 0; }
             current.Actions.AddRange(group); bytes += groupBytes;
         }
-        if (current.Actions.Count > 0) { RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions); plans.Add(current); }
+        if (current.Actions.Count > 0) CompletePlan();
         return plans;
+
+        void CompletePlan()
+        {
+            SteamScriptRepairTarget.AddSourceDependencies(current.Actions, rules ?? SteamSentinel.Core.Rules.RuleLoader.LoadEmbedded());
+            RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions);
+            plans.Add(current);
+        }
     }
 
     internal static List<Finding[]> DependencyGroups(Finding[] findings)

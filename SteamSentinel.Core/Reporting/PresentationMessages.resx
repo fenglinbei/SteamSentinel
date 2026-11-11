@@ -1,11 +1,36 @@
 <?xml version='1.0' encoding='utf-8'?>
 <root>
+  <data name="SteamScript.ResultSummary" xml:space="preserve"><value> Steam script repairs verified {0}, incomplete or unverified {1}.</value></data>
+  <data name="SteamScript.Title" xml:space="preserve"><value>Confirmed SteamAlert injection in a Steam script</value></data>
+  <data name="SteamScript.Description" xml:space="preserve"><value>The end of this file contains a confirmed SteamAlert injection. Repair replaces that exact segment with spaces of the same length and preserves every other byte.</value></data>
+  <data name="SteamScript.Evidence" xml:space="preserve"><value>File SHA-256 {0}. Expected SHA-256 after repair {1}.</value></data>
+  <data name="SteamScript.Handling" xml:space="preserve"><value>Exit Steam completely, review the script repair and related component cleanup in the preview, then confirm. The original script is backed up before repair.</value></data>
+  <data name="SteamScript.ActionName" xml:space="preserve"><value>Repair Steam script</value></data>
+  <data name="SteamScript.PreviewNotice" xml:space="preserve"><value>Related malware components in this plan are cleared first. Each original script is then backed up before its confirmed injected tail is replaced with equal-length spaces. Review the individual results after completion.</value></data>
+  <data name="SteamScript.PreviewEvidence" xml:space="preserve"><value>Confirmed injected tail</value></data>
+  <data name="SteamScript.Confirmation" xml:space="preserve"><value>Back up the script and clear its confirmed injected tail. File content and identity are checked again before execution.</value></data>
+  <data name="SteamScript.RepairedIdentity" xml:space="preserve"><value>Expected SHA-256 after repair {0}</value></data>
+  <data name="SteamScript.CloseSteam" xml:space="preserve"><value>Exit Steam through its menu, wait for Steam and Steam Client WebHelper to close, then select the items and try again.</value></data>
+  <data name="SteamScript.Applying" xml:space="preserve"><value>Clearing related components and repairing confirmed Steam script injections.</value></data>
+  <data name="SteamScript.InvalidTarget" xml:space="preserve"><value>This target does not meet the Steam script repair requirements. Rescan the installed Steam client.</value></data>
+  <data name="SteamScript.Changed" xml:space="preserve"><value>The file content, file identity or parent directory identity has changed. Rescan before repairing this script.</value></data>
+  <data name="SteamScript.Unconfirmed" xml:space="preserve"><value>The supported injected tail could not be fully confirmed. Rescan and review the Steam UI extensions.</value></data>
+  <data name="SteamScript.BackupFailed" xml:space="preserve"><value>The original script backup could not be completed and verified. Repair has not started.</value></data>
+  <data name="SteamScript.RepairFailed" xml:space="preserve"><value>Steam script repair did not complete. Review the backup and individual results, then rescan.</value></data>
+  <data name="SteamScript.Repaired" xml:space="preserve"><value>Backed up the original script and removed the confirmed injection. All other bytes were preserved.</value></data>
+  <data name="SteamScript.Verified" xml:space="preserve"><value>The script matches the expected repaired SHA-256.</value></data>
+  <data name="SteamScript.Residual" xml:space="preserve"><value>The confirmed injection is still present in this Steam script.</value></data>
+  <data name="SteamScript.Missing" xml:space="preserve"><value>The Steam script is missing. Its repair state could not be verified.</value></data>
+  <data name="SteamScript.VerificationUnavailable" xml:space="preserve"><value>The Steam script repair state could not be verified. Review the individual result and rescan.</value></data>
+  <data name="SteamScript.RestoreChanged" xml:space="preserve"><value>The current script differs from the recorded repaired file. Review its changes before restoring the backup.</value></data>
+  <data name="SteamScript.FollowUpResidual" xml:space="preserve"><value> Confirmed Steam script injection remains. Review the repair results.</value></data>
+  <data name="SteamScript.FollowUpReview" xml:space="preserve"><value> Other Steam scripts load local services and require review.</value></data>
   <data name="Pawnshop.Ui.Title" xml:space="preserve"><value>Steam UI loads a script from a local service</value></data>
   <data name="Pawnshop.Ui.Observation" xml:space="preserve"><value>The file creates a script element, assigns a loopback URL to its source, and inserts that same element into the page. A local Steam UI extension can also do this.</value></data>
   <data name="Pawnshop.Ui.Evidence" xml:space="preserve"><value>Script endpoint {0}. File SHA-256 {1}.</value></data>
-  <data name="Pawnshop.Ui.Review" xml:space="preserve"><value>Check the installed Steam UI extensions. If this edit is unexpected, repair the client files with the official Steam installer.</value></data>
+  <data name="Pawnshop.Ui.Review" xml:space="preserve"><value>Check the installed Steam UI extensions and this script's source. Confirmed supported injections appear as separate script repair items.</value></data>
   <data name="Pawnshop.Ui.Correlated" xml:space="preserve"><value>This script loads the SteamAlert endpoint. The current user’s local resident file also matches the known SteamAlert SHA-256: {0}.</value></data>
-  <data name="Pawnshop.Ui.Repair" xml:space="preserve"><value>Review the resident and its downloaders separately. After removing the source of reinfection, repair the affected client files with the official Steam installer.</value></data>
+  <data name="Pawnshop.Ui.Repair" xml:space="preserve"><value>Review the resident, its downloaders and any separate script repair items. After processing them, rescan and review remaining unexpected client changes.</value></data>
   <data name="Common.Semicolon" xml:space="preserve">
     <value>; </value>
   </data>
@@ -11841,7 +11866,7 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
     <value>Review both the installed mod and its resident program. Exit the game and unsubscribe from any affected Workshop items to prevent the downloader from returning.</value>
   </data>
   <data name="SteamAlert.Plan.ClientPatch" xml:space="preserve">
-    <value>Steam client script with a loopback loader (manual repair): {0}. Restore the client file from a trusted Steam installation.</value>
+    <value>Steam client script requiring review (loads a local script) {0}. Check the separate script repair items and their results, then review remaining unexpected changes.</value>
   </data>
   <data name="Scan.ManagedMod.Downloader.Title" xml:space="preserve">
     <value>Mod initialization downloads and launches a file</value>

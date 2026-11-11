@@ -60,6 +60,7 @@ internal sealed class BrokerConfirmationWindow : Form
         {
             int index = grid.Rows.Add(row.Action, row.Target, row.Verification);
             grid.Rows[index].Cells[1].ToolTipText = row.Target;
+            grid.Rows[index].Cells[2].ToolTipText = row.Verification;
         }
         void ShowSelection()
         {
@@ -67,11 +68,11 @@ internal sealed class BrokerConfirmationWindow : Form
             if (index >= 0 && index < rows.Length)
             {
                 BrokerConfirmationRow row = rows[index];
-                detail.Text = row.Action + Environment.NewLine + row.Target +
+                detail.Text = row.Action + Environment.NewLine + row.Target + Environment.NewLine + row.Verification +
                     (row.Sha256.Length == 0 ? string.Empty : Environment.NewLine + "SHA-256: " + row.Sha256);
             }
         }
-        grid.SelectionChanged += (_, _) => ShowSelection();
+        grid.CurrentCellChanged += (_, _) => ShowSelection();
         string[] legacyTargets = plan.Actions.Where(action => action.Type is RemediationActionType.QuarantineFile or RemediationActionType.AddProgramFirewallBlock)
             .Select(action => Path.GetFullPath(action.Target)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         int exactCount = prepared?.Targets.DistinctBy(target => target.FileIdentity, StringComparer.OrdinalIgnoreCase).Count() ?? legacyTargets.Length;
@@ -129,6 +130,11 @@ internal sealed class BrokerConfirmationWindow : Form
             // IsKnownMalware, display strings and confidence supplied by a client never become Broker proof.
             string verification = DisplayText.Get(file is null ? "Scope.ExistingAction" :
                 file.Sensitive ? "Scope.VerifiedSensitiveFile" : "Scope.VerifiedFile");
+            if (action.Type == RemediationActionType.RepairSteamScript)
+                return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target),
+                    DisplayText.Get("SteamScript.Confirmation"),
+                    Sanitize(action.ExpectedSha256 ?? string.Empty) + Environment.NewLine +
+                    DisplayText.Format("SteamScript.RepairedIdentity", Sanitize(action.RepairedSha256 ?? string.Empty)));
             return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target), verification,
                 file?.Sha256 ?? string.Empty);
         }).ToArray();

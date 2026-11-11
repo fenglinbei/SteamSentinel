@@ -2,9 +2,11 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.3**，本轮为 [v0.3.3-preview.1 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1)，规则版本为 `2026.11.10.1`，现有 stable/latest 指向保持不变。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。当前源码版本为 **0.3.4**，提供 Steam 脚本修复的本地预览构建，规则版本为 `2026.11.10.1`。已公开的检测版见 [v0.3.3-preview.1](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1)。
 
 0.3.3 新增深空当铺 SteamAlert Mod 检测。完整扫描可识别已知下载器、常驻宿主及独立核心 DLL。新变体的托管代码行为和 Steam 界面脚本单独列出供复核。建议先检查两个 Mod 目录，再核对常驻文件、自启动项和受影响的 Steam 界面文件。[本轮发行说明](docs/RELEASE-0.3.3-preview.1.md)。
+
+当前源码已接入 Steam 脚本修复。完全退出 Steam 后，在同一次处置预览中核对“修复 Steam 脚本”和相关恶意组件清理项。工具先处理相关组件，再备份原脚本，用等长空白清除完整确认的固定注入尾段，保留其余字节。逐项结果会显示修复及复验状态。其他本机脚本加载和未确认修改继续供人工复核。原文件中被覆盖的 source map 注释需要可验证的原始来源才能恢复。
 
 0.3.2 允许符合现有证据要求的精确文件从任意普通本地目录进入预览，包括 Windows 或 Program Files 中通过保护检查的普通文件。列表提前区分待确认、敏感位置需核验和阻断；范围说明并入原确认窗口，新增独立授权弹窗为 0，每批原有最终确认继续保留。详见[本轮发行说明](docs/RELEASE-0.3.2-preview.1.md)。
 

@@ -58,6 +58,18 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
         { throw BrokerScopeText.Invalid(BrokerScopeText.RestoreMetadataInvalid, ex); }
     }
 
+    internal void ApplyTimesAndAttributes(SafeFileHandle handle)
+    {
+        FileBasicInformation basic = new()
+        {
+            CreationTime = CreationTimeUtc.UtcDateTime.ToFileTimeUtc(),
+            LastWriteTime = LastWriteTimeUtc.UtcDateTime.ToFileTimeUtc(),
+            Attributes = checked((uint)Attributes)
+        };
+        if (!SetFileInformationByHandle(handle, 0, ref basic, (uint)Marshal.SizeOf<FileBasicInformation>()))
+            throw BrokerScopeText.Native(Marshal.GetLastWin32Error(), BrokerScopeText.RestoreMetadataInvalid);
+    }
+
     internal void Apply(SafeFileHandle handle, string boundPath)
     {
         FileScopeSafety.ValidateHandlePath(handle, boundPath);

@@ -63,6 +63,7 @@ internal sealed partial class BrokerEngine
         _requestedBySid = plan.RequestedBySid;
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         ValidateConfigurationPlan(plan);
+        ValidateSteamScriptPlan(plan);
     }
 
     private async Task<RemediationRunResult> ExecuteValidatedAsync(RemediationPlan plan, CancellationToken cancellationToken)
@@ -115,7 +116,7 @@ internal sealed partial class BrokerEngine
             token => _persistOwnManifest ? PersistManifestAsync(token) : Task.CompletedTask,
             (action, actionResult, ex) =>
             {
-                if (action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory &&
+                if (action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory or RemediationActionType.RepairSteamScript &&
                     ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
                 {
                     actionResult.Occupancy = FileOccupancy.Inspect(action.Target, action.Type == RemediationActionType.QuarantineDirectory);
@@ -182,6 +183,9 @@ internal sealed partial class BrokerEngine
             case RemediationActionType.QuarantineFile:
                 ValidateQuarantinePath(action.Target, isDirectory: false, action.ExpectedSha256, action);
                 break;
+            case RemediationActionType.RepairSteamScript:
+                ValidateSteamScriptAction(action, _steamLayout);
+                break;
             case RemediationActionType.QuarantineDirectory:
                 ValidateQuarantinePath(action.Target, isDirectory: true, action.ExpectedSha256);
                 break;
@@ -246,6 +250,7 @@ internal sealed partial class BrokerEngine
     {
         RemediationActionType.StopProcess => await StopProcessAsync(action, cancellationToken),
         RemediationActionType.QuarantineFile => await QuarantineFileAsync(action, cancellationToken),
+        RemediationActionType.RepairSteamScript => await RepairSteamScriptAsync(action, cancellationToken),
         RemediationActionType.QuarantineDirectory => await QuarantineDirectoryAsync(action, cancellationToken),
         RemediationActionType.RemoveRegistryValue => await RemoveRegistryValueAsync(action, cancellationToken),
         RemediationActionType.RemoveScheduledTask => await RemoveScheduledTaskAsync(action, cancellationToken),
@@ -570,6 +575,8 @@ internal sealed partial class BrokerEngine
             ValidateQuarantineRecord(record, incidentRoot, incidentId);
         foreach (QuarantineRecord record in manifest.Records)
             await VerifyRecordedContentAsync(record, manifest, cancellationToken);
+        if (manifest.Records.Any(record => record.Type == RemediationActionType.RepairSteamScript && !record.RolledBack))
+            RequireSteamClosed();
 
         foreach (QuarantineRecord record in RemediationDependencies.RollbackOrder(manifest))
         {
@@ -581,9 +588,13 @@ internal sealed partial class BrokerEngine
                 await PersistTrustedManifestAsync(manifestPath, manifest, cancellationToken);
                 continue;
             }
-            if (!record.MutationConfirmed && !configurationRecord) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RollbackIncidentAsync.01"), sourceText => new InvalidOperationException(sourceText));
+            if (!record.MutationConfirmed && !configurationRecord && record.Type != RemediationActionType.RepairSteamScript) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RollbackIncidentAsync.01"), sourceText => new InvalidOperationException(sourceText));
             switch (record.Type)
             {
+                case RemediationActionType.RepairSteamScript:
+                    await RestoreSteamScriptFileAsync(record, _steamLayout, cancellationToken,
+                        (_, token) => PersistTrustedManifestAsync(manifestPath, manifest, token));
+                    break;
                 case RemediationActionType.QuarantineFile:
                     await RestoreFileAsync(record, cancellationToken);
                     break;
@@ -758,6 +769,9 @@ sourceText));
 
         switch (record.Type)
         {
+            case RemediationActionType.RepairSteamScript:
+                ValidateSteamScriptRecord(record, _steamLayout);
+                break;
             case RemediationActionType.QuarantineFile:
                 if (record.ExplicitFileAuthorization)
                     ValidateExplicitRestoreRecord(record);

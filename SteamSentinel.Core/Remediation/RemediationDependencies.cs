@@ -1,6 +1,7 @@
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Utilities;
+using SteamSentinel.Core.Rules;
 
 namespace SteamSentinel.Core.Remediation;
 
@@ -41,6 +42,12 @@ public static class RemediationDependencies
             foreach (RemediationAction action in group)
                 foreach (RemediationAction predecessor in group.Where(a => Phase(a.Type) < Phase(action.Type)))
                     result[action.ActionId].Add(predecessor.ActionId);
+        // Reconstruct source-cleanup dependencies independently of request chain labels.
+        HashSet<string> sourceHashes = SteamScriptRepairTarget.SourceHashes(RuleLoader.LoadEmbedded());
+        foreach (RemediationAction repair in actions.Where(action => action.Type == RemediationActionType.RepairSteamScript))
+            foreach (RemediationAction source in actions.Where(action => action.Type != RemediationActionType.RepairSteamScript &&
+                (sourceHashes.Contains(action.ExpectedSha256 ?? string.Empty) || sourceHashes.Contains(action.RelatedFileSha256 ?? string.Empty))))
+                result[repair.ActionId].Add(source.ActionId);
         HashSet<Guid> active = [], done = [];
         void Visit(Guid id)
         {

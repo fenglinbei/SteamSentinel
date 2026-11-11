@@ -280,6 +280,7 @@ internal static partial class Program
         TestPhase3CaseUi(output);
         TestV030RemediationAvailabilityUi(output);
         TestV032ScopeUi(output);
+        TestSteamScriptRepairUi(output);
         TestV020ContainerUi(output);
         TestV0119PasswordUi(output);
     }

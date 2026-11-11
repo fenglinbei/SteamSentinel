@@ -1,11 +1,36 @@
 <?xml version='1.0' encoding='utf-8'?>
 <root>
+  <data name="SteamScript.ResultSummary" xml:space="preserve"><value> Steam 脚本修复已验证 {0} 项，未完成或未确认 {1} 项。</value></data>
+  <data name="SteamScript.Title" xml:space="preserve"><value>Steam 脚本包含已确认的 SteamAlert 注入</value></data>
+  <data name="SteamScript.Description" xml:space="preserve"><value>文件尾部存在已确认的 SteamAlert 注入段。修复会用等长空白覆盖该段，并保留其余所有字节。</value></data>
+  <data name="SteamScript.Evidence" xml:space="preserve"><value>文件 SHA-256 为 {0}。预期修复后 SHA-256 为 {1}。</value></data>
+  <data name="SteamScript.Handling" xml:space="preserve"><value>完全退出 Steam，在预览中核对脚本修复及相关组件清理后确认。修复前会备份原脚本。</value></data>
+  <data name="SteamScript.ActionName" xml:space="preserve"><value>修复 Steam 脚本</value></data>
+  <data name="SteamScript.PreviewNotice" xml:space="preserve"><value>本计划先清除相关恶意组件，再备份原脚本，并用等长空白清除已确认的注入尾段。完成后请查看逐项结果。</value></data>
+  <data name="SteamScript.PreviewEvidence" xml:space="preserve"><value>已确认注入尾段</value></data>
+  <data name="SteamScript.Confirmation" xml:space="preserve"><value>备份脚本并清除已确认的注入尾段。执行前再次核对文件内容和身份。</value></data>
+  <data name="SteamScript.RepairedIdentity" xml:space="preserve"><value>预期修复后 SHA-256 为 {0}</value></data>
+  <data name="SteamScript.CloseSteam" xml:space="preserve"><value>请从 Steam 菜单退出，等待 Steam 和 Steam Client WebHelper 完全关闭后，重新选择项目并处理。</value></data>
+  <data name="SteamScript.Applying" xml:space="preserve"><value>正在清除相关组件并修复已确认的 Steam 脚本注入。</value></data>
+  <data name="SteamScript.InvalidTarget" xml:space="preserve"><value>此目标不满足 Steam 脚本修复条件。请重新扫描已安装的 Steam 客户端。</value></data>
+  <data name="SteamScript.Changed" xml:space="preserve"><value>文件内容、文件身份或父目录身份发生变化。请重新扫描后再修复此脚本。</value></data>
+  <data name="SteamScript.Unconfirmed" xml:space="preserve"><value>未能完整确认受支持的注入尾段。请重新扫描并核对 Steam 界面扩展。</value></data>
+  <data name="SteamScript.BackupFailed" xml:space="preserve"><value>无法完成并验证原脚本备份，修复尚未开始。</value></data>
+  <data name="SteamScript.RepairFailed" xml:space="preserve"><value>Steam 脚本修复未完成。请查看备份和逐项结果后重新扫描。</value></data>
+  <data name="SteamScript.Repaired" xml:space="preserve"><value>已备份原脚本并清除确认的注入，其余所有字节已保留。</value></data>
+  <data name="SteamScript.Verified" xml:space="preserve"><value>脚本与预期修复后的 SHA-256 相符。</value></data>
+  <data name="SteamScript.Residual" xml:space="preserve"><value>此 Steam 脚本仍存在已确认的注入。</value></data>
+  <data name="SteamScript.Missing" xml:space="preserve"><value>Steam 脚本缺失，无法验证修复状态。</value></data>
+  <data name="SteamScript.VerificationUnavailable" xml:space="preserve"><value>无法验证 Steam 脚本修复状态。请查看逐项结果并重新扫描。</value></data>
+  <data name="SteamScript.RestoreChanged" xml:space="preserve"><value>当前脚本与记录的修复后文件不符。请核对变化后再恢复备份。</value></data>
+  <data name="SteamScript.FollowUpResidual" xml:space="preserve"><value> 仍有已确认的 Steam 脚本注入，请查看修复结果。</value></data>
+  <data name="SteamScript.FollowUpReview" xml:space="preserve"><value> 另有 Steam 脚本加载本机服务，需继续复核。</value></data>
   <data name="Pawnshop.Ui.Title" xml:space="preserve"><value>Steam 界面从本机服务加载脚本</value></data>
   <data name="Pawnshop.Ui.Observation" xml:space="preserve"><value>此文件创建脚本元素，将其来源指向本机回环地址，并将同一元素插入页面。本地 Steam 界面扩展也可能使用这种方式。</value></data>
   <data name="Pawnshop.Ui.Evidence" xml:space="preserve"><value>脚本地址 {0}。文件 SHA-256 为 {1}。</value></data>
-  <data name="Pawnshop.Ui.Review" xml:space="preserve"><value>请核对已安装的 Steam 界面扩展。如果此修改未经授权，请使用 Steam 官方安装程序修复客户端文件。</value></data>
+  <data name="Pawnshop.Ui.Review" xml:space="preserve"><value>请核对已安装的 Steam 界面扩展和脚本来源。完整确认的受支持注入会单列为脚本修复项。</value></data>
   <data name="Pawnshop.Ui.Correlated" xml:space="preserve"><value>此脚本加载 SteamAlert 使用的地址。当前用户的常驻文件也与已知 SteamAlert 的 SHA-256 相符：{0}。</value></data>
-  <data name="Pawnshop.Ui.Repair" xml:space="preserve"><value>请单独核对常驻程序及其下载器。清除重复感染的来源后，使用 Steam 官方安装程序修复受影响的客户端文件。</value></data>
+  <data name="Pawnshop.Ui.Repair" xml:space="preserve"><value>请核对常驻程序、下载器及另列的脚本修复项。处理后重新扫描，继续复核剩余的非预期客户端修改。</value></data>
   <data name="Common.Semicolon" xml:space="preserve">
     <value>；</value>
   </data>
@@ -11859,7 +11884,7 @@ DER SHA-256：{3}
     <value>请同时核对已安装的 Mod 和常驻程序，退出游戏并取消受影响的工坊订阅，避免下载器再次出现。</value>
   </data>
   <data name="SteamAlert.Plan.ClientPatch" xml:space="preserve">
-    <value>需手动修复的 Steam 客户端脚本（加载本机脚本）：{0}。请使用可信 Steam 安装来源恢复该文件。</value>
+    <value>待复核的 Steam 客户端脚本（加载本机脚本）{0}。请查看另列的脚本修复项及其结果，并继续核对剩余的非预期修改。</value>
   </data>
   <data name="Scan.ManagedMod.Core.Title" xml:space="preserve">
     <value>托管组件包含 Steam 调试自启和脚本求值线索</value>

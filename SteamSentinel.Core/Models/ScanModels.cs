@@ -56,7 +56,8 @@ public enum SuggestedActionKind
     StopHostProcess,
     DisableService,
     RemoveRelatedDefenderExclusion,
-    DisableRelatedFirewallRule
+    DisableRelatedFirewallRule,
+    RepairSteamScript
 }
 
 public sealed partial class Finding

@@ -124,6 +124,10 @@ internal static partial class Program
             TestV030RemediationScope();
             await TestV032CoreScopeAsync(root);
             await TestSteamAlertAsync(root);
+            await TestSteamScriptRepairAsync(root);
+            await TestSteamScriptRepairIntegrationAsync(root);
+            await TestSteamScriptBatchRegressionAsync(root);
+            await TestBrokerSteamScriptRepairAsync(root);
             await TestV032BrokerScopeAsync(root);
             await TestBoundBrokerPlanAsync();
             await TestSecureFileLeaseAsync(root);
@@ -839,6 +843,19 @@ internal static partial class Program
                 }
                 catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
                 await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "recovery-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--steam-script-repair-tests" when args.Length == 2:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                try
+                {
+                    string repairRoot = Path.GetFullPath(args[1]);
+                    await TestSteamScriptRepairAsync(repairRoot);
+                    await TestSteamScriptRepairIntegrationAsync(repairRoot);
+                    await TestSteamScriptBatchRegressionAsync(repairRoot);
+                    await TestBrokerSteamScriptRepairAsync(repairRoot);
+                }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "script-repair-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
                 return Failures.Count == 0 ? 0 : 1;
             case "--steamalert-tests" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));

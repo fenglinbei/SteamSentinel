@@ -267,6 +267,7 @@ public static class ReportExporter
         RemediationActionType.RemoveDefenderExclusion => DisplayText.Get("Report.ActionLabel.RemoveDefenderExclusion.01"),
         RemediationActionType.QuarantineFile => DisplayText.Get("Report.ActionLabel.QuarantineFile.01"),
         RemediationActionType.QuarantineDirectory => DisplayText.Get("Report.ActionLabel.QuarantineDirectory.01"),
+        RemediationActionType.RepairSteamScript => DisplayText.Get("SteamScript.ActionName"),
         RemediationActionType.AddProgramFirewallBlock => DisplayText.Get("Report.ActionLabel.AddProgramFirewallBlock.01"),
         RemediationActionType.BlockKnownDomains => DisplayText.Get("Report.ActionLabel.BlockKnownDomains.01"),
         RemediationActionType.RestoreSecurityControls => DisplayText.Get("Report.ActionLabel.RestoreSecurityControls.01"),

@@ -139,6 +139,7 @@ public interface IRelatedComponentDataSource
 /// <summary>Discovers exact file candidates and provenance only. Never hashes, verifies trust, scans a directory, or grants an action.</summary>
 public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataSource = null, TimeProvider? timeProvider = null)
 {
+    public static RelatedProcessRead ProbeProcess(int processId) => WindowsRelatedComponentDataSource.ReadProcess(processId);
     private readonly IRelatedComponentDataSource _source = dataSource ?? new WindowsRelatedComponentDataSource();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
     private static readonly HashSet<string> ScriptExtensions = new([".bat", ".cmd", ".ps1", ".vbs", ".js", ".py"], StringComparer.OrdinalIgnoreCase);
@@ -885,7 +886,7 @@ internal sealed class WindowsRelatedComponentDataSource : IRelatedComponentDataS
     private static bool SameProcess(RelatedProcessRead expected, RelatedProcessRead actual) => actual.Status == DiagnosticReadStatus.Complete &&
         expected.ProcessId == actual.ProcessId && expected.StartedAtUtc is not null && expected.StartedAtUtc == actual.StartedAtUtc &&
         expected.ImagePath.Equals(actual.ImagePath, StringComparison.OrdinalIgnoreCase);
-    private static RelatedProcessRead ReadProcess(int pid)
+    internal static RelatedProcessRead ReadProcess(int pid)
     {
         // Public limited-query APIs: https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-queryfullprocessimagenamew
         using SafeProcessHandle handle = OpenProcess(0x1000, false, pid);

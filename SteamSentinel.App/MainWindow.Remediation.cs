@@ -76,13 +76,22 @@ public partial class MainWindow
                 MessageBox.Show(this, batch.Summary + DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.08"), DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.09"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
+            bool repairsSteamScripts = batch.Plans.SelectMany(plan => plan.Actions)
+                .Any(action => action.Type == RemediationActionType.RepairSteamScript);
+            if (repairsSteamScripts && IsSteamRunning())
+            {
+                MessageBox.Show(this, DisplayText.Get("SteamScript.CloseSteam"),
+                    DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.05"), MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
             ShowActivity(ActivityPhase.Confirmation);
             RemediationPreviewWindow preview = new(batch, _coordinator.Rules, _findingScopeLayout) { Owner = this };
             if (preview.ShowDialog() != true) { batch.AddNote(MessageText.Create("Remediation.ExecuteSelectedRemediationAsync.10")); return; }
             await BeginPersistentCaseAsync(batch, original);
             _scanCancellation.Dispose(); _scanCancellation = null; CancelScanButton.IsEnabled = false;
             _operationCommitted = true; _reportNeedsRefresh = true;
-            ShowActivity(ActivityPhase.Applying, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.11"));
+            ShowActivity(ActivityPhase.Applying, DisplayText.Get(repairsSteamScripts
+                ? "SteamScript.Applying" : "Remediation.ExecuteSelectedRemediationAsync.11"));
             await Task.Run(() => RemediationBatchPlanner.ExecuteAsync(batch, ExecuteRecordedPlanAsync, progress));
             await _caseStore.SaveAsync(_persistedCase!);
             DisplayCaseRecord(_persistedCase!);
@@ -98,10 +107,11 @@ public partial class MainWindow
             await RunBatchFollowUpAsync(batch, original);
             if (_closeWhenIdle) return;
             HeaderStatusText.Text = batch.InterruptionReasonCode is not null || batch.Targets.Any(t => t.State != RemediationTargetState.Completed) ? DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.14") : DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.15");
-            HeaderDetailText.Text = batch.Summary;
-            string details = batch.Summary + "\n" + batch.InterruptionText.Display + "\n" + BatchFollowUpText.Text;
-            if (selected.Any(f => f.Category == FindingCategory.Steam) && batch.Results.SelectMany(r => r.Actions).Any(a => a.Success &&
-                a.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory))
+            HeaderDetailText.Text = batch.Summary + SteamScriptRepairSummary(batch);
+            string details = HeaderDetailText.Text + "\n" + batch.InterruptionText.Display + "\n" + BatchFollowUpText.Text;
+            if (batch.Results.SelectMany(r => r.Actions).Any(a => a.Success &&
+                a.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory &&
+                original.Findings.Any(f => f.Category == FindingCategory.Steam && string.Equals(f.Target, a.Target, StringComparison.OrdinalIgnoreCase))))
                 details += DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.16");
             details += DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.17");
             HideActivity();
@@ -131,9 +141,22 @@ public partial class MainWindow
     private void UpdateBatchResults()
     {
         if (_caseBatch is null) return;
-        BatchSummaryText.Text = _caseBatch.Summary;
+        BatchSummaryText.Text = _caseBatch.Summary + SteamScriptRepairSummary(_caseBatch);
         BatchResultsGrid.ItemsSource = null; BatchResultsGrid.ItemsSource = _caseBatch.Targets;
         BatchResultsTab.Header = DisplayText.Format("Remediation.UpdateBatchResults.01", (_caseBatch.Targets.Count));
+    }
+
+    internal static string SteamScriptRepairSummary(RemediationBatchSession batch)
+    {
+        Guid[] repairs = batch.Plans.SelectMany(plan => plan.Actions)
+            .Where(action => action.Type == RemediationActionType.RepairSteamScript).Select(action => action.ActionId).ToArray();
+        if (!batch.ExecutionFinished || repairs.Length == 0) return string.Empty;
+        var results = batch.Results.SelectMany(result => result.Actions).GroupBy(result => result.ActionId)
+            .ToDictionary(group => group.Key, group => group.Last());
+        int verified = repairs.Count(id => results.TryGetValue(id, out RemediationActionResult? result) &&
+            result.Success && result.ExecutionStatus == RemediationExecutionStatus.Succeeded &&
+            result.VerificationStatus == RemediationVerificationStatus.Verified);
+        return DisplayText.Format("SteamScript.ResultSummary", verified, repairs.Length - verified);
     }
 
     internal async Task<ScanReport> RunOriginalContentCheckAsync(ScanOptions options, CancellationToken token,
@@ -198,8 +221,11 @@ public partial class MainWindow
         (report.Findings.Any(f => f.CanRemediate || f.IsKnownMalware) ? DisplayText.Get("Remediation.ContentFollowUpSummary.02") : DisplayText.Get("Remediation.ContentFollowUpSummary.03")) +
         (report.Coverage != ScanCoverage.Complete ? DisplayText.Get("Remediation.ContentFollowUpSummary.04") : DisplayText.Get("Remediation.ContentFollowUpSummary.05"));
     internal static string SystemFollowUpSummary(ScanReport report) => DisplayText.Get("Remediation.SystemFollowUpSummary.01") +
-        (report.Findings.Any(f => f.IsKnownMalware && f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam)
+        (report.Findings.Any(f => f.RuleId == "STEAMALERT-UI-INJECTION" ||
+            f.IsKnownMalware && f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam)
             ? DisplayText.Get("Remediation.SystemFollowUpSummary.02") : DisplayText.Get("Remediation.SystemFollowUpSummary.03")) +
         (report.Findings.Any(f => f.RuleId == "SECURITY-CONTROLS-DISABLED") ? DisplayText.Get("Remediation.SystemFollowUpSummary.04") : "") +
+        (report.Findings.Any(f => f.RuleId == "STEAMALERT-UI-INJECTION") ? DisplayText.Get("SteamScript.FollowUpResidual") : "") +
+        (report.Findings.Any(f => f.RuleId == "STEAM-UI-LOOPBACK-SCRIPT") ? DisplayText.Get("SteamScript.FollowUpReview") : "") +
         (report.Coverage != ScanCoverage.Complete ? DisplayText.Get("Remediation.SystemFollowUpSummary.05") : "");
 }

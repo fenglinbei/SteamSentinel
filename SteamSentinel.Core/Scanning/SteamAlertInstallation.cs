@@ -4,11 +4,11 @@ using SteamSentinel.Core.Steam;
 
 namespace SteamSentinel.Core.Scanning;
 
-internal static class SteamAlertInstallation
+public static class SteamAlertInstallation
 {
-    internal const string LoaderRule = "STEAMALERT-MOD-LOADER";
-    internal const string ResidentRule = "STEAMALERT-RESIDENT";
-    internal static string ResidentDirectory => Path.Combine(
+    public const string LoaderRule = "STEAMALERT-MOD-LOADER";
+    public const string ResidentRule = "STEAMALERT-RESIDENT";
+    public static string ResidentDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamAlertDemo");
 
     // Match a physical file, never the identity of a member inside an archive.
@@ -29,7 +29,7 @@ internal static class SteamAlertInstallation
 
     // The system-only phase may finish before Workshop scanning. These paths are probes:
     // only the exact opposite component hash can add an action to the preview.
-    internal static IEnumerable<string> ProbePaths(string targetRole, SteamLayout layout, string residentDirectory)
+    public static IEnumerable<string> ProbePaths(string targetRole, SteamLayout layout, string residentDirectory)
     {
         if (targetRole == ResidentRule)
         {
@@ -60,7 +60,7 @@ internal static class SteamAlertInstallation
             rule.Malware && rule.Id == ResidentRule && ContentDiscovery.IsLocalSafePath(path) ? ResidentRule : null;
     }
 
-    internal static bool IsInstalled(string ruleId, string path, SteamLayout layout, string residentDirectory) => ruleId switch
+    public static bool IsInstalled(string ruleId, string path, SteamLayout layout, string residentDirectory) => ruleId switch
     {
         ResidentRule => string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)), residentDirectory, StringComparison.OrdinalIgnoreCase),
         LoaderRule => layout.ContentRoots.Any(root => root.Kind == "mod" && ContentDiscovery.IsWithin(path, root.Path)) ||
