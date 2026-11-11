@@ -266,6 +266,7 @@ public static class ReportExporter
         RemediationActionType.RemoveScheduledTask => DisplayText.Get("Report.ActionLabel.RemoveScheduledTask.01"),
         RemediationActionType.RemoveDefenderExclusion => DisplayText.Get("Report.ActionLabel.RemoveDefenderExclusion.01"),
         RemediationActionType.QuarantineFile => DisplayText.Get("Report.ActionLabel.QuarantineFile.01"),
+        RemediationActionType.RepairSteamConfiguration => DisplayText.Get("Report.ActionLabel.RepairSteamConfiguration"),
         RemediationActionType.QuarantineDirectory => DisplayText.Get("Report.ActionLabel.QuarantineDirectory.01"),
         RemediationActionType.RepairSteamScript => DisplayText.Get("SteamScript.ActionName"),
         RemediationActionType.AddProgramFirewallBlock => DisplayText.Get("Report.ActionLabel.AddProgramFirewallBlock.01"),

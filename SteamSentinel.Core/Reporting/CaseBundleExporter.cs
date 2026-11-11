@@ -43,6 +43,16 @@ public static class CaseBundleExporter
             await using StreamWriter writer = new(stream, new UTF8Encoding(false));
             await writer.WriteAsync(DisplayText.Format("CaseBundle.Readme", ProductInfo.Version).AsMemory(), token);
             await writer.WriteAsync(("\n\n" + DisplayText.Get("Report.OriginalTextNotice")).AsMemory(), token);
+            IEnumerable<RemediationPlan> initialPlans = plan is null ? [] : [plan];
+            RemediationPlan[] plans = initialPlans
+                .Concat(batches?.Plans ?? []).Concat(persistedCase?.Plans ?? [])
+                .Concat(persistedCase?.BatchSession?.Plans ?? []).DistinctBy(item => item.PlanId).ToArray();
+            if (plans.Length > 0)
+            {
+                await writer.WriteAsync(("\n\n" + RemediationModePresentation.Summary(plans)).AsMemory(), token);
+                if (plans.Any(item => item.Actions.Any(action => action.UserSelectedRisk)))
+                    await writer.WriteAsync(("\n" + DisplayText.Get("RemediationMode.RiskReason")).AsMemory(), token);
+            }
         }, token);
     }
 

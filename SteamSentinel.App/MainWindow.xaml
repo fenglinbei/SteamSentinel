@@ -140,7 +140,19 @@
                             <TextBlock x:Name="ProgressItemText" Foreground="#667085" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                         </DockPanel>
                         <ProgressBar x:Name="ScanProgressBar" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,1,0,0" Height="3" IsIndeterminate="False" />
-                        <TextBlock x:Name="FindingCountText" Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.034}" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="FindingCountText" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.034}" />
+                            <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="{ui:Text RemediationMode.Label}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <ComboBox x:Name="RemediationModeComboBox" Width="126" SelectedIndex="0"
+                                          SelectionChanged="RemediationMode_SelectionChanged"
+                                          AutomationProperties.Name="{ui:Text RemediationMode.Label}"
+                                          ToolTip="{ui:Text RemediationMode.ConservativeDescription}">
+                                    <ComboBoxItem Content="{ui:Text RemediationMode.Conservative}" />
+                                    <ComboBoxItem Content="{ui:Text RemediationMode.Aggressive}" />
+                                </ComboBox>
+                            </StackPanel>
+                        </StackPanel>
                         <TextBlock x:Name="FindingHandlingSummaryText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#475467"
                                    Text="{ui:Text Ui.Xaml.MainWindow.035}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                     </Grid>
@@ -360,7 +372,7 @@
                                 <Setter Property="Visibility" Value="Collapsed"/>
                                 <Style.Triggers><DataTrigger Binding="{Binding SelectedIndex, ElementName=ResultTabs}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
                             </Style></WrapPanel.Style>
-                            <Button x:Name="SelectAllButton" Content="{ui:Text Ui.Xaml.MainWindow.097}" Click="SelectAll_Click" ToolTipService.ShowOnDisabled="True" />
+                             <Button x:Name="SelectAllButton" Content="{ui:Text Ui.Xaml.MainWindow.097}" Click="SelectAll_Click" ToolTipService.ShowOnDisabled="True" />
                             <Button x:Name="ClearSelectionButton" Content="{ui:Text Ui.Xaml.MainWindow.098}" Click="ClearSelection_Click" />
                             <Button x:Name="ReviewFindingButton" Content="{ui:Text Ui.Xaml.MainWindow.099}" IsEnabled="False" Click="ReviewFinding_Click" ToolTip="{ui:Text Ui.Xaml.MainWindow.100}" ToolTipService.ShowOnDisabled="True" />
                             <Button x:Name="OccupancyButton" Content="{ui:Text Ui.Xaml.MainWindow.101}" IsEnabled="False" Click="Occupancy_Click" ToolTip="{ui:Text Ui.Xaml.MainWindow.102}" />

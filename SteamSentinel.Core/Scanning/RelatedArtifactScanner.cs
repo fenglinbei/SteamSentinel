@@ -104,6 +104,9 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
         foreach (string path in paths)
         {
             string? hash = await HashAsync(path, report, token);
+            if (hash is not null && !_known.ContainsKey(hash) && !MatchesProof(path, hash) &&
+                SteamAlertInstallation.IsInstalledResidentPath(path, _residentDirectory))
+                RegisterVerifiedFileFinding(path, hash, null);
             if (hash is not null && (_known.ContainsKey(hash) || MatchesProof(path, hash))) return (path, hash);
         }
         return null;
@@ -126,7 +129,8 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                         string command = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames)?.ToString() ?? "";
                         var match = await MatchCoreAsync(command, report, token);
                         if (match is null) continue;
-                        bool allowed = CanCloseEntry(match.Value.Path, match.Value.Hash, command, allowPatcher: true);
+                        bool allowed = CanCloseEntry(match.Value.Path, match.Value.Hash, command, allowPatcher: true,
+                            allowEmbedded: hive == RegistryHive.CurrentUser && keyPath == @"Software\Microsoft\Windows\CurrentVersion\Run");
                         AddCurrent(new Finding
                         {
                             RuleId = "PERSISTENCE-RUN-BOUND",
@@ -143,6 +147,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                             RelatedFilePath = match.Value.Path,
                             RelatedFileSha256 = match.Value.Hash,
                             ConfigurationSnapshot = command,
+                            ReasonCode = BoundReason(match.Value.Path, match.Value.Hash),
                             EvidenceText = ScriptSignals.Redact(command),
                             IsKnownMalware = _known.ContainsKey(match.Value.Hash),
                             CanRemediate = allowed,

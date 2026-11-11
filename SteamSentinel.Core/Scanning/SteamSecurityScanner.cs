@@ -56,6 +56,8 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await ScanSensitiveRootFilesAsync(steamRoot, report, cancellationToken);
+            await ScanSteamConfigurationFileAsync(Path.Combine(steamRoot, ".cef-enable-remote-debugging"),
+                SteamConfigurationRepair.Marker, report, cancellationToken);
             await ScanSteamUiAsync(steamRoot, report, cancellationToken);
 
             string millennium = Path.Combine(steamRoot, "millennium");
@@ -76,48 +78,26 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 });
             }
         }
+        await ScanSteamLaunchConfigurationAsync(layout, report, cancellationToken);
     }
 
     private async Task ScanSensitiveRootFilesAsync(string steamRoot, ScanReport report, CancellationToken cancellationToken)
     {
-        foreach (string name in rules.SteamInjectionNames)
+        foreach (string name in rules.SteamInjectionNames.Append("steam.cfg").Distinct(StringComparer.OrdinalIgnoreCase))
         {
             string path = Path.Combine(steamRoot, name);
             if (!File.Exists(path)) continue;
+
+            if (name.Equals("steam.cfg", StringComparison.OrdinalIgnoreCase))
+            {
+                await ScanSteamConfigurationFileAsync(path, SteamConfigurationRepair.Cfg, report, cancellationToken);
+                continue;
+            }
 
             FileInfo info = new(path);
             string sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
                 bytes => report.Metrics.BytesHashed += bytes, maximumBytes: info.Length);
             HashRule? known = FindKnownHash(sha256);
-
-            if (name.Equals("steam.cfg", StringComparison.OrdinalIgnoreCase))
-            {
-                string text = info.Length <= 1024 * 1024 ? await File.ReadAllTextAsync(path, cancellationToken) : string.Empty;
-                Dictionary<string, string> values = ParseConfig(text);
-                bool inhibitAll = HasValue(values, "BootStrapperInhibitAll", "enable", "enabled", "true", "1");
-                bool disableSelfUpdate = HasValue(values, "BootStrapperForceSelfUpdate", "disable", "disabled", "false", "0");
-                bool forceOffline = HasValue(values, "ForceOfflineMode", "enable", "enabled", "true", "1");
-                bool paired = inhibitAll && disableSelfUpdate;
-                bool suspicious = paired || inhibitAll || disableSelfUpdate || forceOffline;
-                report.Findings.Add(new Finding
-                {
-                    RuleId = paired ? "STEAM-CFG-UPDATE-SUPPRESSION-PAIR" : suspicious ? "STEAM-CFG-CONTROL-SETTING" : "STEAM-CFG-PRESENT",
-                    Category = FindingCategory.Steam,
-                    Severity = paired ? FindingSeverity.High : suspicious ? FindingSeverity.Medium : FindingSeverity.Low,
-                    Score = paired ? 85 : suspicious ? 45 : 15,
-                    TitleText = paired ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.01") : suspicious ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.02") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.03"),
-                    DescriptionText = paired
-                        ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.04")
-                        : suspicious ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.05") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.06"),
-                    Target = path,
-                    EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.07", (sha256), (string.Join(';', values.Select(item => $"{item.Key}={item.Value}")))),
-                    Sha256 = sha256,
-                    IsKnownMalware = false,
-                    CanRemediate = paired,
-                    SuggestedActions = paired ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
-                });
-                continue;
-            }
 
             SignatureResult signature = AuthenticodeVerifier.Verify(path);
             FindingSeverity severity = known?.Malware == true ? FindingSeverity.Critical :

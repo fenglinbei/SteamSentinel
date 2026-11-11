@@ -22,11 +22,16 @@ public enum RemediationActionType
     DisableRelatedFirewallRule,
     RemoveBoundCertificate,
     RestoreBoundProxyConfiguration,
-    RepairSteamScript
+    RepairSteamScript,
+    RepairSteamConfiguration
 }
+
+public enum RemediationMode { Conservative, Aggressive }
 
 public sealed class RemediationPlan
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public RemediationMode Mode { get; init; }
     [JsonRequired]
     public string SchemaVersion { get; init; } = "1";
     [JsonRequired]
@@ -48,6 +53,12 @@ public sealed class RemediationPlan
 
 public sealed partial class RemediationAction
 {
+    // A request to act on the user's selection, never an assertion that the content is malware.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UserSelectedRisk { get; init; }
+    // Requested verifier only. The Broker independently proves it from the locked file bytes.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ContentEvidenceRuleId { get; init; }
     public Guid ActionId { get; init; } = Guid.NewGuid();
     public RemediationActionType Type { get; init; }
     public string DisplayName { get; init; } = string.Empty;
@@ -164,6 +175,8 @@ public sealed class QuarantineManifest
 
 public sealed class QuarantineRecord
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UserSelectedRisk { get; init; }
     // These fields are trusted only inside a Broker-protected, authenticated quarantine manifest.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool ExplicitFileAuthorization { get; init; }

@@ -1,12 +1,13 @@
 using System.Globalization;
 using System.Text;
+using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Reporting;
 
 namespace SteamSentinel.Broker;
 
-internal sealed record BrokerConfirmationRow(string Action, string Target, string Verification, string Sha256);
+internal sealed record BrokerConfirmationRow(string Action, string Target, string Verification, string Identity);
 
 /// <summary>The ordinary final Broker confirmation, with every action available for review.</summary>
 internal sealed class BrokerConfirmationWindow : Form
@@ -31,7 +32,11 @@ internal sealed class BrokerConfirmationWindow : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         Label introduction = new()
         {
-            Text = DisplayText.Get("Scope.ConfirmationIntro") + " " + DisplayText.Get("Scope.Ui.PreviewNotice"),
+            Text = RemediationModePresentation.Summary(plan) + Environment.NewLine +
+                (plan.Mode == RemediationMode.Aggressive
+                    ? DisplayText.Get("RemediationMode.AggressiveNotice") + Environment.NewLine + DisplayText.Get("RemediationMode.ExactTargetsNotice")
+                    : DisplayText.Get("Scope.ConfirmationIntro") + " " + DisplayText.Get("Scope.Ui.PreviewNotice")),
+            ForeColor = plan.Mode == RemediationMode.Aggressive ? Color.FromArgb(154, 52, 18) : SystemColors.ControlText,
             AutoSize = true,
             Dock = DockStyle.Fill,
             Margin = new Padding(0, 0, 0, 12)
@@ -69,7 +74,7 @@ internal sealed class BrokerConfirmationWindow : Form
             {
                 BrokerConfirmationRow row = rows[index];
                 detail.Text = row.Action + Environment.NewLine + row.Target + Environment.NewLine + row.Verification +
-                    (row.Sha256.Length == 0 ? string.Empty : Environment.NewLine + "SHA-256: " + row.Sha256);
+                    (row.Identity.Length == 0 ? string.Empty : Environment.NewLine + row.Identity);
             }
         }
         grid.CurrentCellChanged += (_, _) => ShowSelection();
@@ -116,6 +121,8 @@ internal sealed class BrokerConfirmationWindow : Form
         MaximumSize = area.Size;
         Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
         MinimumSize = new Size(Math.Min(760, area.Width), Math.Min(500, area.Height));
+        if (Controls.OfType<TableLayoutPanel>().FirstOrDefault() is { RowStyles.Count: > 2 } layout)
+            layout.RowStyles[2].Height = Height < 600 ? 70 : 110;
         Location = new Point(Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - Width)),
             Math.Clamp(Top, area.Top, Math.Max(area.Top, area.Bottom - Height)));
         PerformLayout();
@@ -130,13 +137,28 @@ internal sealed class BrokerConfirmationWindow : Form
             // IsKnownMalware, display strings and confidence supplied by a client never become Broker proof.
             string verification = DisplayText.Get(file is null ? "Scope.ExistingAction" :
                 file.Sensitive ? "Scope.VerifiedSensitiveFile" : "Scope.VerifiedFile");
+            if (action.UserSelectedRisk)
+                verification = DisplayText.Get("RemediationMode.BrokerRisk") + Environment.NewLine + verification;
+            if (action.Type == RemediationActionType.RepairSteamConfiguration)
+            {
+                string description = action.ConfigurationKind switch
+                {
+                    SteamConfigurationRepair.Cfg => "SteamConfig.CfgDescription",
+                    SteamConfigurationRepair.Marker => "SteamConfig.MarkerDescription",
+                    SteamConfigurationRepair.Run or SteamConfigurationRepair.Shortcut => "SteamConfig.ArgumentsDescription",
+                    _ => "SteamConfig.InvalidTarget"
+                };
+                return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target),
+                    DisplayText.Format("SteamConfig.PreviewIntent", DisplayText.Get(description)),
+                    Sanitize(RemediationCasePresentation.ActionIdentity(action)));
+            }
             if (action.Type == RemediationActionType.RepairSteamScript)
                 return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target),
                     DisplayText.Get("SteamScript.Confirmation"),
-                    Sanitize(action.ExpectedSha256 ?? string.Empty) + Environment.NewLine +
+                    "SHA-256: " + Sanitize(action.ExpectedSha256 ?? string.Empty) + Environment.NewLine +
                     DisplayText.Format("SteamScript.RepairedIdentity", Sanitize(action.RepairedSha256 ?? string.Empty)));
             return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target), verification,
-                file?.Sha256 ?? string.Empty);
+                file is null ? string.Empty : "SHA-256: " + file.Sha256);
         }).ToArray();
     }
 

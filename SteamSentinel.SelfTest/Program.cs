@@ -128,6 +128,9 @@ internal static partial class Program
             await TestSteamScriptRepairIntegrationAsync(root);
             await TestSteamScriptBatchRegressionAsync(root);
             await TestBrokerSteamScriptRepairAsync(root);
+            await TestRemediationModesAsync(root);
+            await TestSteamConfigurationRepairAsync(root);
+            await TestSteamAlertEmbeddedEvidenceAsync(root);
             await TestV032BrokerScopeAsync(root);
             await TestBoundBrokerPlanAsync();
             await TestSecureFileLeaseAsync(root);
@@ -843,6 +846,20 @@ internal static partial class Program
                 }
                 catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
                 await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "recovery-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--remediation-mode-ui" when args.Length == 2:
+                return RunRemediationModeUi(args[1]);
+            case "--remediation-mode-tests" when args.Length == 2:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                try
+                {
+                    string modeRoot = Path.GetFullPath(args[1]);
+                    await TestRemediationModesAsync(modeRoot);
+                    await TestSteamConfigurationRepairAsync(modeRoot);
+                    await TestSteamAlertEmbeddedEvidenceAsync(modeRoot);
+                }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "remediation-mode-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
                 return Failures.Count == 0 ? 0 : 1;
             case "--steam-script-repair-tests" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));

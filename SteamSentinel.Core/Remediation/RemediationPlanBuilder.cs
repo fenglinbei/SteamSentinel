@@ -17,25 +17,31 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         bool addKnownDomainBlock,
         CancellationToken cancellationToken = default,
         IEnumerable<Finding>? allFindings = null,
-        bool requestExplicitFileTargets = false)
+        bool requestExplicitFileTargets = false,
+        RemediationMode remediationMode = RemediationMode.Conservative)
     {
-        RemediationPlan plan = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets };
+        if (!RemediationModePolicy.IsValid(remediationMode)) throw new ArgumentOutOfRangeException(nameof(remediationMode));
+        requestExplicitFileTargets |= remediationMode == RemediationMode.Aggressive;
+        RemediationPlan plan = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets, Mode = remediationMode };
         Dictionary<string, RemediationAction> deduplication = new(StringComparer.OrdinalIgnoreCase);
         bool shouldBlockDomains = addKnownDomainBlock;
-        Finding[] selected = selectedFindings.Take(257).ToArray();
+        Finding[] selected = selectedFindings.Take(257).Select(f => RemediationModePolicy.ProjectFinding(f, remediationMode)).ToArray();
         if (selected.Length > 256) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.01"), sourceText => new InvalidDataException(sourceText));
         // Old reports keep their original flags. Retired token-only evidence must be
         // rejected before it can seed related actions or silently disappear from a plan.
-        foreach (Finding finding in selected) RemediationEvidencePolicy.RequireActionableEvidence(finding);
-        IEnumerable<Finding> expanded = allFindings is null ? selected : RelatedArtifactRelations.SelectForPlan(selected, allFindings, rules);
+        foreach (Finding finding in selected) RequireEvidence(finding);
+        IEnumerable<Finding> expanded = allFindings is null ? selected :
+            RelatedArtifactRelations.SelectForPlan(selected.Where(f => !f.UserSelectedRisk), allFindings, rules)
+                .Concat(selected.Where(f => f.UserSelectedRisk));
 
         foreach (Finding finding in expanded)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RemediationEvidencePolicy.RequireActionableEvidence(finding);
+            RequireEvidence(finding);
             if (!finding.CanRemediate) continue;
             // A selected startup link is quarantined by its own scanned bytes. Its payload is a separate action/identity.
-            if (finding.RelatedFilePath is { } related && !(finding.RuleId == "PERSISTENCE-STARTUP-LINK" &&
+            if (!finding.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration) &&
+                finding.RelatedFilePath is { } related && !(finding.RuleId == "PERSISTENCE-STARTUP-LINK" &&
                 finding.SuggestedActions.Count == 1 && finding.SuggestedActions[0] == SuggestedActionKind.QuarantineFile))
                 await VerifyFileIdentityAsync(related, finding.RelatedFileSha256, cancellationToken);
             if (finding.SuggestedActions.Any(a => a is SuggestedActionKind.StopProcess or SuggestedActionKind.StopHostProcess))
@@ -106,6 +112,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.DisableRelatedFirewallRule => BoundAction(finding, RemediationActionType.DisableRelatedFirewallRule, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableRelatedFirewallRule.01")),
                     SuggestedActionKind.QuarantineFile when File.Exists(finding.Target) => await CreateFileActionAsync(finding, cancellationToken, requestExplicitFileTargets),
                     SuggestedActionKind.RepairSteamScript => await CreateScriptRepairAsync(finding, cancellationToken),
+                    SuggestedActionKind.RepairSteamConfiguration => await SteamConfigurationRepairTarget.CaptureAsync(finding, _steamLayout.Value, cancellationToken),
                     SuggestedActionKind.QuarantineDirectory when Directory.Exists(finding.Target) =>
                         await CreateDirectoryActionAsync(finding, cancellationToken),
                     SuggestedActionKind.RestoreSecurityControls => new RemediationAction
@@ -166,11 +173,25 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             });
         }
 
+        foreach (RemediationAction file in plan.Actions.Where(a => a.UserSelectedRisk && a.Type == RemediationActionType.QuarantineFile).ToArray())
+            plan.Actions.AddRange(UserRiskCompanions.Discover(file, cancellationToken));
         if (plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.07"), sourceText => new InvalidDataException(sourceText));
         SteamScriptRepairTarget.AddSourceDependencies(plan.Actions, rules);
         OrderActionsForSafeExecution(plan.Actions);
 
         return plan;
+
+        void RequireEvidence(Finding finding)
+        {
+            if (finding.UserSelectedRisk)
+            {
+                if (remediationMode != RemediationMode.Aggressive || !RemediationModePolicy.CanRequestQuarantine(finding) ||
+                    finding.IsKnownMalware || !finding.SuggestedActions.SequenceEqual([SuggestedActionKind.QuarantineFile]))
+                    throw MessageExceptions.Create(MessageText.Create("Remediation.Mode.InvalidRiskRequest"), text => new InvalidDataException(text));
+                return;
+            }
+            RemediationEvidencePolicy.RequireActionableEvidence(finding);
+        }
     }
 
     internal static void OrderActionsForSafeExecution(List<RemediationAction> actions)
@@ -203,14 +224,17 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             throw MessageExceptions.Create(MessageText.Create("Remediation.FileScopeNotApproved",
                     path.Length <= 4096 ? path : path[..2046] + " … " + path[^2046..]),
                 sourceText => new FileRemediationScopeException(sourceText));
+        bool embeddedProof = !finding.UserSelectedRisk && finding.RuleId == SteamSentinel.Core.Inspection.SteamAlertEmbeddedEvidence.RuleId;
         return new RemediationAction
         {
             Type = RemediationActionType.QuarantineFile,
+            UserSelectedRisk = finding.UserSelectedRisk,
+            ContentEvidenceRuleId = embeddedProof ? SteamSentinel.Core.Inspection.SteamAlertEmbeddedEvidence.RuleId : null,
             DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.CreateFileActionAsync.01"),
             Target = path,
             ExpectedSha256 = hash,
-            ExpectedFileIdentity = requestExplicitFileTargets ? FileScopeSafety.CaptureIdentity(path) : null,
-            ExpectedParentIdentity = requestExplicitFileTargets ? FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, true) : null,
+            ExpectedFileIdentity = requestExplicitFileTargets || embeddedProof ? FileScopeSafety.CaptureIdentity(path) : null,
+            ExpectedParentIdentity = requestExplicitFileTargets || embeddedProof ? FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, true) : null,
             IsKnownMalware = finding.IsKnownMalware,
             ConfidenceScore = finding.Score
         };

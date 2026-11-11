@@ -36,6 +36,7 @@ internal sealed class BrokerFileScopeAuthorization
         foreach (RemediationAction action in plan.Actions.Where(IsFileAction))
         {
             token.ThrowIfCancellationRequested();
+            BrokerEngine.ValidateContentEvidenceActionShape(action);
             if (!FileScopeSafety.IsValidIdentity(action.ExpectedFileIdentity) ||
                 !FileScopeSafety.IsValidIdentity(action.ExpectedParentIdentity) || !Validation.IsHexSha256(action.ExpectedSha256))
                 throw BrokerScopeText.Invalid(BrokerScopeText.InvalidIdentity);
@@ -46,8 +47,9 @@ internal sealed class BrokerFileScopeAuthorization
             string hash = await lease.ComputeSha256Async(token);
             if (!hash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
                 throw BrokerScopeText.Invalid(BrokerScopeText.IdentityChanged);
+            _ = await BrokerEngine.VerifyQuarantineContentEvidenceAsync(action, lease, token);
             bool sensitive = FileScopeSafety.EvaluatePath(lease.FinalPath).Sensitive;
-            bool requiresExplicit = sensitive || !FileRemediationScope.IsAllowed(lease.FinalPath, hash, rules, layout);
+            bool requiresExplicit = action.UserSelectedRisk || sensitive || !FileRemediationScope.IsAllowed(lease.FinalPath, hash, rules, layout);
             BrokerFileMetadata? metadata = null;
             if (action.Type == RemediationActionType.QuarantineFile)
             {

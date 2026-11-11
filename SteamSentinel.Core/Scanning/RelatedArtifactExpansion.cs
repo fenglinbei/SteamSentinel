@@ -29,6 +29,7 @@ public sealed partial class RelatedArtifactScanner
     private readonly HashSet<string> _blockedPaths = new(StringComparer.OrdinalIgnoreCase);
     private Finding[] _previous = [];
     private bool _closureOnly;
+    private string _residentDirectory = SteamAlertInstallation.ResidentDirectory;
     private readonly HashSet<string> _explicitFileTargets = new(StringComparer.OrdinalIgnoreCase);
 
     private bool MayReadExplicitFile(string path) => ContentDiscovery.IsLocalSafePath(path) &&
@@ -50,7 +51,11 @@ public sealed partial class RelatedArtifactScanner
     internal async Task<RelatedArtifactExpansion> ExpandLocalAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token,
         long maximumVerificationBytes, bool requestExplicitFileTargets, SteamLayout? layout, string residentDirectory)
     {
-        RelatedArtifactScanner session = new(rules) { _verificationByteLimit = Math.Clamp(maximumVerificationBytes, 0, MaximumVerificationBytes) };
+        RelatedArtifactScanner session = new(rules)
+        {
+            _verificationByteLimit = Math.Clamp(maximumVerificationBytes, 0, MaximumVerificationBytes),
+            _residentDirectory = residentDirectory
+        };
         Finding[] selected = selectedFindings.Take(257).ToArray();
         if (requestExplicitFileTargets)
             foreach (Finding finding in selected.Where(f => RemediationEvidencePolicy.CanRemediate(f) &&
@@ -212,7 +217,7 @@ public sealed partial class RelatedArtifactScanner
                         if (candidates.Count >= 64)
                         { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.03")); break; }
                         string? hash = await HashAsync(peer, report, token);
-                        if (hash is not null && _known.TryGetValue(hash, out HashRule? rule) && rule.Id == role) candidates.Add(peer);
+                        if (hash is not null && MatchesFamilyRole(peer, hash, role)) candidates.Add(peer);
                     }
                 foreach (Finding peer in SteamAlertInstallation.InstalledPeers(_previous, _known, familyLayout, residentDirectory).Take(64 - candidates.Count))
                     candidates.Add(Path.GetFullPath(peer.Target));
@@ -224,6 +229,8 @@ public sealed partial class RelatedArtifactScanner
                 string seedPath = Path.GetFullPath(seed.RelatedFilePath ?? seed.Target);
                 if (_blockedPaths.Contains(seedPath) || !_lockedIdentities.TryGetValue(seedPath, out var identity) ||
                     !identity.Hash.Equals(RelatedArtifactRelations.FileHash(seed), StringComparison.OrdinalIgnoreCase)) continue;
+                if ((seed.RuleId == SteamAlertEmbeddedEvidence.RuleId || seed.ReasonCode == SteamAlertEmbeddedEvidence.ReasonCode) &&
+                    ReadEmbeddedProof(seedPath, identity.Hash) is null) continue;
                 familyLayout ??= layout ?? SteamLocator.Discover();
                 if (!SteamAlertInstallation.IsInstalled(role, seedPath, familyLayout, residentDirectory)) continue;
                 string targetRole = role == SteamAlertInstallation.LoaderRule ? SteamAlertInstallation.ResidentRule : SteamAlertInstallation.LoaderRule;
@@ -234,7 +241,7 @@ public sealed partial class RelatedArtifactScanner
                     if (candidates.Count >= 64)
                     { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.03")); break; }
                     string? hash = await HashAsync(peer, report, token);
-                    if (hash is not null && _known.TryGetValue(hash, out var rule) && rule.Id == targetRole)
+                    if (hash is not null && MatchesFamilyRole(peer, hash, targetRole))
                         candidates.Add(peer);
                 }
                 foreach (Finding peer in SteamAlertInstallation.InstalledPeers(_previous, _known, familyLayout, residentDirectory))
@@ -263,7 +270,8 @@ public sealed partial class RelatedArtifactScanner
             { _blockedPaths.Add(path); Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.14") + path); continue; }
             Finding? source = sources.Where(f => string.Equals(RelatedArtifactRelations.FileHash(f), hash, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(IsActionableFileSource).ThenByDescending(f => f.Score).FirstOrDefault();
-            if (source is null && !_known.ContainsKey(hash))
+            if (source is null && !_known.ContainsKey(hash) &&
+                !(SteamAlertInstallation.IsInstalledResidentPath(path, _residentDirectory) && ReadEmbeddedProof(path, hash) is not null))
             { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.15") + path); continue; }
             Finding? current = RegisterVerifiedFileFinding(path, hash, source);
             if (current is not null && (RemediationEvidencePolicy.CanRemediate(current) || !report.Findings.Any(f => f.Id == source?.Id)))
@@ -284,7 +292,7 @@ public sealed partial class RelatedArtifactScanner
             foreach (MessageText note in scripts.CoverageTexts) Note(report, note);
         }
 
-        if (familyLayout is not null && _proofs.Values.Any(f => f.RuleId == SteamAlertInstallation.ResidentRule &&
+        if (familyLayout is not null && _proofs.Values.Any(f => f.RuleId is SteamAlertInstallation.ResidentRule or SteamAlertEmbeddedEvidence.RuleId &&
             SteamAlertInstallation.IsInstalled(f.RuleId, f.Target, familyLayout, residentDirectory)))
             foreach (string patch in _previous.Where(f => f.RuleId == "STEAM-UI-LOOPBACK-SCRIPT" && f.ReasonCode == "SteamAlertResidentCorrelated" &&
                 f.Category == FindingCategory.Steam && ContentDiscovery.IsLocalSafePath(f.Target) &&
@@ -338,26 +346,30 @@ public sealed partial class RelatedArtifactScanner
             (!HasFileIdentity(source) || !RelatedArtifactRelations.SamePath(source.Target, path) ||
              !string.Equals(RelatedArtifactRelations.FileHash(source), hash, StringComparison.OrdinalIgnoreCase))) return null;
         bool known = _known.TryGetValue(hash, out HashRule? knownRule);
-        if (source is null && !known) return null;
-        bool actionable = known || source is not null && IsActionableFileSource(source);
+        bool requestsEmbedded = !known && (source?.RuleId == SteamAlertEmbeddedEvidence.RuleId ||
+            source is null && SteamAlertInstallation.IsInstalledResidentPath(path, _residentDirectory));
+        SteamAlertEmbeddedProof? embedded = requestsEmbedded ? ReadEmbeddedProof(path, hash) : null;
+        if (requestsEmbedded && embedded is null || source is null && !known && embedded is null) return null;
+        bool actionable = known || embedded is not null || source is not null && IsActionableFileSource(source);
         bool tokenOnly = !known && source is not null && IsTokenCooccurrenceOnly(source) &&
             !RemediationEvidencePolicy.IsBehaviorObservation(source.RuleId);
         Finding current = new()
         {
             // A fresh exact-hash match is independent evidence, not a revival of a retired
             // token-only rule or its historical reason code.
-            RuleId = known ? (string.IsNullOrEmpty(knownRule!.Id) ? "RELATION-KNOWN-HASH" : knownRule.Id) : source!.RuleId,
+            RuleId = known ? (string.IsNullOrEmpty(knownRule!.Id) ? "RELATION-KNOWN-HASH" : knownRule.Id) : embedded is not null ? SteamAlertEmbeddedEvidence.RuleId : source!.RuleId,
             Category = FindingCategory.File,
-            Severity = known ? FindingSeverity.Critical : tokenOnly ? FindingSeverity.Medium : source!.Severity,
-            Score = known ? 100 : tokenOnly ? Math.Min(source!.Score, 45) : source!.Score,
-            TitleText = known ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.16") : source!.TitleText,
+            Severity = known || embedded is not null ? FindingSeverity.Critical : tokenOnly ? FindingSeverity.Medium : source!.Severity,
+            Score = known || embedded is not null ? 100 : tokenOnly ? Math.Min(source!.Score, 45) : source!.Score,
+            TitleText = known ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.16") : embedded is not null ? MessageText.Create("Scan.ManagedEmbedded.Host.Title") : source!.TitleText,
             DescriptionText = actionable ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.17") : source!.DescriptionText,
-            ReasonCode = known ? null : tokenOnly ? "ScriptTokenCooccurrenceOnly" : source?.ReasonCode,
+            ReasonCode = known ? null : embedded is not null ? SteamAlertEmbeddedEvidence.ReasonCode : tokenOnly ? "ScriptTokenCooccurrenceOnly" : source?.ReasonCode,
             Target = path,
             Sha256 = hash,
             TargetSha256 = hash,
-            ContentPath = known ? path : source?.ContentPath,
-            EvidenceText = known ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.18") : source!.EvidenceText,
+            ContentPath = known || embedded is not null ? path : source?.ContentPath,
+            EvidenceText = known ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.18") : embedded is not null ?
+                MessageText.Create("Scan.ManagedEmbedded.Host.Evidence", embedded.ResourceName, embedded.PayloadSha256) : source!.EvidenceText,
             IsKnownMalware = known,
             CanRemediate = actionable,
             SuggestedActions = actionable ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
@@ -371,9 +383,34 @@ public sealed partial class RelatedArtifactScanner
     private bool MatchesObservation(string path, string hash) => _observations.TryGetValue(Path.GetFullPath(path), out Finding? finding) &&
         string.Equals(RelatedArtifactRelations.FileHash(finding), hash, StringComparison.OrdinalIgnoreCase);
     private int ProofScore(string path, string hash) => _known.ContainsKey(hash) ? 100 : _proofs.GetValueOrDefault(Path.GetFullPath(path))?.Score ?? 0;
-    private bool CanCloseEntry(string path, string hash, string command, bool allowPatcher) => _known.ContainsKey(hash) ||
-        allowPatcher && _proofs.TryGetValue(Path.GetFullPath(path), out Finding? proof) && RelatedArtifactRelations.SupportsHeuristicEntry(proof) &&
+    private string? BoundReason(string path, string hash) => MatchesProof(path, hash) &&
+        _proofs[Path.GetFullPath(path)].RuleId == SteamAlertEmbeddedEvidence.RuleId ? SteamAlertEmbeddedEvidence.ReasonCode : null;
+    private bool CanCloseEntry(string path, string hash, string command, bool allowPatcher, bool allowEmbedded = false) => _known.ContainsKey(hash) ||
+        allowPatcher && _proofs.TryGetValue(Path.GetFullPath(path), out Finding? proof) &&
+        (RelatedArtifactRelations.SupportsHeuristicEntry(proof) || allowEmbedded && RelatedArtifactRelations.SupportsBoundEntry(proof, _residentDirectory)) &&
         BoundContentEvidence.IsDirectInvocation(Environment.ExpandEnvironmentVariables(command), path);
+
+    private bool MatchesFamilyRole(string path, string hash, string role) =>
+        _known.TryGetValue(hash, out HashRule? rule) && rule.Id == role ||
+        role == SteamAlertInstallation.ResidentRule && SteamAlertInstallation.IsInstalledResidentPath(path, _residentDirectory) &&
+        ReadEmbeddedProof(path, hash) is not null;
+
+    private SteamAlertEmbeddedProof? ReadEmbeddedProof(string path, string hash)
+    {
+        try
+        {
+            if (_lockedIdentities.TryGetValue(Path.GetFullPath(path), out var locked))
+                return locked.Hash.Equals(hash, StringComparison.OrdinalIgnoreCase) ? SteamAlertEmbeddedEvidence.Inspect(locked.Stream, rules) : null;
+            using FileStream stream = RelatedArtifactReader.Open(path);
+            if (stream.Length > SteamAlertEmbeddedEvidence.MaximumBytes || stream.Length > _verificationByteLimit - _relatedBytesHashed) return null;
+            _relatedBytesHashed += stream.Length;
+            string current = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+            if (!current.Equals(hash, StringComparison.OrdinalIgnoreCase)) return null;
+            stream.Position = 0;
+            return SteamAlertEmbeddedEvidence.Inspect(stream, rules);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or Win32Exception) { return null; }
+    }
 
     private static bool IsTask(Finding finding) => finding.SuggestedActions.Contains(SuggestedActionKind.RemoveScheduledTask) ||
         finding.RuleId.StartsWith("PERSISTENCE-TASK", StringComparison.Ordinal);
@@ -541,7 +578,7 @@ public sealed partial class RelatedArtifactScanner
     }
 
     internal Finding? CreateProcessAssociation(string host, string hostHash, string path, string hash,
-        int processId, DateTimeOffset startedAtUtc)
+        int processId, DateTimeOffset startedAtUtc, string? residentDirectory = null)
     {
         bool known = _known.ContainsKey(hash);
         if (!Validation.IsHexSha256(hostHash) || !Validation.IsHexSha256(hash) ||
@@ -549,7 +586,7 @@ public sealed partial class RelatedArtifactScanner
         bool direct = RelatedArtifactRelations.SamePath(host, path);
         if (direct && !hostHash.Equals(hash, StringComparison.OrdinalIgnoreCase)) return null;
         bool strong = known || _proofs.TryGetValue(Path.GetFullPath(path), out Finding? proof) &&
-            RelatedArtifactRelations.SupportsHeuristicEntry(proof);
+            RelatedArtifactRelations.SupportsBoundEntry(proof, residentDirectory ?? _residentDirectory);
         bool allowed = known || direct && strong;
         return new Finding
         {
@@ -560,7 +597,7 @@ public sealed partial class RelatedArtifactScanner
             Score = strong ? ProofScore(path, hash) : 0,
             TitleText = direct ? MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.04") : MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.05"),
             DescriptionText = MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.06"),
-            ReasonCode = strong ? null : "RelatedFileObservationOnly",
+            ReasonCode = strong ? BoundReason(path, hash) : "RelatedFileObservationOnly",
             Target = host,
             Sha256 = hostHash,
             ProcessId = processId,

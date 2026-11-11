@@ -49,6 +49,12 @@ public static class RemediationCasePresentation
             .Any(r => r.Disposition == RemediationRunDisposition.ExecutionUnknown || r.Actions.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown));
         text.AppendLine(DisplayText.Get("RemediationCase.Render.04") + Label(uncertain ? CaseReverificationState.ExecutionUncertain : record.Episodes.LastOrDefault()?.State ?? CaseReverificationState.NotChecked));
         text.AppendLine(DisplayText.Get("RemediationCase.Render.05") + record.PendingPlanIds.Count);
+        RemediationPlan[] plans = record.Plans.Concat(record.BatchSession?.Plans ?? [])
+            .DistinctBy(plan => plan.PlanId).ToArray();
+        if (plans.Length > 0) text.AppendLine(RemediationModePresentation.Summary(plans));
+        foreach (RemediationAction action in plans.SelectMany(plan => plan.Actions)
+                     .Where(action => action.UserSelectedRisk).DistinctBy(action => action.ActionId).Take(256))
+            text.AppendLine(DisplayText.Format("RemediationMode.RiskTarget", action.Target));
         if (record.PendingPlanIds.Count == 0 && record.ExecutionResults.Concat(record.BatchSession?.Results ?? [])
             .Any(r => r.Disposition == RemediationRunDisposition.ExecutionUnknown))
             text.AppendLine(DisplayText.Get("Ui.RemediationAvailability.EndedUnknown"));
@@ -75,12 +81,30 @@ public static class RemediationCasePresentation
             (action.RelatedFilePath is null ? "" : DisplayText.Format("RemediationCase.ActionIdentity.01", (action.RelatedFilePath), (action.RelatedFileSha256)));
         if (action.Type == RemediationActionType.RepairSteamScript)
             identity += "\n" + DisplayText.Format("SteamScript.RepairedIdentity", action.RepairedSha256 ?? string.Empty);
+        if (action.Type == RemediationActionType.RepairSteamConfiguration)
+        {
+            identity = action.ConfigurationKind == SteamConfigurationRepair.Run
+                ? DisplayText.Format("SteamConfig.OriginalValue", identity) : "SHA-256: " + identity;
+            if (action.RepairedSha256 is { } repairedHash)
+                identity += "\n" + DisplayText.Format("SteamScript.RepairedIdentity", repairedHash);
+            if (action.ConfigurationKind == SteamConfigurationRepair.Run)
+            {
+                try
+                {
+                    SteamConfigurationSnapshot snapshot = SteamConfigurationRepairTarget.ReadSnapshot(action.ConfigurationSnapshot);
+                    if (snapshot.RepairedValue is { } repairedValue)
+                        identity += "\n" + DisplayText.Format("SteamConfig.RepairedValue", repairedValue);
+                }
+                catch (InvalidDataException) { identity += "\n" + DisplayText.Get("SteamConfig.InvalidTarget"); }
+            }
+        }
         if (action.BoundCertificate is { } certificate)
             identity += DisplayText.Format("RemediationCase.ActionIdentity.02", (certificate.TargetUserSid), (certificate.StoreLocation), (certificate.StoreName), (certificate.DerSha256), (certificate.PropertiesSha256));
         if (action.BoundProxy is { } proxy)
             identity += DisplayText.Get("RemediationCase.ActionIdentity.03") + JsonSerializer.Serialize(proxy, ReportPrivacy.ExportOptions);
         if (action.ConfigurationEvidenceRuleId is { } rule) identity += DisplayText.Get("RemediationCase.ActionIdentity.04") + rule + DisplayText.Get("RemediationCase.ActionIdentity.05");
         if (action.DependsOnActionIds.Count > 0) identity += DisplayText.Get("RemediationCase.ActionIdentity.06") + string.Join(", ", action.DependsOnActionIds);
+        if (action.UserSelectedRisk) identity += "\n" + DisplayText.Get("RemediationMode.RiskReason");
         return ScriptSignals.RedactSecrets(identity);
     }
 }

@@ -31,9 +31,16 @@ internal sealed partial class BrokerEngine
 
     private async Task VerifyDirectProcessContentAsync(RemediationAction action, SecureFileLease image, CancellationToken token)
     {
+        if (action.UserSelectedRisk)
+        {
+            await VerifyUserRiskLeaseAsync(action, image, token);
+            return;
+        }
         if (IsKnownImageHash(action.ExpectedSha256)) return;
-        if (!HasDirectStrongBinding(action) || !PathsEquivalent(image.FinalPath, action.Target) ||
-            await BoundContentEvidence.VerifyAsync(image.FinalPath, action.ExpectedSha256!, token) is null)
+        if (!HasDirectStrongBinding(action) || !PathsEquivalent(image.FinalPath, action.Target))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.VerifyDirectProcessContentAsync.01"), sourceText => new UnauthorizedAccessException(sourceText));
+        string? proof = await BoundContentEvidence.VerifyAsync(image.FinalPath, action.ExpectedSha256!, token);
+        if (!AllowsBoundContentProof(proof, action, null, image.FinalPath))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.VerifyDirectProcessContentAsync.01"), sourceText => new UnauthorizedAccessException(sourceText));
     }
 
@@ -82,6 +89,14 @@ internal sealed partial class BrokerEngine
 
     private async Task<SecureFileLease> OpenBoundLeaseAsync(RemediationAction action, string? command, CancellationToken token)
     {
+        if (action.UserSelectedRisk)
+        {
+            if (!HasUserRiskBinding(action) || command is null ||
+                !BoundContentEvidence.IsDirectInvocation(command, action.RelatedFilePath!)) throw InvalidRiskRequest();
+            SecureFileLease selected = SecureFileLease.Open(action.RelatedFilePath!);
+            try { await VerifyUserRiskLeaseAsync(action, selected, token); return selected; }
+            catch { await selected.DisposeAsync(); throw; }
+        }
         if (!HasPersistenceBinding(action)) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.OpenBoundLeaseAsync.01"), sourceText => new UnauthorizedAccessException(sourceText));
         // Indirect script chains are reported for review, never authorized from a transient text read.
         if (command is not null && !CommandTargets.Extract(command).Any(path => PathsEquivalent(path, action.RelatedFilePath!)))
@@ -96,8 +111,9 @@ internal sealed partial class BrokerEngine
             if (!HasKnownBinding(action))
             {
                 string? proof = await BoundContentEvidence.VerifyAsync(lease.FinalPath, action.RelatedFileSha256!, token);
-                if (proof is null) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.OpenBoundLeaseAsync.05"), sourceText => new UnauthorizedAccessException(sourceText));
-                _contentProofs[action.ActionId] = proof;
+                if (!AllowsBoundContentProof(proof, action, command, lease.FinalPath))
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.OpenBoundLeaseAsync.05"), sourceText => new UnauthorizedAccessException(sourceText));
+                _contentProofs[action.ActionId] = proof!;
             }
             return lease;
         }
@@ -124,13 +140,50 @@ internal sealed partial class BrokerEngine
         ? CommandTargets.Extract(command).Any(path => PathsEquivalent(path, action.RelatedFilePath!))
         : command.Split('\n').Any(invocation => BoundContentEvidence.IsDirectInvocation(invocation, action.RelatedFilePath!));
 
+    private static bool AllowsBoundContentProof(string? proof, RemediationAction action, string? command, string finalPath) =>
+        proof is "HEUR-STEAM-UI-PATCHER" or "HEUR-STEAM-TOKEN-STEALER" or "HEUR-STEAM-CREDENTIAL-PLUGIN" ||
+        proof == SteamAlertEmbeddedEvidence.RuleId && SupportsEmbeddedBoundAction(action, command) &&
+        PathsEquivalent(finalPath, action.RelatedFilePath!) &&
+        SteamAlertInstallation.IsInstalledResidentPath(finalPath, SteamAlertInstallation.ResidentDirectory);
+
+    // This is an additional scope gate after independent byte proof, never authority on its own.
+    internal static bool SupportsEmbeddedBoundAction(RemediationAction action, string? command, string? residentDirectory = null)
+    {
+        if (action.UserSelectedRisk || action.IsKnownMalware || action.ConfidenceScore != 100 ||
+            action.RelatedFilePath is not { } path || !Validation.IsSafeExactTarget(path) ||
+            !SteamAlertInstallation.IsInstalledResidentPath(path, residentDirectory ?? SteamAlertInstallation.ResidentDirectory) ||
+            !Validation.IsHexSha256(action.RelatedFileSha256)) return false;
+        return action.Type switch
+        {
+            RemediationActionType.StopProcess => action.ProcessId is > 4 && action.ProcessStartedAtUtc is not null &&
+                PathsEquivalent(action.Target, path) && Validation.IsHexSha256(action.ExpectedSha256) &&
+                action.ExpectedSha256!.Equals(action.RelatedFileSha256, StringComparison.OrdinalIgnoreCase),
+            RemediationActionType.RemoveRegistryValue => IsEmbeddedRunKey(action.RegistryHive, action.RegistryView, action.RegistryKey) &&
+                !string.IsNullOrWhiteSpace(action.RegistryValueName) && command is not null && BoundContentEvidence.IsDirectInvocation(command, path),
+            _ => false
+        };
+    }
+
+    private static bool IsEmbeddedRunKey(string? hive, string? view, string? key) => hive == "HKCU" &&
+        view is "Default" or "Registry32" or "Registry64" && key == @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    internal static bool SupportsEmbeddedRegistryRecord(QuarantineRecord record, string? residentDirectory = null) =>
+        !record.UserSelectedRisk && record.Type == RemediationActionType.RemoveRegistryValue &&
+        record.VerifiedContentRuleId == SteamAlertEmbeddedEvidence.RuleId &&
+        record.RelatedFilePath is { } path && Validation.IsSafeExactTarget(path) &&
+        SteamAlertInstallation.IsInstalledResidentPath(path, residentDirectory ?? SteamAlertInstallation.ResidentDirectory) &&
+        Validation.IsHexSha256(record.RelatedFileSha256) && IsEmbeddedRunKey(record.RegistryHive, record.RegistryView, record.RegistryKey) &&
+        !string.IsNullOrWhiteSpace(record.RegistryValueName) &&
+        record.RegistryValueKind is (int)RegistryValueKind.String or (int)RegistryValueKind.ExpandString &&
+        record.RegistryValueData is { } command && BoundContentEvidence.IsDirectInvocation(command, path);
+
     internal static void RequireTaskSnapshotHash(string actual, string? expected)
     {
         if (!Validation.IsHexSha256(expected) || !actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.RequireTaskSnapshotHash.01"), sourceText => new InvalidOperationException(sourceText));
     }
 
-    private static bool HasHeuristicRecord(QuarantineRecord record) =>
+    private static bool HasHeuristicRecord(QuarantineRecord record) => SupportsEmbeddedRegistryRecord(record) ||
         record.Type is RemediationActionType.RemoveRegistryValue or RemediationActionType.RemoveScheduledTask &&
         record.VerifiedContentRuleId is "HEUR-STEAM-UI-PATCHER" or "HEUR-STEAM-TOKEN-STEALER" or "HEUR-STEAM-CREDENTIAL-PLUGIN" &&
         record.RelatedFilePath is { } path && Validation.IsSafeExactTarget(path) && ContentDiscovery.IsLocalSafePath(path) &&
@@ -138,11 +191,28 @@ internal sealed partial class BrokerEngine
 
     private async Task VerifyRecordedContentAsync(QuarantineRecord record, QuarantineManifest manifest, CancellationToken token)
     {
+        if (record.VerifiedContentRuleId == SteamAlertEmbeddedEvidence.RuleId && record.Type == RemediationActionType.QuarantineFile)
+        {
+            await VerifyEmbeddedQuarantineRecordAsync(record, token);
+            return;
+        }
+        if (record.UserSelectedRisk)
+        {
+            await VerifyUserRiskRecordedContentAsync(record, manifest, token);
+            return;
+        }
+        if (record.Type == RemediationActionType.RepairSteamConfiguration)
+        {
+            await VerifySteamConfigurationRecordedContentAsync(record, token);
+            return;
+        }
         if (record.Type == RemediationActionType.RepairSteamScript)
         {
             if (record.FileMutationAttempted) _ = await ReadVerifiedSteamScriptBackupAsync(record, token);
             return;
         }
+        if (record.VerifiedContentRuleId == SteamAlertEmbeddedEvidence.RuleId && !SupportsEmbeddedRegistryRecord(record))
+            throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.VerifyRecordedContentAsync.03"), sourceText => new InvalidDataException(sourceText));
         if (!HasHeuristicRecord(record)) return;
         // Reprove the protected manifest claim from actual original or same-incident quarantine bytes.
         string path = record.RelatedFilePath!;

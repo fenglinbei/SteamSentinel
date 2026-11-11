@@ -52,9 +52,15 @@ for key in set(re.findall(r'MessageText\.Status\("([^"\r\n]+)"\s*[,)]', all_sour
 dynamic_prefixes = ("Amsi.Verdict.", "Execution.", "Run.", "Session.", "Backend.List.", "Backend.Join.",
                     "Resource.Assessment.", "Resource.Performance.", "Resource.Reason.")
 # Retained for rendering reports saved before duplicate path checks and the
-# whole-report startup recovery read budget were replaced.
+# whole-report startup recovery read budget were replaced, and for the Steam
+# configuration observations saved before the 0.3.5 typed repair workflow.
 legacy_keys = {"Backend.Core.ContentScanner.Containers.ScanContainerFileAsync.04",
-               "Ui.Cases.RefreshCaseRecordsAsync.01", "Ui.Cases.RecordRecoveredResultAsync.01"}
+               "Ui.Cases.RefreshCaseRecordsAsync.01", "Ui.Cases.RecordRecoveredResultAsync.01",
+               "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.01",
+               "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.02",
+               "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.04",
+               "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.05",
+               "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.07"}
 unused = [key for key in catalogs["PresentationMessages"] if not key.startswith(dynamic_prefixes)
           and key not in legacy_keys and '"' + key + '"' not in all_source and key not in references]
 if unused:

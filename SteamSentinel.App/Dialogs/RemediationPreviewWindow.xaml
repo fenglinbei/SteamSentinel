@@ -17,7 +17,10 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock FontSize="18" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.RemediationPreviewWindow.002}" TextWrapping="Wrap" />
+        <StackPanel>
+            <TextBlock FontSize="18" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.RemediationPreviewWindow.002}" TextWrapping="Wrap" />
+            <TextBlock x:Name="PreviewModeSummary" Text="{Binding ModeSummary}" FontWeight="SemiBold" Foreground="#9A3412" TextWrapping="Wrap" Margin="0,4,0,0" />
+        </StackPanel>
         <Border Grid.Row="1" Margin="0,6,0,6" Background="#FFF4ED" BorderBrush="#FFB088" BorderThickness="1" CornerRadius="6" Padding="8">
             <TextBlock x:Name="PreviewScopeNotice" Text="{Binding NoticeText}" TextWrapping="Wrap" />
         </Border>

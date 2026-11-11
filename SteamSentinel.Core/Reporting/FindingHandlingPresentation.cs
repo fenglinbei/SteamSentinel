@@ -21,20 +21,25 @@ public static class FindingHandlingPresentation
 {
     // Scope is a presentation-time assessment, never an execution authorization.
     // The caller supplies its cached Steam layout so rows do not repeat discovery.
-    public static FileScopeAssessment? AssessFileScope(Finding finding, RuleSet rules, SteamLayout layout)
+    public static FileScopeAssessment? AssessFileScope(Finding finding, RuleSet rules, SteamLayout layout,
+        RemediationMode mode = RemediationMode.Conservative)
     {
-        if (!Get(finding).CanSelect || !finding.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile)) return null;
+        if (!Get(finding, mode).CanSelect) return null;
+        finding = RemediationModePolicy.ProjectFinding(finding, mode);
+        if (!finding.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile)) return null;
         string? hash = finding.TargetSha256 ?? (finding.ContentPath is null ||
             string.Equals(finding.Target, finding.ContentPath, StringComparison.OrdinalIgnoreCase) ? finding.Sha256 : null);
         return FileRemediationScope.Assess(finding.Target, hash, rules, layout);
     }
 
-    public static FindingHandlingInfo Get(Finding finding, RuleSet rules, SteamLayout layout) =>
-        Get(finding, AssessFileScope(finding, rules, layout));
+    public static FindingHandlingInfo Get(Finding finding, RuleSet rules, SteamLayout layout,
+        RemediationMode mode = RemediationMode.Conservative) =>
+        Get(finding, AssessFileScope(finding, rules, layout, mode), mode);
 
-    public static FindingHandlingInfo Get(Finding finding, FileScopeAssessment? scope)
+    public static FindingHandlingInfo Get(Finding finding, FileScopeAssessment? scope,
+        RemediationMode mode = RemediationMode.Conservative)
     {
-        FindingHandlingInfo original = Get(finding);
+        FindingHandlingInfo original = Get(finding, mode);
         if (!original.CanSelect || scope is null) return original;
         string? labelKey = scope.Status switch
         {
@@ -45,22 +50,29 @@ public static class FindingHandlingPresentation
             _ => null
         };
         if (labelKey is null) return original with { ScopeStatus = scope.Status };
+        bool riskSelection = mode == RemediationMode.Aggressive && RemediationModePolicy.ProjectFinding(finding, mode).UserSelectedRisk;
         return new(scope.CanRequest ? FindingDisposition.Actionable : FindingDisposition.Blocked,
-            DisplayText.Get(labelKey), scope.Message.Display,
+            (riskSelection && scope.CanRequest ? DisplayText.Get("RemediationMode.RiskLabel") + " · " : "") + DisplayText.Get(labelKey),
+            (riskSelection ? original.Reason + Environment.NewLine : "") + scope.Message.Display,
             DisplayText.Get(scope.CanRequest ? "Scope.Ui.Request.Next" : "Scope.Ui.Blocked.Next"), scope.CanRequest, scope.Status);
     }
 
-    public static FindingHandlingInfo Get(Finding finding, System.Globalization.CultureInfo culture)
+    public static FindingHandlingInfo Get(Finding finding, System.Globalization.CultureInfo culture,
+        RemediationMode mode = RemediationMode.Conservative)
     {
         using IDisposable scope = DisplayText.UseCulture(culture);
-        return Get(finding);
+        return Get(finding, mode);
     }
 
     public static bool IsTrustProxyFinding(Finding finding) => finding.RuleId == "NETWORK-PROXY-PRESENT" ||
         finding.SourceKind == "trust-proxy-diagnostics" || finding.DiagnosticObservationIds.Count > 0;
 
-    public static FindingHandlingInfo Get(Finding finding)
+    public static FindingHandlingInfo Get(Finding finding, RemediationMode mode = RemediationMode.Conservative)
     {
+        finding = RemediationModePolicy.ProjectFinding(finding, mode);
+        if (mode == RemediationMode.Aggressive && finding.UserSelectedRisk)
+            return new(FindingDisposition.Actionable, DisplayText.Get("RemediationMode.RiskLabel"),
+                DisplayText.Get("RemediationMode.RiskReason"), DisplayText.Get("RemediationMode.RiskNext"), true);
         if (RemediationEvidencePolicy.IsReviewOnlyEvidence(finding))
             return new(FindingDisposition.NeedsReview, DisplayText.Get("FindingHandling.Get.13"),
                 RemediationEvidencePolicy.ReviewOnlyMessage(finding).Display, DisplayText.Get("FindingHandling.Get.17"), false);
@@ -87,9 +99,10 @@ public static class FindingHandlingPresentation
     private static string Reason(string id, string? original) => DisplayText.Get(id) +
         (string.IsNullOrWhiteSpace(original) ? "" : Environment.NewLine + DisplayText.Format("Common.RawDetail", original));
 
-    public static FindingHandlingCounts Count(IEnumerable<Finding> findings)
+    public static FindingHandlingCounts Count(IEnumerable<Finding> findings,
+        RemediationMode mode = RemediationMode.Conservative)
     {
-        return Count(findings.Where(f => f.Category != FindingCategory.Coverage).Select(Get));
+        return Count(findings.Where(f => f.Category != FindingCategory.Coverage).Select(f => Get(f, mode)));
     }
 
     public static FindingHandlingCounts Count(IEnumerable<FindingHandlingInfo> handling)

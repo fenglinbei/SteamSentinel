@@ -23,11 +23,18 @@ public partial class RemediationPreviewWindow : Window
         Actions = (entries ?? plan.Actions.Select(action => (action, 1, plan.ExplicitFileTargetsRequested)))
             .Select(entry => CreateDisplayItem(entry.Action, entry.Batch, entry.Explicit, rules, layout))
             .ToArray();
+        ModeSummary = RemediationModePresentation.Summary(plan);
         NoticeText = DisplayText.Get("Ui.Xaml.RemediationPreviewWindow.003") + (plan.ExplicitFileTargetsRequested
             ? "\n" + DisplayText.Get("Scope.Ui.PreviewNotice") : string.Empty);
         if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamScript))
             NoticeText += "\n" + DisplayText.Get("SteamScript.PreviewNotice");
         ConfirmationText = DisplayText.Get(plan.ExplicitFileTargetsRequested ? "Scope.Ui.PreviewConfirm" : "Ui.Xaml.RemediationPreviewWindow.020");
+        if (plan.Mode == RemediationMode.Aggressive)
+        {
+            NoticeText += "\n" + DisplayText.Get("RemediationMode.AggressiveNotice");
+            if (plan.Actions.Any(action => action.UserSelectedRisk))
+                ConfirmationText = DisplayText.Get("RemediationMode.RiskConfirmation");
+        }
         ScopeSummary = plan.ExplicitFileTargetsRequested ? DisplayText.Format("Scope.Ui.PreviewCounts",
             Actions.Count(action => action.ScopeStatus == FileScopeStatus.RequiresConsent),
             Actions.Count(action => action.IsSensitive),
@@ -40,6 +47,8 @@ public partial class RemediationPreviewWindow : Window
     public RemediationPreviewWindow(RemediationBatchSession batch, RuleSet? rules = null, SteamLayout? layout = null) : this(new RemediationPlan
     {
         Actions = batch.Plans.SelectMany(p => p.Actions).ToList(),
+        Mode = batch.Plans.Any(plan => plan.Mode == RemediationMode.Aggressive)
+            ? RemediationMode.Aggressive : RemediationMode.Conservative,
         ExplicitFileTargetsRequested = batch.Plans.Any(plan => plan.ExplicitFileTargetsRequested)
     }, batch.NoteTexts.Select(note => note.Display).ToArray(), rules, layout,
         batch.Plans.SelectMany((plan, index) => plan.Actions.Select(action => (action, index + 1, plan.ExplicitFileTargetsRequested))))
@@ -56,6 +65,7 @@ public partial class RemediationPreviewWindow : Window
     public string NoticeText { get; }
     public string ConfirmationText { get; }
     public string ScopeSummary { get; }
+    public string ModeSummary { get; }
     public IReadOnlyList<RemediationActionDisplayItem> Actions { get; }
     public ICollectionView GroupedActions { get; }
 
@@ -90,9 +100,11 @@ public partial class RemediationPreviewWindow : Window
     private void Execute_Click(object sender, RoutedEventArgs e) => DialogResult = true;
     private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
 
-    private static string ConfidenceLabel(RemediationAction action) => action.Type switch
+    private static string ConfidenceLabel(RemediationAction action) => action.UserSelectedRisk
+        ? DisplayText.Get("RemediationMode.RiskLabel") : action.Type switch
     {
         RemediationActionType.RepairSteamScript => DisplayText.Get("SteamScript.PreviewEvidence"),
+        RemediationActionType.RepairSteamConfiguration => DisplayText.Get("SteamConfig.Handling"),
         RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory =>
             action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.01") : DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.02", (action.ConfidenceScore)),
         _ => action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.03") : action.RelatedFilePath is not null ? DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.04", (action.ConfidenceScore)) : DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.05")

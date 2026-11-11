@@ -361,8 +361,31 @@ public sealed partial class ContentScanner
             });
     }
 
-    private static void AddManagedSteamAlertFinding(Stream stream, ContainerContext context, ContainerScanNode node)
+    private void AddManagedSteamAlertFinding(Stream stream, ContainerContext context, ContainerScanNode node)
     {
+        SteamAlertEmbeddedProof? proof = SteamAlertEmbeddedEvidence.Inspect(stream, _rules, context.Token);
+        bool physicalHost = node.Sha256 is not null && node.Sha256.Equals(node.OriginalTargetSha256, StringComparison.OrdinalIgnoreCase) &&
+            RelatedArtifactRelations.SamePath(node.DisplayPath, node.OriginalTarget);
+        if (proof is not null)
+            context.Report.Findings.Add(new()
+            {
+                RuleId = SteamAlertEmbeddedEvidence.RuleId,
+                Category = FindingCategory.File,
+                Severity = FindingSeverity.Critical,
+                Score = 100,
+                TitleText = MessageText.Create("Scan.ManagedEmbedded.Host.Title"),
+                DescriptionText = MessageText.Create("Scan.ManagedEmbedded.Host.Description"),
+                EvidenceText = MessageText.Create("Scan.ManagedEmbedded.Host.Evidence", proof.ResourceName, proof.PayloadSha256),
+                ReasonCode = SteamAlertEmbeddedEvidence.ReasonCode,
+                Target = node.OriginalTarget,
+                Sha256 = node.Sha256,
+                TargetSha256 = node.OriginalTargetSha256,
+                ContentPath = node.DisplayPath,
+                WorkshopId = context.WorkshopId,
+                IsKnownMalware = false,
+                CanRemediate = physicalHost,
+                SuggestedActions = physicalHost ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
+            });
         ManagedSteamAlertMatch match = ManagedSteamAlertInspector.Inspect(stream, context.Token);
         if (match == ManagedSteamAlertMatch.None) return;
         (string rule, MessageText title, MessageText description, MessageText evidence) = match switch

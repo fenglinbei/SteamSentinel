@@ -27,9 +27,13 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
     public async Task<RemediationBatchSession> PrepareAsync(IEnumerable<Finding> selection, ScanReport original,
         bool blockDomains, Func<IReadOnlyList<string>, CancellationToken, Task<ScanReport>>? inspectCandidates = null,
         IProgress<ScanProgress>? progress = null, CancellationToken token = default,
-        bool requestExplicitFileTargets = false)
+        bool requestExplicitFileTargets = false,
+        RemediationMode remediationMode = RemediationMode.Conservative)
     {
-        Finding[] requested = selection.Take(MaximumSelectedFindings + 1).ToArray();
+        if (!RemediationModePolicy.IsValid(remediationMode)) throw new ArgumentOutOfRangeException(nameof(remediationMode));
+        requestExplicitFileTargets |= remediationMode == RemediationMode.Aggressive;
+        Finding[] requested = selection.Take(MaximumSelectedFindings + 1)
+            .Select(f => RemediationModePolicy.ProjectFinding(f, remediationMode)).ToArray();
         if (requested.Length > MaximumSelectedFindings) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.01"), sourceText => new InvalidDataException(sourceText));
         // Keep explicitly requested retired findings in the preview and account for their refusal.
         Finding[] selected = requested.Where(f => f.CanRemediate || RemediationEvidencePolicy.IsReviewOnlyEvidence(f)).ToArray();
@@ -45,7 +49,10 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                 RequiredActions = g.SelectMany(RequiredActionKeys).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
             }).ToList()
         };
-        List<Finding> verified = [];
+        // Explicit risk choices and typed configuration repairs are independently recaptured by
+        // the plan builder. They must not be converted into trusted malware by association scans.
+        List<Finding> verified = selected.Where(f => f.UserSelectedRisk ||
+            f.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration)).ToList();
         MessageTextCollection notes = [];
         void Record(IEnumerable<Finding> findings, IEnumerable<MessageText> details, string reason)
         {
@@ -56,7 +63,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                     if (session.PreparationNotes.Count < 4096)
                         session.PreparationNotes.Add(new(finding.Target, reason, detail));
         }
-        foreach (Finding finding in selected.Where(RemediationEvidencePolicy.IsReviewOnlyEvidence))
+        foreach (Finding finding in selected.Where(f => !f.UserSelectedRisk && RemediationEvidencePolicy.IsReviewOnlyEvidence(f)))
             Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
         HashSet<string> scopeBlocked = new(StringComparer.Ordinal);
         if (requestExplicitFileTargets)
@@ -69,7 +76,10 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                     Record([finding], [safety.Message], ReasonCodes.ActionsNotIncluded);
                 }
             }
-        List<Finding[]> batches = PackSelection(selected.Where(f => RemediationEvidencePolicy.CanRemediate(f) && !scopeBlocked.Contains(f.Id)).ToArray(), notes, session.PreparationNotes);
+        verified.RemoveAll(f => scopeBlocked.Contains(f.Id));
+        List<Finding[]> batches = PackSelection(selected.Where(f => !f.UserSelectedRisk &&
+            !f.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration) &&
+            RemediationEvidencePolicy.CanRemediate(f) && !scopeBlocked.Contains(f.Id)).ToArray(), notes, session.PreparationNotes);
         for (int index = 0; index < batches.Count; index++)
         {
             token.ThrowIfCancellationRequested();
@@ -104,18 +114,18 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         List<List<RemediationAction>> actionGroups = [];
         bool needDomains = blockDomains;
         RemediationPlanBuilder planBuilder = _steamLayout is null ? new(rules) : new(rules, _steamLayout);
-        foreach (Finding finding in verified.Where(RemediationEvidencePolicy.IsReviewOnlyEvidence))
+        foreach (Finding finding in verified.Where(f => !f.UserSelectedRisk && RemediationEvidencePolicy.IsReviewOnlyEvidence(f)))
             Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
         // Source groups precede independent script repairs. Completed earlier batches are
         // verified before the next runs, and the Broker rechecks live sources for every repair.
-        foreach (Finding[] group in DependencyGroups(verified.Where(RemediationEvidencePolicy.CanRemediate).ToArray())
+        foreach (Finding[] group in DependencyGroups(verified.Where(CanPrepare).ToArray())
             .OrderBy(group => group.Any(f => f.SuggestedActions.Contains(SuggestedActionKind.RepairSteamScript))))
         {
             token.ThrowIfCancellationRequested();
             try
             {
                 RemediationPlan plan = await planBuilder.BuildAsync(Coalesce(group), false, token, allFindings: group,
-                    requestExplicitFileTargets: requestExplicitFileTargets);
+                    requestExplicitFileTargets: requestExplicitFileTargets, remediationMode: remediationMode);
                 needDomains |= plan.Actions.Any(a => a.Type == RemediationActionType.BlockKnownDomains);
                 List<RemediationAction> actions = plan.Actions.Where(a => a.Type != RemediationActionType.BlockKnownDomains).ToList();
                 if (actions.Count > 0) actionGroups.Add(actions);
@@ -127,7 +137,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception)
             { Record(group, [MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.07") + MessageExceptions.Describe(ex)], ReasonCodes.EvidenceUnavailable); }
         }
-        session.Plans.AddRange(PackActions(actionGroups, requestExplicitFileTargets, rules));
+        session.Plans.AddRange(PackActions(actionGroups, requestExplicitFileTargets, rules, remediationMode));
         if (session.Plans.Count > 0 && needDomains && rules.KnownDomains.Count > 0)
         {
             RemediationAction block = new()
@@ -139,14 +149,14 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                 IsKnownMalware = true,
                 ConfidenceScore = 100
             };
-            if (session.Plans[0].Actions.Count == 64) session.Plans.Insert(0, new() { Actions = [block] });
+            if (session.Plans[0].Actions.Count == 64) session.Plans.Insert(0, new() { Actions = [block], Mode = remediationMode, ExplicitFileTargetsRequested = requestExplicitFileTargets });
             else { session.Plans[0].Actions.Add(block); RemediationPlanBuilder.OrderActionsForSafeExecution(session.Plans[0].Actions); }
         }
         foreach (MessageText note in notes.Texts.DistinctBy(n => n.OriginalText).Take(4096)) session.AddNote(note);
         if (notes.Distinct().Skip(4096).Any()) session.AddNote(MessageText.Create("Backend.Core.RemediationBatchPlanner.PrepareAsync.09"));
         HashSet<string> goalKeys = session.Targets.Select(t => t.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         HashSet<string> plannedKeys = session.Plans.SelectMany(p => p.Actions).Select(ActionKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in verified.Where(RemediationEvidencePolicy.CanRemediate).GroupBy(GoalKey, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in verified.Where(CanPrepare).GroupBy(GoalKey, StringComparer.OrdinalIgnoreCase))
             if (goalKeys.Add(group.Key) && group.SelectMany(RequiredActionKeys).Any(plannedKeys.Contains))
                 session.Targets.Add(new()
                 {
@@ -169,6 +179,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         }
         MapOutcomes(session);
         return session;
+
+        bool CanPrepare(Finding finding) => finding.UserSelectedRisk && remediationMode == RemediationMode.Aggressive ||
+            RemediationEvidencePolicy.CanRemediate(finding);
     }
 
     public static ScanOptions? CloneOptions(ScanOptions? options)
@@ -224,15 +237,16 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
     }
 
     internal static List<RemediationPlan> PackActions(IEnumerable<List<RemediationAction>> groups, bool requestExplicitFileTargets = false,
-        RuleSet? rules = null)
+        RuleSet? rules = null, RemediationMode remediationMode = RemediationMode.Conservative)
     {
-        List<RemediationPlan> plans = []; RemediationPlan current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets }; long bytes = 0;
+        if (!RemediationModePolicy.IsValid(remediationMode)) throw new ArgumentOutOfRangeException(nameof(remediationMode));
+        List<RemediationPlan> plans = []; RemediationPlan current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets, Mode = remediationMode }; long bytes = 0;
         foreach (List<RemediationAction> group in groups)
         {
             if (group.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PackActions.01"), sourceText => new InvalidDataException(sourceText));
             long groupBytes = group.Select(a => a.RelatedFilePath ?? a.Target).Distinct(StringComparer.OrdinalIgnoreCase).Sum(FileBytes);
             if (current.Actions.Count > 0 && (current.Actions.Count + group.Count > 64 || bytes + groupBytes > PreparationBatchBytes))
-            { CompletePlan(); current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets }; bytes = 0; }
+            { CompletePlan(); current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets, Mode = remediationMode }; bytes = 0; }
             current.Actions.AddRange(group); bytes += groupBytes;
         }
         if (current.Actions.Count > 0) CompletePlan();

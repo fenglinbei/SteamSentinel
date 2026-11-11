@@ -12,11 +12,16 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
     private bool _isSelected;
     private readonly FileScopeAssessment? _scope;
 
-    public FindingItemViewModel(Finding finding, RuleSet? rules = null, SteamLayout? layout = null)
+    public FindingItemViewModel(Finding finding, RuleSet? rules = null, SteamLayout? layout = null,
+        RemediationMode mode = RemediationMode.Conservative)
     {
         Finding = finding;
-        _scope = rules is not null && layout is not null ? FindingHandlingPresentation.AssessFileScope(finding, rules, layout) : null;
-        _isSelected = finding.IsKnownMalware && CanSelect && _scope?.Status is null or FileScopeStatus.Automatic;
+        UserSelectedRisk = mode == RemediationMode.Aggressive && RemediationModePolicy.ProjectFinding(finding, mode).UserSelectedRisk;
+        _scope = rules is not null && layout is not null ? FindingHandlingPresentation.AssessFileScope(finding, rules, layout, mode) : null;
+        // Mode and scope are fixed for this row; changing mode rebuilds the view models.
+        // Bindings must not repeat policy projection or filesystem checks while scrolling.
+        Handling = FindingHandlingPresentation.Get(finding, _scope, mode);
+        _isSelected = !UserSelectedRisk && finding.IsKnownMalware && CanSelect && _scope?.Status is null or FileScopeStatus.Automatic;
     }
 
     public Finding Finding { get; }
@@ -31,7 +36,8 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
-    public FindingHandlingInfo Handling => FindingHandlingPresentation.Get(Finding, _scope);
+    public bool UserSelectedRisk { get; }
+    public FindingHandlingInfo Handling { get; }
     public bool CanSelect => Handling.CanSelect;
     public string HandlingLabel => Handling.Label;
     public string HandlingReason => Handling.Reason;

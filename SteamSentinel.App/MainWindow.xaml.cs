@@ -408,7 +408,7 @@ public partial class MainWindow : Window
         InvalidateStaleRemediationReport(report);
         Findings.Clear();
         foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage))
-            Findings.Add(new FindingItemViewModel(finding, _coordinator.Rules, _findingScopeLayout));
+            Findings.Add(new FindingItemViewModel(finding, _coordinator.Rules, _findingScopeLayout, CurrentRemediationMode));
         _findingHandlingReport = report;
         FindingCountText.Text = DisplayText.Format("Ui.xaml.PopulateFindings.01", (Findings.Count));
         FindingHandlingSummaryText.Text = FindingHandlingPresentation.Count(Findings.Select(item => item.Handling)).Summary;
@@ -437,7 +437,7 @@ public partial class MainWindow : Window
         FindingHandlingCounts handling = ReferenceEquals(report, _findingHandlingReport)
             ? FindingHandlingPresentation.Count(Findings.Select(item => item.Handling))
             : FindingHandlingPresentation.Count(report.Findings.Where(f => f.Category != FindingCategory.Coverage)
-                .Select(f => FindingHandlingPresentation.Get(f, _coordinator.Rules, _findingScopeLayout)));
+                .Select(f => FindingHandlingPresentation.Get(f, _coordinator.Rules, _findingScopeLayout, CurrentRemediationMode)));
         if (confirmed)
         {
             bool hostEvidence = report.Findings.Any(f => f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam && f.Severity >= FindingSeverity.High);
@@ -793,6 +793,7 @@ public partial class MainWindow : Window
         FolderScanButton.IsEnabled = !busy;
         ArchiveCheckBox.IsEnabled = !busy;
         DomainBlockCheckBox.IsEnabled = !busy;
+        RemediationModeComboBox.IsEnabled = !busy;
         AmsiCheckBox.IsEnabled = !busy && ScanEnhancements.AmsiAvailable;
         DeepSignatureCheckBox.IsEnabled = !busy;
         CoverSelectedButton.IsEnabled = !busy && CoverageGrid.SelectedItem is CoverageGroup { CanFullScan: true } group && CoverageTargets(group).Count > 0;

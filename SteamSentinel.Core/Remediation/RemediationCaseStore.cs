@@ -296,7 +296,9 @@ public sealed class RemediationCaseStore
         HashSet<Guid> planIds = [], actionIds = [];
         foreach (RemediationPlan plan in plans)
         {
-            if (plan.PlanId == Guid.Empty || !planIds.Add(plan.PlanId) || plan.RequestedBySid != sid || plan.Actions is null || plan.Actions.Count > 64)
+            if (plan.PlanId == Guid.Empty || !planIds.Add(plan.PlanId) || plan.RequestedBySid != sid || plan.Actions is null || plan.Actions.Count > 64 ||
+                !RemediationModePolicy.IsValid(plan.Mode) || plan.Actions.Any(a => a is { UserSelectedRisk: true }) &&
+                (plan.Mode != RemediationMode.Aggressive || !plan.ExplicitFileTargetsRequested))
                 throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.05"), sourceText => new InvalidDataException(sourceText));
             foreach (RemediationAction action in plan.Actions)
                 if (action is null || action.ActionId == Guid.Empty || !actionIds.Add(action.ActionId) || !Enum.IsDefined(action.Type) ||

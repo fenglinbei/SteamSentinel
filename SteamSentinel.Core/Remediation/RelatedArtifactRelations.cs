@@ -1,6 +1,7 @@
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Scanning;
 using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
@@ -33,6 +34,12 @@ public static class RelatedArtifactRelations
         try { return new FileInfo(finding.Target).Length <= 8L * 1024 * 1024; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
+
+    public static bool SupportsBoundEntry(Finding finding, string? residentDirectory = null) => SupportsHeuristicEntry(finding) ||
+        finding.RuleId == SteamAlertEmbeddedEvidence.RuleId && finding.ReasonCode == SteamAlertEmbeddedEvidence.ReasonCode &&
+        !finding.IsKnownMalware && finding.Score >= 100 && IsFileEvidence(finding) &&
+        (finding.ContentPath is null || SamePath(finding.ContentPath, finding.Target)) &&
+        SteamAlertInstallation.IsInstalledResidentPath(finding.Target, residentDirectory ?? SteamAlertInstallation.ResidentDirectory);
 
     /// <summary>Close only existing report edges. Live discovery and coverage notes belong to ExpandAsync.</summary>
     public static IReadOnlyList<Finding> SelectForPlan(IEnumerable<Finding> selected, IEnumerable<Finding> allFindings, RuleSet rules)
@@ -82,8 +89,10 @@ public static class RelatedArtifactRelations
                 SamePath(f.RelatedFilePath, path) && hash.Equals(f.RelatedFileSha256, StringComparison.OrdinalIgnoreCase)))
             {
                 bool knownBinding = known.Contains(hash);
-                bool supported = knownBinding || SupportsHeuristicEntry(file) && related.SuggestedActions.All(a =>
-                    a is SuggestedActionKind.RemoveRegistryValue or SuggestedActionKind.RemoveScheduledTask ||
+                bool supported = knownBinding || SupportsBoundEntry(file) && related.SuggestedActions.All(a =>
+                    a == SuggestedActionKind.RemoveRegistryValue && (file.RuleId != SteamAlertEmbeddedEvidence.RuleId ||
+                        related.RegistryHive == "HKCU" && related.RegistryKey == @"Software\Microsoft\Windows\CurrentVersion\Run") ||
+                    a == SuggestedActionKind.RemoveScheduledTask && file.RuleId != SteamAlertEmbeddedEvidence.RuleId ||
                     a == SuggestedActionKind.StopProcess && SamePath(related.Target, path));
                 if (supported) result.Add(related);
             }

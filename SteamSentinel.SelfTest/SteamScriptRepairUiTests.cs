@@ -77,8 +77,8 @@ internal static partial class Program
             BrokerConfirmationRow[] rows = BrokerConfirmationWindow.BuildRows(plan, null);
             Check($"Steam script UI {culture.Name} administrator confirmation includes target and both hashes",
                 rows.Length == 2 && rows[1].Action == DisplayText.Get("SteamScript.ActionName") &&
-                rows[1].Target == repair.Target && rows[1].Sha256.Contains(originalHash) &&
-                rows[1].Sha256.Contains(repairedHash) && rows[1].Verification == DisplayText.Get("SteamScript.Confirmation"));
+                rows[1].Target == repair.Target && rows[1].Identity.Contains(originalHash) &&
+                rows[1].Identity.Contains(repairedHash) && rows[1].Verification == DisplayText.Get("SteamScript.Confirmation"));
             using (BrokerConfirmationWindow confirmation = new(plan, null))
             {
                 var panel = confirmation.Controls.OfType<System.Windows.Forms.TableLayoutPanel>().Single();

@@ -1,5 +1,6 @@
 using SteamSentinel.Core.Reporting;
 using System.Windows;
+using System.Windows.Controls;
 using SteamSentinel.App.Dialogs;
 using SteamSentinel.App.Services;
 using SteamSentinel.App.ViewModels;
@@ -15,6 +16,22 @@ public partial class MainWindow
     private RemediationBatchSession? _caseBatch;
     private ScanReport? _caseContentFollowUp;
 
+    internal RemediationMode CurrentRemediationMode => RemediationModeComboBox?.SelectedIndex == 1
+        ? RemediationMode.Aggressive : RemediationMode.Conservative;
+
+    private void RemediationMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (RemediationModeComboBox is null || FindingsGrid is null || _busy) return;
+        RemediationModeComboBox.ToolTip = RemediationModePresentation.Description(CurrentRemediationMode);
+        if (_lastReport is null) return;
+        string? selectedId = (FindingsGrid.SelectedItem as FindingItemViewModel)?.Finding.Id;
+        PopulateFindings(_lastReport);
+        foreach (FindingItemViewModel item in Findings) item.IsSelected = false;
+        FindingsGrid.SelectedItem = Findings.FirstOrDefault(item => item.Finding.Id == selectedId) ?? Findings.FirstOrDefault();
+        UpdateSummary(_lastReport);
+        FooterText.Text = DisplayText.Get("RemediationMode.SelectionCleared");
+    }
+
     private async Task ExecuteSelectedRemediationAsync()
     {
         if (_busy || _lastReport is null) return;
@@ -25,7 +42,7 @@ public partial class MainWindow
         }
         if (!await EnsureRemediationAvailableAsync()) return;
         FindingItemViewModel? retiredSelection = Findings.FirstOrDefault(item => item.IsSelected &&
-            RemediationEvidencePolicy.IsReviewOnlyEvidence(item.Finding));
+            !item.UserSelectedRisk && RemediationEvidencePolicy.IsReviewOnlyEvidence(item.Finding));
         if (retiredSelection is not null)
         {
             MessageBox.Show(this, RemediationEvidencePolicy.ReviewOnlyMessage(retiredSelection.Finding).Display,
@@ -37,6 +54,7 @@ public partial class MainWindow
         if (selected.Any(f => f.Category == FindingCategory.Steam) && IsSteamRunning())
         { MessageBox.Show(this, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.04"), DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.05")); return; }
         ScanReport original = _lastReport;
+        RemediationMode remediationMode = CurrentRemediationMode;
         bool amsi = ScanEnhancements.AmsiAvailable && AmsiCheckBox.IsChecked == true, block = DomainBlockCheckBox.IsChecked == true;
         try
         {
@@ -67,7 +85,8 @@ public partial class MainWindow
                 { return ScanFailureReports.PreserveSystemResults(null, ScanMode.Custom, paths, _coordinator.Rules.Version, ex, false); }
             }
             RemediationBatchSession batch = await Task.Run(() => new RemediationBatchPlanner(_coordinator.Rules)
-                .PrepareAsync(selected, original, block, Inspect, progress, _scanCancellation.Token, requestExplicitFileTargets: true));
+                .PrepareAsync(selected, original, block, Inspect, progress, _scanCancellation.Token,
+                    requestExplicitFileTargets: true, remediationMode: remediationMode));
             _caseBatch = batch; _caseScan = original; _casePlan = null; _caseResult = null; _caseFollowUp = null; _caseContentFollowUp = null;
             UpdateBatchResults();
             if (batch.Plans.Count == 0)
@@ -219,13 +238,19 @@ public partial class MainWindow
 
     internal static string ContentFollowUpSummary(ScanReport report) => DisplayText.Get("Remediation.ContentFollowUpSummary.01") +
         (report.Findings.Any(f => f.CanRemediate || f.IsKnownMalware) ? DisplayText.Get("Remediation.ContentFollowUpSummary.02") : DisplayText.Get("Remediation.ContentFollowUpSummary.03")) +
+        (HasUnresolvedSteamSource(report) ? " " + DisplayText.Get("RemediationMode.UnresolvedSource") : "") +
         (report.Coverage != ScanCoverage.Complete ? DisplayText.Get("Remediation.ContentFollowUpSummary.04") : DisplayText.Get("Remediation.ContentFollowUpSummary.05"));
     internal static string SystemFollowUpSummary(ScanReport report) => DisplayText.Get("Remediation.SystemFollowUpSummary.01") +
-        (report.Findings.Any(f => f.RuleId == "STEAMALERT-UI-INJECTION" ||
+        (report.Findings.Any(f => f.RuleId is "STEAMALERT-UI-INJECTION" or "STEAMALERT-EMBEDDED-CORE-HOST" ||
             f.IsKnownMalware && f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam)
-            ? DisplayText.Get("Remediation.SystemFollowUpSummary.02") : DisplayText.Get("Remediation.SystemFollowUpSummary.03")) +
+            ? DisplayText.Get("Remediation.SystemFollowUpSummary.02") : HasUnresolvedSteamSource(report)
+                ? DisplayText.Get("RemediationMode.UnresolvedSource") : DisplayText.Get("Remediation.SystemFollowUpSummary.03")) +
         (report.Findings.Any(f => f.RuleId == "SECURITY-CONTROLS-DISABLED") ? DisplayText.Get("Remediation.SystemFollowUpSummary.04") : "") +
         (report.Findings.Any(f => f.RuleId == "STEAMALERT-UI-INJECTION") ? DisplayText.Get("SteamScript.FollowUpResidual") : "") +
         (report.Findings.Any(f => f.RuleId == "STEAM-UI-LOOPBACK-SCRIPT") ? DisplayText.Get("SteamScript.FollowUpReview") : "") +
         (report.Coverage != ScanCoverage.Complete ? DisplayText.Get("Remediation.SystemFollowUpSummary.05") : "");
+
+    internal static bool HasUnresolvedSteamSource(ScanReport report) => report.Findings.Any(f =>
+        f.Severity >= FindingSeverity.High && f.RuleId is
+            "MANAGED-STEAM-CEF-HOST" or "MANAGED-STEAM-CEF-CORE" or "MANAGED-MOD-DOWNLOAD-LAUNCH");
 }

@@ -11895,4 +11895,51 @@ DER SHA-256：{3}
   <data name="Scan.ManagedMod.Core.Evidence" xml:space="preserve">
     <value>Run 键与 Steam CEF 调试参数；WebSocket 与 Runtime.evaluate</value>
   </data>
+  <data name="RemediationMode.Label" xml:space="preserve"><value>处置模式</value></data>
+  <data name="RemediationMode.Conservative" xml:space="preserve"><value>保守</value></data>
+  <data name="RemediationMode.Aggressive" xml:space="preserve"><value>激进</value></data>
+  <data name="RemediationMode.ConservativeDescription" xml:space="preserve"><value>按已验证证据提供清理与配置修复；其余可疑文件先复核。</value></data>
+  <data name="RemediationMode.AggressiveDescription" xml:space="preserve"><value>允许手动选择符合安全范围的风险文件进行隔离；发现本身仍未确认为恶意，误报可能影响软件使用。</value></data>
+  <data name="RemediationMode.SelectionCleared" xml:space="preserve"><value>处置模式已切换，原勾选已清除。请重新选择并核对处置预览。</value></data>
+  <data name="RemediationMode.RiskLabel" xml:space="preserve"><value>用户选择处置</value></data>
+  <data name="RemediationMode.RiskReason" xml:space="preserve"><value>此项尚未确认为恶意。激进模式允许您选择隔离并清理相关自启动或进程；误报可能导致软件、扩展或配置暂时不可用。原发现的分数和证据保持不变。</value></data>
+  <data name="RemediationMode.RiskNext" xml:space="preserve"><value>手动勾选后核对文件和关联动作，在预览中确认；隔离或修改配置前备份，必要时可回滚。</value></data>
+  <data name="RemediationMode.PlanSummary" xml:space="preserve"><value>处置模式：{0}；用户选择的未确认风险动作：{1}。</value></data>
+  <data name="RemediationMode.AggressiveNotice" xml:space="preserve"><value>激进模式：用户选择处置的项目尚未确认为恶意。误报可能影响软件或扩展使用；请核对隔离、停止进程及自启动清理动作。</value></data>
+  <data name="RemediationMode.RiskConfirmation" xml:space="preserve"><value>我已核对所选动作和文件，理解未确认风险项可能是误报及其影响，并确认执行以上处置。</value></data>
+  <data name="RemediationMode.RiskTarget" xml:space="preserve"><value>用户选择处置（未确认恶意）：{0}</value></data>
+  <data name="RemediationMode.BrokerRisk" xml:space="preserve"><value>用户选择处置；此项未确认恶意</value></data>
+  <data name="SteamConfig.CfgTitle" xml:space="preserve"><value>Steam 更新或离线配置已被修改</value></data>
+  <data name="SteamConfig.CfgDescription" xml:space="preserve"><value>仅清除启用的禁更或强制离线配置，保留其他配置；此设置本身不证明恶意。</value></data>
+  <data name="SteamConfig.MarkerTitle" xml:space="preserve"><value>Steam 远程调试标记已启用</value></data>
+  <data name="SteamConfig.MarkerDescription" xml:space="preserve"><value>可备份并隔离此单个标记文件；存在标记本身不证明恶意。</value></data>
+  <data name="SteamConfig.ArgumentsTitle" xml:space="preserve"><value>Steam 启动参数包含远程调试开关</value></data>
+  <data name="SteamConfig.ArgumentsDescription" xml:space="preserve"><value>已确认目标为已安装的 Steam.exe；仅移除 -cef-enable-debugging，保留其他参数。</value></data>
+  <data name="SteamConfig.Handling" xml:space="preserve"><value>确认后修复；先备份原值或原文件，可通过受信事件回滚。</value></data>
+  <data name="SteamConfig.Evidence" xml:space="preserve"><value>SHA-256={0}；配置类型={1}</value></data>
+  <data name="SteamConfig.InvalidTarget" xml:space="preserve"><value>Steam 配置修复目标或快照不符合安全限制。</value></data>
+  <data name="SteamConfig.Changed" xml:space="preserve"><value>配置自扫描或计划生成后已变化，请重新扫描。</value></data>
+  <data name="SteamConfig.RepairFailed" xml:space="preserve"><value>Steam 配置写入或恢复失败；保留备份以便恢复。</value></data>
+  <data name="SteamConfig.RestoreChanged" xml:space="preserve"><value>当前配置与已记录修复结果不符，未覆盖后续更改。</value></data>
+  <data name="SteamConfig.BackupFailed" xml:space="preserve"><value>Steam 配置备份校验失败。</value></data>
+  <data name="SteamConfig.Repaired" xml:space="preserve"><value>已备份并修复 Steam 配置。</value></data>
+  <data name="SteamConfig.ScanIncomplete" xml:space="preserve"><value>部分 Steam 配置无法安全读取：{0}</value></data>
+  <data name="SteamConfig.CloseSteam" xml:space="preserve"><value>请先退出 Steam 及 Steam Web Helper，再修复或回滚配置。</value></data>
+  <data name="Report.ActionLabel.RepairSteamConfiguration" xml:space="preserve"><value>修复 Steam 配置</value></data>
+  <data name="Remediation.Mode.InvalidRiskRequest" xml:space="preserve"><value>用户选择的处置请求无效或未获得相应模式授权。</value></data>
+  <data name="Remediation.Mode.RemoveSelectedStartup" xml:space="preserve"><value>移除所选程序的自启动项：{0}</value></data>
+  <data name="Remediation.Mode.StopSelectedProcess" xml:space="preserve"><value>停止所选程序的进程：{0}</value></data>
+  <data name="Scan.ManagedEmbedded.Host.Title" xml:space="preserve"><value>宿主入口加载已知恶意 SteamAlert 内嵌载荷</value></data>
+  <data name="Scan.ManagedEmbedded.Host.Description" xml:space="preserve"><value>静态检查确认：宿主入口从自身资源读取已知恶意 Core 的完整字节，复制后加载同一字节数组，并调用该载荷的入口。此确认基于内嵌载荷身份和可追踪的加载调用关系，不代表整个宿主文件已在哈希名单中。</value></data>
+  <data name="Scan.ManagedEmbedded.Host.Evidence" xml:space="preserve"><value>已绑定资源：{0}；内嵌载荷 SHA-256：{1}。</value></data>
+  <data name="RemediationMode.UnresolvedSource" xml:space="preserve"><value>仍有可疑来源未处置，可能再次修改 Steam。脚本修复成功不表示这些来源已清除。</value></data>
+  <data name="SteamConfig.Verified" xml:space="preserve"><value>该项 Steam 配置已恢复并复核；仍需复扫确认可疑来源。</value></data>
+  <data name="SteamConfig.VerificationUnavailable" xml:space="preserve"><value>无法确认该项 Steam 配置保持修复后的状态，请重新扫描。</value></data>
+  <data name="RemediationMode.ExactTargetsNotice" xml:space="preserve"><value>仅执行下方清单中的精确目标和动作，请逐项核对。</value></data>
+  <data name="Remediation.ContentEvidence.Invalid" xml:space="preserve"><value>文件内容证据未通过管理员独立复验，或请求的证据类型与操作不匹配；已停止处理。</value></data>
+  <data name="SteamConfig.ShortcutReviewTitle" xml:space="preserve"><value>快捷方式调试参数需复核</value></data>
+  <data name="SteamConfig.ShortcutReviewDescription" xml:space="preserve"><value>已在快捷方式参数结构中读取独立的 -cef-enable-debugging，但目标或本机共享映射尚未核验，不能自动修改。保守模式仅供复核；激进模式可由用户选择隔离此快捷方式。</value></data>
+  <data name="SteamConfig.PreviewIntent" xml:space="preserve"><value>拟执行的修改：{0} 执行前仍会独立复验内容与目标身份。</value></data>
+  <data name="SteamConfig.OriginalValue" xml:space="preserve"><value>原值：{0}</value></data>
+  <data name="SteamConfig.RepairedValue" xml:space="preserve"><value>预期修后值：{0}</value></data>
 </root>

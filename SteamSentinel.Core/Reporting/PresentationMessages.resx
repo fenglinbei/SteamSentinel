@@ -11895,4 +11895,51 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
   <data name="Scan.ManagedMod.Core.Evidence" xml:space="preserve">
     <value>Run key + Steam CEF debugging; WebSocket + Runtime.evaluate</value>
   </data>
+  <data name="RemediationMode.Label" xml:space="preserve"><value>Handling mode</value></data>
+  <data name="RemediationMode.Conservative" xml:space="preserve"><value>Conservative</value></data>
+  <data name="RemediationMode.Aggressive" xml:space="preserve"><value>Aggressive</value></data>
+  <data name="RemediationMode.ConservativeDescription" xml:space="preserve"><value>Offer cleanup and configuration repair backed by verified evidence; review other suspicious files first.</value></data>
+  <data name="RemediationMode.AggressiveDescription" xml:space="preserve"><value>Allow manual selection of eligible risk files for quarantine. The findings remain unconfirmed; false positives may affect software.</value></data>
+  <data name="RemediationMode.SelectionCleared" xml:space="preserve"><value>Handling mode changed and selections were cleared. Select items again and review the preview.</value></data>
+  <data name="RemediationMode.RiskLabel" xml:space="preserve"><value>User-selected action</value></data>
+  <data name="RemediationMode.RiskReason" xml:space="preserve"><value>This item is not confirmed as malware. Aggressive mode allows quarantine and cleanup of related startup entries or processes; false positives may make software, extensions, or settings unavailable. Original scores and evidence are unchanged.</value></data>
+  <data name="RemediationMode.RiskNext" xml:space="preserve"><value>Select manually, review the file and related actions, then confirm the preview. Files and settings are backed up before changes and can be rolled back when appropriate.</value></data>
+  <data name="RemediationMode.PlanSummary" xml:space="preserve"><value>Handling mode: {0}; user-selected actions on unconfirmed risks: {1}.</value></data>
+  <data name="RemediationMode.AggressiveNotice" xml:space="preserve"><value>Aggressive mode: user-selected items are not confirmed as malware. False positives may affect software or extensions; review quarantine, process stops, and startup cleanup.</value></data>
+  <data name="RemediationMode.RiskConfirmation" xml:space="preserve"><value>I reviewed the actions and files, understand that unconfirmed risk items may be false positives and the resulting impact, and confirm the listed actions.</value></data>
+  <data name="RemediationMode.RiskTarget" xml:space="preserve"><value>User-selected action (not confirmed malware): {0}</value></data>
+  <data name="RemediationMode.BrokerRisk" xml:space="preserve"><value>User-selected action; this item is not confirmed as malware</value></data>
+  <data name="SteamConfig.CfgTitle" xml:space="preserve"><value>Steam update or offline settings are modified</value></data>
+  <data name="SteamConfig.CfgDescription" xml:space="preserve"><value>Clear only enabled update suppression or forced offline settings, preserving other settings; these settings alone do not prove malware.</value></data>
+  <data name="SteamConfig.MarkerTitle" xml:space="preserve"><value>Steam remote debugging marker is enabled</value></data>
+  <data name="SteamConfig.MarkerDescription" xml:space="preserve"><value>This marker file can be backed up and quarantined; its presence alone does not prove malware.</value></data>
+  <data name="SteamConfig.ArgumentsTitle" xml:space="preserve"><value>Steam launch arguments enable remote debugging</value></data>
+  <data name="SteamConfig.ArgumentsDescription" xml:space="preserve"><value>The target is confirmed as an installed Steam.exe; remove only -cef-enable-debugging and preserve other arguments.</value></data>
+  <data name="SteamConfig.Handling" xml:space="preserve"><value>Repair after confirmation; back up the original value or file and support rollback from a trusted incident.</value></data>
+  <data name="SteamConfig.Evidence" xml:space="preserve"><value>SHA-256={0}; configuration kind={1}</value></data>
+  <data name="SteamConfig.InvalidTarget" xml:space="preserve"><value>The Steam configuration target or snapshot does not meet safety requirements.</value></data>
+  <data name="SteamConfig.Changed" xml:space="preserve"><value>The configuration changed after scanning or plan preparation. Scan again.</value></data>
+  <data name="SteamConfig.RepairFailed" xml:space="preserve"><value>Steam configuration write or recovery failed; the backup is retained for recovery.</value></data>
+  <data name="SteamConfig.RestoreChanged" xml:space="preserve"><value>The current configuration differs from the recorded repair; subsequent changes were not overwritten.</value></data>
+  <data name="SteamConfig.BackupFailed" xml:space="preserve"><value>Steam configuration backup verification failed.</value></data>
+  <data name="SteamConfig.Repaired" xml:space="preserve"><value>Steam configuration was backed up and repaired.</value></data>
+  <data name="SteamConfig.ScanIncomplete" xml:space="preserve"><value>Some Steam configuration could not be read safely: {0}</value></data>
+  <data name="SteamConfig.CloseSteam" xml:space="preserve"><value>Exit Steam and Steam Web Helper before repairing or rolling back configuration.</value></data>
+  <data name="Report.ActionLabel.RepairSteamConfiguration" xml:space="preserve"><value>Repair Steam configuration</value></data>
+  <data name="Remediation.Mode.InvalidRiskRequest" xml:space="preserve"><value>The selected-risk request is invalid or is not authorized in this remediation mode.</value></data>
+  <data name="Remediation.Mode.RemoveSelectedStartup" xml:space="preserve"><value>Remove the selected program&apos;s startup entry: {0}</value></data>
+  <data name="Remediation.Mode.StopSelectedProcess" xml:space="preserve"><value>Stop the selected program&apos;s process: {0}</value></data>
+  <data name="Scan.ManagedEmbedded.Host.Title" xml:space="preserve"><value>Host entry point loads a known malicious SteamAlert payload</value></data>
+  <data name="Scan.ManagedEmbedded.Host.Description" xml:space="preserve"><value>Static inspection binds the host entry point to the complete bytes of a known malicious embedded Core, follows those bytes through copying and assembly loading, and verifies the payload entry-point call. This confirms the embedded payload and its loading chain; the whole host file is not an exact known-hash match.</value></data>
+  <data name="Scan.ManagedEmbedded.Host.Evidence" xml:space="preserve"><value>Bound resource: {0}; embedded payload SHA-256: {1}.</value></data>
+  <data name="RemediationMode.UnresolvedSource" xml:space="preserve"><value>Suspicious sources remain unresolved and may modify Steam again. Successful script repair does not mean these sources were removed.</value></data>
+  <data name="SteamConfig.Verified" xml:space="preserve"><value>This Steam configuration was restored and verified; rescan to check for remaining suspicious sources.</value></data>
+  <data name="SteamConfig.VerificationUnavailable" xml:space="preserve"><value>The repaired state of this Steam configuration could not be confirmed; scan again.</value></data>
+  <data name="RemediationMode.ExactTargetsNotice" xml:space="preserve"><value>Only the exact targets and actions listed below are authorized. Review each item.</value></data>
+  <data name="Remediation.ContentEvidence.Invalid" xml:space="preserve"><value>The file evidence did not pass independent administrator verification, or the requested evidence type does not match the action. Processing was stopped.</value></data>
+  <data name="SteamConfig.ShortcutReviewTitle" xml:space="preserve"><value>Shortcut debugging arguments need review</value></data>
+  <data name="SteamConfig.ShortcutReviewDescription" xml:space="preserve"><value>A standalone -cef-enable-debugging argument was read from the shortcut structure, but its target or local share mapping could not be verified. Automatic editing is unavailable. Conservative mode permits review; aggressive mode lets the user choose to quarantine this shortcut.</value></data>
+  <data name="SteamConfig.PreviewIntent" xml:space="preserve"><value>Planned change: {0} Content and target identity will be independently verified again before execution.</value></data>
+  <data name="SteamConfig.OriginalValue" xml:space="preserve"><value>Original value: {0}</value></data>
+  <data name="SteamConfig.RepairedValue" xml:space="preserve"><value>Expected value after repair: {0}</value></data>
 </root>

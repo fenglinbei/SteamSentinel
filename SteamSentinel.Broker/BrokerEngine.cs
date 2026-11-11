@@ -52,7 +52,7 @@ internal sealed partial class BrokerEngine
                 _confirmedFileTargets?.BeginExecution(plan);
             }, () => ExecuteValidatedAsync(plan, cancellationToken));
         }
-        finally { _confirmedFileTargets = null; }
+        finally { _confirmedFileTargets = null; _userRiskFiles.Clear(); }
     }
 
     internal void ValidateBeforeExecution(RemediationPlan plan)
@@ -60,10 +60,13 @@ internal sealed partial class BrokerEngine
         // This entire phase must remain read-only. No incident directory, backup or action may be created here.
         ValidatePlan(plan);
         RequireFileAuthorization(plan);
+        ValidateUserRiskPlan(plan);
         _requestedBySid = plan.RequestedBySid;
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         ValidateConfigurationPlan(plan);
         ValidateSteamScriptPlan(plan);
+        if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration))
+            RequireSteamConfigurationClosed();
     }
 
     private async Task<RemediationRunResult> ExecuteValidatedAsync(RemediationPlan plan, CancellationToken cancellationToken)
@@ -162,6 +165,8 @@ internal sealed partial class BrokerEngine
             action.Type is RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident);
         if (hasIncidentLifecycleAction && plan.Actions.Count != 1)
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidatePlan.09"), sourceText => new InvalidDataException(sourceText));
+        ValidateUserRiskRequestShape(plan);
+        ValidateContentEvidenceRequestShape(plan);
         _ = RemediationDependencies.Build(plan.Actions);
     }
 
@@ -177,7 +182,7 @@ internal sealed partial class BrokerEngine
                 if (action.ProcessId is null or <= 4 || action.ProcessStartedAtUtc is null || !Path.IsPathFullyQualified(action.Target) ||
                     !Validation.IsHexSha256(action.ExpectedSha256) ||
                     IsWithin(action.Target, Environment.GetFolderPath(Environment.SpecialFolder.Windows)) || IsWithin(action.Target, AppContext.BaseDirectory) ||
-                    !IsKnownImageHash(action.ExpectedSha256) && !HasDirectStrongBinding(action))
+                    !IsKnownImageHash(action.ExpectedSha256) && !HasDirectStrongBinding(action) && !HasUserRiskBinding(action))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.02"), sourceText => new InvalidDataException(sourceText));
                 break;
             case RemediationActionType.QuarantineFile:
@@ -185,6 +190,9 @@ internal sealed partial class BrokerEngine
                 break;
             case RemediationActionType.RepairSteamScript:
                 ValidateSteamScriptAction(action, _steamLayout);
+                break;
+            case RemediationActionType.RepairSteamConfiguration:
+                ValidateSteamConfigurationAction(action, _steamLayout);
                 break;
             case RemediationActionType.QuarantineDirectory:
                 ValidateQuarantinePath(action.Target, isDirectory: true, action.ExpectedSha256);
@@ -195,7 +203,7 @@ internal sealed partial class BrokerEngine
                     string.IsNullOrWhiteSpace(action.RegistryValueName) ||
                     action.ExpectedValueData is null ||
                     action.RegistryView is not ("Default" or "Registry32" or "Registry64") ||
-                    (!_rules.KnownRunValueNames.Contains(action.RegistryValueName, StringComparer.OrdinalIgnoreCase) && !HasPersistenceBinding(action)))
+                    (!_rules.KnownRunValueNames.Contains(action.RegistryValueName, StringComparer.OrdinalIgnoreCase) && !HasPersistenceBinding(action) && !HasUserRiskBinding(action)))
                 {
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.03"), sourceText => new UnauthorizedAccessException(sourceText));
                 }
@@ -251,6 +259,7 @@ internal sealed partial class BrokerEngine
         RemediationActionType.StopProcess => await StopProcessAsync(action, cancellationToken),
         RemediationActionType.QuarantineFile => await QuarantineFileAsync(action, cancellationToken),
         RemediationActionType.RepairSteamScript => await RepairSteamScriptAsync(action, cancellationToken),
+        RemediationActionType.RepairSteamConfiguration => await RepairSteamConfigurationAsync(action, cancellationToken),
         RemediationActionType.QuarantineDirectory => await QuarantineDirectoryAsync(action, cancellationToken),
         RemediationActionType.RemoveRegistryValue => await RemoveRegistryValueAsync(action, cancellationToken),
         RemediationActionType.RemoveScheduledTask => await RemoveScheduledTaskAsync(action, cancellationToken),
@@ -277,6 +286,7 @@ internal sealed partial class BrokerEngine
         string? image = process.MainModule?.FileName;
         if (image is null || !PathsEquivalent(image, action.Target))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.StopProcessAsync.02"), sourceText => new InvalidOperationException(sourceText));
+        using BrokerDirectoryLease? userRiskParent = action.UserSelectedRisk ? BrokerDirectoryLease.OpenParent(image, action.ExpectedParentIdentity) : null;
         await using SecureFileLease lease = SecureFileLease.Open(image);
         string currentHash = await lease.ComputeSha256Async(cancellationToken);
         if (!currentHash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
@@ -305,12 +315,15 @@ internal sealed partial class BrokerEngine
             return MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.04", explicitDestination);
         }
         if (!File.Exists(source)) return MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.01");
+        using BrokerDirectoryLease? contentParent = action.ContentEvidenceRuleId is not null
+            ? BrokerDirectoryLease.OpenParent(source, action.ExpectedParentIdentity) : null;
         await using SecureFileLease lease = SecureFileLease.Open(source);
         if (!IsAllowedActionFileTarget(action, lease.FinalPath, action.ExpectedSha256))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.02"), sourceText => new UnauthorizedAccessException(sourceText));
         string currentHash = await lease.ComputeSha256Async(cancellationToken);
         if (!currentHash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.03"), sourceText => new InvalidOperationException(sourceText));
+        string? contentProof = await VerifyQuarantineContentEvidenceAsync(action, lease, cancellationToken);
 
         string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
         MachineStateSecurity.PreparePayloadDirectory(itemRoot);
@@ -321,7 +334,10 @@ internal sealed partial class BrokerEngine
             Type = action.Type,
             OriginalTarget = lease.FinalPath,
             QuarantinedPath = destination,
-            Sha256 = currentHash
+            Sha256 = currentHash,
+            VerifiedContentRuleId = contentProof,
+            OriginalFileIdentity = contentProof is null ? null : action.ExpectedFileIdentity,
+            OriginalParentIdentity = contentProof is null ? null : action.ExpectedParentIdentity
         };
         _manifest.Records.Add(record);
         await PersistManifestAsync(cancellationToken);
@@ -372,7 +388,8 @@ internal sealed partial class BrokerEngine
         if (value is null) return MessageText.Create("Backend.Broker.BrokerEngine.RemoveRegistryValueAsync.02");
         if (!string.Equals(value.ToString(), action.ExpectedValueData, StringComparison.Ordinal))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RemoveRegistryValueAsync.03"), sourceText => new InvalidOperationException(sourceText));
-        await using SecureFileLease? bound = HasPersistenceBinding(action)
+        using BrokerDirectoryLease? userRiskParent = action.UserSelectedRisk ? BrokerDirectoryLease.OpenParent(action.RelatedFilePath!, action.ExpectedParentIdentity) : null;
+        await using SecureFileLease? bound = HasPersistenceBinding(action) || action.UserSelectedRisk
             ? await OpenBoundLeaseAsync(action, value.ToString(), cancellationToken) : null;
         RegistryValueKind kind = key.GetValueKind(action.RegistryValueName!);
         if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString))
@@ -388,7 +405,10 @@ internal sealed partial class BrokerEngine
             RegistryValueName = action.RegistryValueName,
             RegistryValueData = value.ToString(),
             RegistryValueKind = (int)kind,
+            UserSelectedRisk = action.UserSelectedRisk,
             MutationConfirmed = false,
+            OriginalFileIdentity = action.UserSelectedRisk ? action.ExpectedFileIdentity : null,
+            OriginalParentIdentity = action.UserSelectedRisk ? action.ExpectedParentIdentity : null,
             RelatedFilePath = action.RelatedFilePath,
             RelatedFileSha256 = action.RelatedFileSha256,
             VerifiedContentRuleId = _contentProofs.GetValueOrDefault(action.ActionId)
@@ -574,6 +594,8 @@ internal sealed partial class BrokerEngine
         await ValidateRollbackManifestAsync(manifest, incidentRoot, incidentId, cancellationToken);
         if (manifest.Records.Any(record => record.Type == RemediationActionType.RepairSteamScript && !record.RolledBack))
             RequireSteamClosed();
+        if (manifest.Records.Any(record => record.Type == RemediationActionType.RepairSteamConfiguration && !record.RolledBack))
+            RequireSteamConfigurationClosed();
 
         foreach (QuarantineRecord record in RemediationDependencies.RollbackOrder(manifest))
         {
@@ -585,11 +607,15 @@ internal sealed partial class BrokerEngine
                 await PersistTrustedManifestAsync(manifestPath, manifest, cancellationToken);
                 continue;
             }
-            if (!record.MutationConfirmed && !configurationRecord && record.Type != RemediationActionType.RepairSteamScript) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RollbackIncidentAsync.01"), sourceText => new InvalidOperationException(sourceText));
+            if (!record.MutationConfirmed && !record.UserSelectedRisk && !configurationRecord && record.Type is not (RemediationActionType.RepairSteamScript or RemediationActionType.RepairSteamConfiguration)) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RollbackIncidentAsync.01"), sourceText => new InvalidOperationException(sourceText));
             switch (record.Type)
             {
                 case RemediationActionType.RepairSteamScript:
                     await RestoreSteamScriptFileAsync(record, _steamLayout, cancellationToken,
+                        (_, token) => PersistTrustedManifestAsync(manifestPath, manifest, token));
+                    break;
+                case RemediationActionType.RepairSteamConfiguration:
+                    await RestoreSteamConfigurationAsync(record, cancellationToken,
                         (_, token) => PersistTrustedManifestAsync(manifestPath, manifest, token));
                     break;
                 case RemediationActionType.QuarantineFile:
@@ -599,7 +625,8 @@ internal sealed partial class BrokerEngine
                     await RestoreDirectoryAsync(record, cancellationToken);
                     break;
                 case RemediationActionType.RemoveRegistryValue:
-                    RestoreRegistryValue(record);
+                    if (record.UserSelectedRisk) await RestoreUserRiskRegistryValueAsync(record, cancellationToken);
+                    else RestoreRegistryValue(record);
                     break;
                 case RemediationActionType.RemoveScheduledTask:
                     await RestoreScheduledTaskAsync(record, cancellationToken);
@@ -673,6 +700,11 @@ sourceText));
 
     private async Task RestoreFileAsync(QuarantineRecord record, CancellationToken cancellationToken)
     {
+        if (record.UserSelectedRisk)
+        {
+            await RestoreUserRiskFileAsync(record, cancellationToken);
+            return;
+        }
         if (record.ExplicitFileAuthorization)
         {
             await RestoreExplicitFileAsync(record, cancellationToken);
@@ -762,6 +794,8 @@ sourceText));
     {
         if (record.OriginalTarget.Length is 0 or > 32_768)
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateQuarantineRecord.01"), sourceText => new InvalidDataException(sourceText));
+        if (record.UserSelectedRisk && (record.Type is not (RemediationActionType.QuarantineFile or RemediationActionType.RemoveRegistryValue) ||
+            record.Type == RemediationActionType.QuarantineFile && !record.ExplicitFileAuthorization)) throw InvalidRiskRequest();
         if (record.QuarantinedPath is { } quarantined)
         {
             if (!IsWithin(quarantined, incidentRoot))
@@ -777,6 +811,9 @@ sourceText));
         {
             case RemediationActionType.RepairSteamScript:
                 ValidateSteamScriptRecord(record, _steamLayout);
+                break;
+            case RemediationActionType.RepairSteamConfiguration:
+                ValidateSteamConfigurationRecord(record, _steamLayout);
                 break;
             case RemediationActionType.QuarantineFile:
                 if (record.ExplicitFileAuthorization)
@@ -794,7 +831,7 @@ sourceText));
                     record.RegistryKey is not (@"Software\Microsoft\Windows\CurrentVersion\Run" or @"Software\Microsoft\Windows\CurrentVersion\RunOnce") ||
                     string.IsNullOrWhiteSpace(record.RegistryValueName) ||
                     record.RegistryValueKind is not ((int)RegistryValueKind.String or (int)RegistryValueKind.ExpandString) ||
-                    (!_rules.KnownRunValueNames.Contains(record.RegistryValueName, StringComparer.OrdinalIgnoreCase) && !HasKnownBinding(FromRecord(record)) && !HasHeuristicRecord(record)))
+                    (!_rules.KnownRunValueNames.Contains(record.RegistryValueName, StringComparer.OrdinalIgnoreCase) && !HasKnownBinding(FromRecord(record)) && !HasHeuristicRecord(record) && !IsUserRiskRegistryRecord(record)))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateQuarantineRecord.06"), sourceText => new InvalidDataException(sourceText));
                 break;
             case RemediationActionType.RemoveScheduledTask:

@@ -57,11 +57,15 @@ public enum SuggestedActionKind
     DisableService,
     RemoveRelatedDefenderExclusion,
     DisableRelatedFirewallRule,
-    RepairSteamScript
+    RepairSteamScript,
+    RepairSteamConfiguration
 }
 
 public sealed partial class Finding
 {
+    // Ephemeral presentation/preparation projection. Reports cannot supply this authorization hint.
+    [JsonIgnore]
+    public bool UserSelectedRisk { get; init; }
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string RuleId { get; init; } = string.Empty;
     public FindingCategory Category { get; init; }

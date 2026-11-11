@@ -1,0 +1,82 @@
+using System.Security.Cryptography;
+using SteamSentinel.Core.Inspection;
+using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
+using SteamSentinel.Core.Reporting;
+using SteamSentinel.Core.Utilities;
+
+namespace SteamSentinel.Broker;
+
+internal sealed partial class BrokerEngine
+{
+    internal static void ValidateContentEvidenceRequestShape(RemediationPlan plan)
+    {
+        foreach (RemediationAction action in plan.Actions) ValidateContentEvidenceActionShape(action);
+    }
+
+    internal static void ValidateContentEvidenceActionShape(RemediationAction action)
+    {
+        if (action.ContentEvidenceRuleId is null) return;
+        if (action.ContentEvidenceRuleId != SteamAlertEmbeddedEvidence.RuleId || action.Type != RemediationActionType.QuarantineFile ||
+            action.UserSelectedRisk || action.IsKnownMalware || action.ConfidenceScore != 100 || action.RelatedFilePath is not null ||
+            !Validation.IsHexSha256(action.ExpectedSha256) || !FileScopeSafety.IsValidIdentity(action.ExpectedFileIdentity) ||
+            !FileScopeSafety.IsValidIdentity(action.ExpectedParentIdentity) || !FileScopeSafety.EvaluatePath(action.Target).Allowed)
+            throw InvalidContentEvidence();
+    }
+
+    private static async Task VerifyContentEvidencePreparationAsync(RemediationPlan plan, CancellationToken token)
+    {
+        foreach (RemediationAction action in plan.Actions.Where(a => a.ContentEvidenceRuleId is not null))
+        {
+            using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity);
+            await using SecureFileLease source = SecureFileLease.Open(action.Target);
+            _ = await VerifyQuarantineContentEvidenceAsync(action, source, token);
+        }
+    }
+
+    internal static async Task<string?> VerifyQuarantineContentEvidenceAsync(RemediationAction action, SecureFileLease source, CancellationToken token)
+    {
+        ValidateContentEvidenceActionShape(action);
+        if (action.ContentEvidenceRuleId is null) return null;
+        BrokerFileScopeAuthorization.RequireSafePath(source.FinalPath);
+        FileScopeSafety.ValidateHandlePath(source.Handle, action.Target);
+        if (!PathsEquivalent(source.FinalPath, action.Target) || FileScopeSafety.ReadLinkCount(source.Handle) != 1 ||
+            FileScopeSafety.ReadIdentity(source.Handle) != action.ExpectedFileIdentity)
+            throw InvalidContentEvidence();
+        byte[] bytes = await source.ReadBytesAsync(checked((int)SteamAlertEmbeddedEvidence.MaximumBytes), token);
+        // Production callers always use the catalog embedded in this independently running Broker.
+        // Neither a report, a plan nor the scanner's supplied RuleSet can replace it.
+        return VerifyEmbeddedQuarantineBytes(action, bytes, token);
+    }
+
+    private static string VerifyEmbeddedQuarantineBytes(RemediationAction action, byte[] bytes, CancellationToken token)
+    {
+        ValidateContentEvidenceActionShape(action);
+        if (action.ContentEvidenceRuleId != SteamAlertEmbeddedEvidence.RuleId ||
+            !Convert.ToHexString(SHA256.HashData(bytes)).Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw InvalidContentEvidence();
+        using MemoryStream stream = new(bytes, writable: false);
+        SteamAlertEmbeddedProof? proof = SteamAlertEmbeddedEvidence.Inspect(stream, token: token);
+        if (proof?.RuleId != action.ContentEvidenceRuleId) throw InvalidContentEvidence();
+        return proof.RuleId;
+    }
+
+    private static async Task VerifyEmbeddedQuarantineRecordAsync(QuarantineRecord record, CancellationToken token)
+    {
+        if (record.UserSelectedRisk || record.Type != RemediationActionType.QuarantineFile ||
+            record.VerifiedContentRuleId != SteamAlertEmbeddedEvidence.RuleId || !Validation.IsHexSha256(record.Sha256))
+            throw InvalidContentEvidence();
+        string? path = File.Exists(record.OriginalTarget) ? record.OriginalTarget : record.QuarantinedPath;
+        if (path is null) throw InvalidContentEvidence();
+        await using SecureFileLease source = SecureFileLease.Open(path);
+        if (FileScopeSafety.ReadLinkCount(source.Handle) != 1) throw InvalidContentEvidence();
+        byte[] bytes = await source.ReadBytesAsync(checked((int)SteamAlertEmbeddedEvidence.MaximumBytes), token);
+        if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase))
+            throw InvalidContentEvidence();
+        using MemoryStream stream = new(bytes, writable: false);
+        if (SteamAlertEmbeddedEvidence.Inspect(stream, token: token) is null) throw InvalidContentEvidence();
+    }
+
+    private static InvalidDataException InvalidContentEvidence() => MessageExceptions.Create(
+        MessageText.Create("Remediation.ContentEvidence.Invalid"), text => new InvalidDataException(text));
+}

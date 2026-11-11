@@ -1,6 +1,8 @@
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Steam;
+using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
 
@@ -14,10 +16,13 @@ public static class SteamAlertInstallation
     // Match a physical file, never the identity of a member inside an archive.
     internal static bool IsFamilyFile(Finding finding, IReadOnlyDictionary<string, HashRule> known)
     {
-        return finding.RuleId is LoaderRule or ResidentRule &&
+        bool knownFamily = finding.RuleId is LoaderRule or ResidentRule && finding.Sha256 is { } knownHash &&
+            known.TryGetValue(knownHash, out HashRule? rule) && rule.Malware && rule.Id == finding.RuleId;
+        bool embedded = finding.RuleId == SteamAlertEmbeddedEvidence.RuleId && finding.ReasonCode == SteamAlertEmbeddedEvidence.ReasonCode &&
+            Validation.IsHexSha256(finding.Sha256);
+        return (knownFamily || embedded) &&
             finding.Category == FindingCategory.File && finding.RelatedFilePath is null &&
-            finding.Sha256 is { } hash && known.TryGetValue(hash, out HashRule? rule) &&
-            rule.Malware && rule.Id == finding.RuleId && finding.CanRemediate &&
+            finding.Sha256 is { } hash && finding.CanRemediate &&
             (finding.TargetSha256 is null || hash.Equals(finding.TargetSha256, StringComparison.OrdinalIgnoreCase)) &&
             (finding.ContentPath is null || RelatedArtifactRelations.SamePath(finding.Target, finding.ContentPath)) &&
             ContentDiscovery.IsLocalSafePath(finding.Target) && File.Exists(finding.Target);
@@ -49,13 +54,15 @@ public static class SteamAlertInstallation
 
     internal static string? InstalledSeedRole(Finding finding, IReadOnlyDictionary<string, HashRule> known)
     {
-        if (IsFamilyFile(finding, known)) return finding.RuleId;
+        if (IsFamilyFile(finding, known)) return finding.RuleId == SteamAlertEmbeddedEvidence.RuleId ? ResidentRule : finding.RuleId;
         if (finding.Category is not (FindingCategory.Persistence or FindingCategory.Process) ||
             !RemediationEvidencePolicy.CanRemediate(finding)) return null;
         bool directProcess = finding.Category == FindingCategory.Process && finding.RuleId == ResidentRule &&
             finding.ProcessId is not null && finding.RelatedFilePath is null;
         string? hash = directProcess ? finding.Sha256 : finding.RelatedFileSha256;
         string? path = directProcess ? finding.Target : finding.RelatedFilePath;
+        if (finding.ReasonCode == SteamAlertEmbeddedEvidence.ReasonCode && path is not null && Validation.IsHexSha256(hash) &&
+            ContentDiscovery.IsLocalSafePath(path)) return ResidentRule;
         return path is not null && hash is not null && known.TryGetValue(hash, out HashRule? rule) &&
             rule.Malware && rule.Id == ResidentRule && ContentDiscovery.IsLocalSafePath(path) ? ResidentRule : null;
     }
@@ -63,8 +70,13 @@ public static class SteamAlertInstallation
     public static bool IsInstalled(string ruleId, string path, SteamLayout layout, string residentDirectory) => ruleId switch
     {
         ResidentRule => string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)), residentDirectory, StringComparison.OrdinalIgnoreCase),
+        SteamAlertEmbeddedEvidence.RuleId => IsInstalledResidentPath(path, residentDirectory),
         LoaderRule => layout.ContentRoots.Any(root => root.Kind == "mod" && ContentDiscovery.IsWithin(path, root.Path)) ||
             ContentDiscovery.IsWorkshopContentPath(path) && layout.WorkshopRoots.Any(root => ContentDiscovery.IsWithin(path, root)),
         _ => false
     };
+
+    public static bool IsInstalledResidentPath(string path, string residentDirectory) => ContentDiscovery.IsLocalSafePath(path) &&
+        Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)), Path.GetFullPath(residentDirectory), StringComparison.OrdinalIgnoreCase);
 }

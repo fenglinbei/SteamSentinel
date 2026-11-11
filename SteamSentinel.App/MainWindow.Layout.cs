@@ -46,7 +46,9 @@ public partial class MainWindow
         ScanControlsCard.Padding = shortViewport ? new Thickness(8, 4, 8, 4) : new Thickness(10, 8, 10, 8);
         ScanOptionsContainer.Margin = new Thickness(0, shortViewport ? 2 : 5, 0, 0);
         InstallationControls.Margin = new Thickness(0, shortViewport ? 2 : 5, 0, 0);
-        ScanProgressSummary.Margin = new Thickness(0, shortViewport ? 4 : 7, 0, shortViewport ? 4 : 7);
+        // The mode selector makes this line slightly taller than plain summary text.
+        // Reuse its outer spacing on short viewports so a full result row still fits.
+        ScanProgressSummary.Margin = new Thickness(0, shortViewport ? 1 : 7, 0, shortViewport ? 1 : 7);
         FindingDetailCard.Margin = new Thickness(0, shortViewport ? 3 : 7, 0, 0);
         SelectionActionsBar.Margin = new Thickness(0, shortViewport ? 4 : 8, 0, 0);
         // Collapse optional evidence on entering a short viewport, not on every

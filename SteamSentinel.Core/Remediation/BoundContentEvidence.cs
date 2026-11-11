@@ -84,6 +84,9 @@ public static class BoundContentEvidence
             Buffer.BlockCopy(buffer, count - retained, buffer, 0, retained);
         }
         if (!Convert.ToHexString(hash.GetHashAndReset()).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase)) return null;
+        // Re-read the same hash-bound file stream. Report flags and resource names cannot authorize this proof.
+        stream.Position = 0;
+        if (SteamAlertEmbeddedEvidence.Inspect(stream, token: token) is not null) return SteamAlertEmbeddedEvidence.RuleId;
         HeuristicMatch? proof = ContentHeuristics.Match(tokens.Contains, path);
         return proof?.Id is "HEUR-STEAM-UI-PATCHER" or "HEUR-STEAM-TOKEN-STEALER" or "HEUR-STEAM-CREDENTIAL-PLUGIN" ? proof.Id : null;
 

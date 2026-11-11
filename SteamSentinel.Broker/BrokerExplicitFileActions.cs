@@ -13,9 +13,11 @@ internal sealed partial class BrokerEngine
         CancellationToken token = default)
     {
         ValidatePlan(plan);
+        ValidateContentEvidenceRequestShape(plan);
         _confirmedFileTargets = null;
         BrokerFileScopeAuthorization? prepared = plan.ExplicitFileTargetsRequested
             ? await BrokerFileScopeAuthorization.PrepareAsync(plan, _rules, _steamLayout, token) : null;
+        if (!plan.ExplicitFileTargetsRequested) await VerifyContentEvidencePreparationAsync(plan, token);
         _preparingFileTargets = prepared;
         try { ValidateBeforeExecution(plan); }
         finally { _preparingFileTargets = null; }
@@ -38,6 +40,7 @@ internal sealed partial class BrokerEngine
 
     private void RequireFileAuthorization(RemediationPlan plan)
     {
+        ValidateContentEvidenceRequestShape(plan);
         BrokerFileScopeAuthorization? authorization = _preparingFileTargets ?? _confirmedFileTargets;
         if (!plan.ExplicitFileTargetsRequested)
         {
@@ -72,13 +75,16 @@ internal sealed partial class BrokerEngine
         await using SecureFileLease source = authorization.NeedsFullMetadata(action)
             ? SecureFileLease.OpenWithSecurity(action.Target) : SecureFileLease.Open(action.Target);
         VerifiedBrokerFileTarget verified = await authorization.VerifyLockedAsync(action, source, parent, token);
+        string? contentProof = await VerifyQuarantineContentEvidenceAsync(action, source, token);
         QuarantineRecord record = new()
         {
             ActionId = action.ActionId,
             Type = RemediationActionType.QuarantineFile,
+            UserSelectedRisk = action.UserSelectedRisk,
             OriginalTarget = source.FinalPath,
             QuarantinedPath = destination,
             Sha256 = verified.Sha256,
+            VerifiedContentRuleId = contentProof,
             ExplicitFileAuthorization = verified.Metadata is not null,
             OriginalFileIdentity = verified.FileIdentity,
             OriginalParentIdentity = verified.ParentIdentity,

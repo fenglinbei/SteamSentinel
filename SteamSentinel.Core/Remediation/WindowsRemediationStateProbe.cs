@@ -30,6 +30,12 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
         cancellationToken.ThrowIfCancellationRequested();
         switch (action.Type)
         {
+            case RemediationActionType.RepairSteamConfiguration:
+            {
+                bool repaired = await SteamConfigurationRepairTarget.IsRepairedAsync(action, SteamSentinel.Core.Steam.SteamLocator.Discover(), cancellationToken);
+                return State(repaired ? RemediationVerificationStatus.Verified : RemediationVerificationStatus.Unknown,
+                    MessageText.Create(repaired ? "SteamConfig.Verified" : "SteamConfig.VerificationUnavailable"));
+            }
             case RemediationActionType.RepairSteamScript:
                 if (!Validation.IsHexSha256(action.RepairedSha256) || !FileScopeSafety.IsValidIdentity(action.ExpectedFileIdentity) ||
                     !FileScopeSafety.IsValidIdentity(action.ExpectedParentIdentity))
