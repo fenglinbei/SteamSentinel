@@ -26,7 +26,7 @@
       that an arbitrary working tree came from a particular commit.
     -->
     <VersionPrefix>0.3.4</VersionPrefix>
-    <SteamSentinelMinimumSelfTests>3073</SteamSentinelMinimumSelfTests>
+    <SteamSentinelMinimumSelfTests>3077</SteamSentinelMinimumSelfTests>
     <Version>$(VersionPrefix)</Version>
     <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
     <FileVersion>$(VersionPrefix).0</FileVersion>

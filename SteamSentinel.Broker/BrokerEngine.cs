@@ -571,10 +571,7 @@ internal sealed partial class BrokerEngine
         string manifestPath = Path.Combine(incidentRoot, "manifest.json");
         QuarantineManifest manifest = await LoadTrustedManifestAsync(incidentId, incidentRoot, manifestPath, cancellationToken);
         SetConfigurationRollbackContext(manifest, manifestPath);
-        foreach (QuarantineRecord record in manifest.Records)
-            ValidateQuarantineRecord(record, incidentRoot, incidentId);
-        foreach (QuarantineRecord record in manifest.Records)
-            await VerifyRecordedContentAsync(record, manifest, cancellationToken);
+        await ValidateRollbackManifestAsync(manifest, incidentRoot, incidentId, cancellationToken);
         if (manifest.Records.Any(record => record.Type == RemediationActionType.RepairSteamScript && !record.RolledBack))
             RequireSteamClosed();
 
@@ -638,6 +635,15 @@ internal sealed partial class BrokerEngine
             await PersistTrustedManifestAsync(manifestPath, manifest, cancellationToken);
         }
         return MessageText.Create("Backend.Broker.BrokerEngine.RollbackIncidentAsync.02", (incidentId));
+    }
+
+    internal async Task ValidateRollbackManifestAsync(QuarantineManifest manifest, string incidentRoot,
+        Guid incidentId, CancellationToken token)
+    {
+        foreach (QuarantineRecord record in manifest.Records)
+            ValidateQuarantineRecord(record, incidentRoot, incidentId);
+        foreach (QuarantineRecord record in manifest.Records)
+            await VerifyRecordedContentAsync(record, manifest, token);
     }
 
     private async Task<MessageText> DeleteIncidentAsync(RemediationAction action, CancellationToken cancellationToken)

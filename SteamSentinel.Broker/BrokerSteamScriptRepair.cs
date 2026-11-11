@@ -188,8 +188,6 @@ internal sealed partial class BrokerEngine
                 throw ScriptDenied("SteamScript.RepairFailed");
             metadata.ApplyTimesAndAttributes(source.Handle);
             RequireScriptIdentity(source, action.Target, record.OriginalFileIdentity);
-            record.MutationConfirmed = true;
-            await persist(record, CancellationToken.None);
         }
         catch (Exception failure)
         {
@@ -208,6 +206,11 @@ internal sealed partial class BrokerEngine
             }
             throw;
         }
+        // Once the new image has been verified, a journal-commit failure must not start
+        // a second byte mutation. The durable attempt record already permits recovery
+        // from this complete image, whether the final manifest reached disk or not.
+        record.MutationConfirmed = true;
+        await persist(record, CancellationToken.None);
         return record;
     }
 
@@ -239,12 +242,7 @@ internal sealed partial class BrokerEngine
         ValidateSteamScriptRecord(record, layout);
         if (!record.FileMutationAttempted) return;
         using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(record.OriginalTarget, record.OriginalParentIdentity);
-        await using SecureFileLease backup = SecureFileLease.Open(record.QuarantinedPath!);
-        byte[] original = await backup.ReadBytesAsync(SteamScriptRepair.MaximumBytes, token);
-        if (FileScopeSafety.ReadLinkCount(backup.Handle) != 1 || !ScriptHash(original).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase) ||
-            !SteamScriptRepair.TryRepair(original, out byte[] repaired) ||
-            !ScriptHash(repaired).Equals(record.RepairedSha256, StringComparison.OrdinalIgnoreCase))
-            throw ScriptDenied("SteamScript.BackupFailed");
+        (byte[] original, byte[] repaired) = await ReadVerifiedSteamScriptBackupAsync(record, token);
         await using SecureFileLease target = SecureFileLease.OpenForUpdate(record.OriginalTarget);
         RequireScriptIdentity(target, record.OriginalTarget, record.OriginalFileIdentity!);
         BrokerFileMetadata metadata = BrokerFileMetadata.FromRecord(record);
@@ -279,6 +277,18 @@ internal sealed partial class BrokerEngine
         metadata.ApplyTimesAndAttributes(target.Handle);
         // Keep the authenticated backup until the incident is explicitly deleted. A crash between
         // restoration and manifest persistence can therefore retry without losing recovery bytes.
+    }
+
+    private static async Task<(byte[] Original, byte[] Repaired)> ReadVerifiedSteamScriptBackupAsync(
+        QuarantineRecord record, CancellationToken token)
+    {
+        await using SecureFileLease backup = SecureFileLease.Open(record.QuarantinedPath!);
+        byte[] original = await backup.ReadBytesAsync(SteamScriptRepair.MaximumBytes, token);
+        if (FileScopeSafety.ReadLinkCount(backup.Handle) != 1 || !ScriptHash(original).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase) ||
+            !SteamScriptRepair.TryRepair(original, out byte[] repaired) ||
+            !ScriptHash(repaired).Equals(record.RepairedSha256, StringComparison.OrdinalIgnoreCase))
+            throw ScriptDenied("SteamScript.BackupFailed");
+        return (original, repaired);
     }
 
     internal static bool IsInterruptedScriptImage(byte[] current, byte[] original, byte[] repaired)

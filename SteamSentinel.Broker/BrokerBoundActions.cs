@@ -138,6 +138,11 @@ internal sealed partial class BrokerEngine
 
     private async Task VerifyRecordedContentAsync(QuarantineRecord record, QuarantineManifest manifest, CancellationToken token)
     {
+        if (record.Type == RemediationActionType.RepairSteamScript)
+        {
+            if (record.FileMutationAttempted) _ = await ReadVerifiedSteamScriptBackupAsync(record, token);
+            return;
+        }
         if (!HasHeuristicRecord(record)) return;
         // Reprove the protected manifest claim from actual original or same-incident quarantine bytes.
         string path = record.RelatedFilePath!;

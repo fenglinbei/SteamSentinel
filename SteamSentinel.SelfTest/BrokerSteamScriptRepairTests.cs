@@ -96,6 +96,42 @@ internal static partial class Program
 
         await File.WriteAllBytesAsync(path, original);
         action = await BrokerScriptActionAsync(path, layout);
+        QuarantineRecord? finalJournal = null;
+        bool finalCommitFailed = false;
+        try
+        {
+            await BrokerEngine.RepairSteamScriptFileAsync(action, layout, path + ".final-commit-failed",
+                (saved, _) =>
+                {
+                    if (saved.MutationConfirmed)
+                    {
+                        // Model an atomic manifest replacement followed by trust-store commit failure.
+                        finalJournal = JsonSerializer.Deserialize<QuarantineRecord>(JsonSerializer.Serialize(saved, JsonFile.Options), JsonFile.Options);
+                        throw new IOException("Inert final manifest commit failure after atomic replacement.");
+                    }
+                    return Task.CompletedTask;
+                }, _ => { }, CancellationToken.None);
+        }
+        catch (IOException) { finalCommitFailed = true; }
+        Check("Steam脚本最终manifest提交失败保留已验证修复图像与备份", finalCommitFailed &&
+            finalJournal is { MutationConfirmed: true, FileMutationAttempted: true, FileRollbackAttempted: false } &&
+            File.ReadAllBytes(path).SequenceEqual(repaired) && File.ReadAllBytes(path + ".final-commit-failed").SequenceEqual(original));
+        BrokerEngine rollbackEngine = new(new FixtureTrustStore(null), new FixtureIncidentStateSecurity());
+        SteamLayout rollbackLayout = (SteamLayout)typeof(BrokerEngine).GetField("_steamLayout",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(rollbackEngine)!;
+        rollbackLayout.SteamRoots.Add(directory);
+        QuarantineManifest rollbackManifest = new() { IncidentId = Guid.NewGuid(), Records = [finalJournal!] };
+        await rollbackEngine.ValidateRollbackManifestAsync(rollbackManifest, directory, rollbackManifest.IncidentId, CancellationToken.None);
+        Check("Steam脚本正常回滚入口先认证新类型备份且预检不写目标", File.ReadAllBytes(path).SequenceEqual(repaired));
+        await File.WriteAllBytesAsync(path + ".final-commit-failed", new byte[] { 1, 2, 3 });
+        bool entryRejected = false;
+        try { await rollbackEngine.ValidateRollbackManifestAsync(rollbackManifest, directory, rollbackManifest.IncidentId, CancellationToken.None); }
+        catch (InvalidOperationException) { entryRejected = true; }
+        Check("Steam脚本正常回滚入口在任何还原前拒绝篡改备份", entryRejected && File.ReadAllBytes(path).SequenceEqual(repaired));
+        await File.WriteAllBytesAsync(path + ".final-commit-failed", original);
+        await BrokerEngine.RestoreSteamScriptFileAsync(finalJournal!, layout, CancellationToken.None);
+        Check("Steam脚本最终提交失败的持久记录随后仍可回滚", File.ReadAllBytes(path).SequenceEqual(original) &&
+            File.ReadAllBytes(path + ".final-commit-failed").SequenceEqual(original));
         bool hashDenied = false;
         try
         {

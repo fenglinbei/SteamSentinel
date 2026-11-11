@@ -25,8 +25,8 @@ internal static partial class Program
         XDocument properties = XDocument.Load(Path.Combine(repository, "Directory.Build.props"));
         string version = properties.Descendants("VersionPrefix").Single().Value;
         string minimumTests = properties.Descendants("SteamSentinelMinimumSelfTests").Single().Value;
-        bool minimumTestsValid = int.TryParse(minimumTests, out int minimumTestCount) && minimumTestCount >= 1600;
-        Check("0.3.3 中央版本与机器测试基线唯一", version == "0.3.3" && minimumTestsValid &&
+        bool minimumTestsValid = int.TryParse(minimumTests, out int minimumTestCount) && minimumTestCount >= 3077;
+        Check("0.3.4 中央版本与机器测试基线唯一", version == "0.3.4" && minimumTestsValid &&
             properties.Descendants("AssemblyVersion").Single().Value == "$(VersionPrefix).0" &&
             properties.Descendants("InformationalVersion").Single().Value == "$(VersionPrefix)+$(SteamSentinelBuildId)");
 
@@ -38,7 +38,7 @@ internal static partial class Program
         }
 
         string expectedManifestVersion = version + ".0";
-        string[] manifests = ["SteamSentinel.App/app.manifest", "SteamSentinel.Broker/app.manifest"];
+        string[] manifests = ["SteamSentinel.App/app.manifest", "SteamSentinel.Broker/app.manifest", "SteamSentinel.SelfTest/app.manifest"];
         Check("0.1.17 应用清单版本与中央版本一致", manifests.All(relative =>
             XDocument.Load(Path.Combine(repository, relative.Replace('/', Path.DirectorySeparatorChar)))
                 .Descendants().Single(element => element.Name.LocalName == "assemblyIdentity")
