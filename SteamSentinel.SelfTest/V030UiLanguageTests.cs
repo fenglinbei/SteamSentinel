@@ -75,6 +75,7 @@ internal static partial class Program
         static bool Untranslated(string value) => Regex.IsMatch(value, "[\\p{IsCJKUnifiedIdeographs}]") ||
             value.Contains("Unrecognized display resource:", StringComparison.Ordinal);
         List<string> collected = [];
+        List<string> selectedAutonyms = [];
         using (DisplayText.UseCulture(DisplayText.English))
         {
             MainWindow window = new();
@@ -82,10 +83,18 @@ internal static partial class Program
             {
                 using UiLayoutHarness layout = new(window, 1148, 780);
                 TabControl mainTabs = (TabControl)window.FindName("MainTabs");
-                void Collect()
+                void Collect(ComboBox? languagePicker = null)
                 {
                     collected.Add(window.Title);
-                    collected.AddRange(UiLayoutHarness.Descendants<TextBlock>(layout.Root).Select(x => x.Text));
+                    // The language picker renders language names in their own language, including in the English UI.
+                    var nativeLabels = languagePicker?.SelectedValue is LanguagePreference.SimplifiedChinese
+                        ? UiLayoutHarness.Descendants<TextBlock>(languagePicker).Where(x => x.Text == LanguageSettings.ChineseAutonym).ToHashSet()
+                        : [];
+                    foreach (TextBlock text in UiLayoutHarness.Descendants<TextBlock>(layout.Root))
+                    {
+                        if (nativeLabels.Contains(text)) selectedAutonyms.Add(text.Text);
+                        else collected.Add(text.Text);
+                    }
                     collected.AddRange(UiLayoutHarness.Descendants<ContentControl>(layout.Root)
                         .Where(x => x.Content is string).Select(x => (string)x.Content));
                     collected.AddRange(UiLayoutHarness.Descendants<DataGrid>(layout.Root)
@@ -95,13 +104,26 @@ internal static partial class Program
                 }
                 for (int tab = 0; tab < mainTabs.Items.Count; tab++)
                 {
-                    mainTabs.SelectedIndex = tab; layout.Refresh(); Collect();
+                    mainTabs.SelectedIndex = tab; layout.Refresh();
+                    if (((TabItem)mainTabs.Items[tab]).Content is LanguageSettingsView languageView)
+                    {
+                        ComboBox picker = UiLayoutHarness.Descendants<ComboBox>(languageView).Single(x => x.Name == "LanguagePreferenceComboBox");
+                        foreach (LanguagePreference preference in Enum.GetValues<LanguagePreference>())
+                        {
+                            picker.SelectedValue = preference;
+                            layout.Refresh();
+                            Collect(picker);
+                        }
+                        continue;
+                    }
+                    Collect();
                     if (tab != 0) continue;
                     TabControl results = (TabControl)window.FindName("ResultTabs");
                     for (int page = 0; page < results.Items.Count; page++)
                     { results.SelectedIndex = page; layout.Refresh(); Collect(); }
                 }
-                Check("双语UI 全部初始页签及辅助功能文案无遗漏资源或中文", collected.Count > 150 && !collected.Any(Untranslated));
+                Check("双语UI 全部初始页签及辅助功能文案无遗漏资源或中文",
+                    selectedAutonyms.Count > 0 && collected.Count > 150 && !collected.Any(Untranslated));
             }
             finally { CloseSummaryFixture(window); }
         }
@@ -170,6 +192,6 @@ internal static partial class Program
         }
         Check("双语UI 两种语言只选择同一个已核验目标", selections.SequenceEqual(new[] { "known", "known" }));
         if (output is not null) File.WriteAllText(Path.Combine(output, "english-interface-texts.json"),
-            JsonSerializer.Serialize(collected.Distinct().Order().ToArray(), new JsonSerializerOptions { WriteIndented = true }));
+            JsonSerializer.Serialize(collected.Concat(selectedAutonyms).Distinct().Order().ToArray(), new JsonSerializerOptions { WriteIndented = true }));
     }
 }
