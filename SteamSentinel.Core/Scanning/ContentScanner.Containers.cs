@@ -224,6 +224,7 @@ public sealed partial class ContentScanner
             BindContainerFindings(context, node, firstFinding);
             if (readAllowed && node.Sha256 is not null && type.Type == DetectedFileType.PortableExecutable)
             {
+                AddManagedSteamAlertFinding(stream, context, node);
                 await ScanVPetFamilyAsync(stream, context, node);
                 BindContainerFindings(context, node, firstFinding);
             }
@@ -358,6 +359,38 @@ public sealed partial class ContentScanner
                 WorkshopId = context.WorkshopId,
                 SuggestedActions = [SuggestedActionKind.ReviewOnly]
             });
+    }
+
+    private static void AddManagedSteamAlertFinding(Stream stream, ContainerContext context, ContainerScanNode node)
+    {
+        ManagedSteamAlertMatch match = ManagedSteamAlertInspector.Inspect(stream, context.Token);
+        if (match == ManagedSteamAlertMatch.None) return;
+        (string rule, MessageText title, MessageText description, MessageText evidence) = match switch
+        {
+            ManagedSteamAlertMatch.ModDownloader => ("MANAGED-MOD-DOWNLOAD-LAUNCH",
+                MessageText.Create("Scan.ManagedMod.Downloader.Title"), MessageText.Create("Scan.ManagedMod.Downloader.Description"), MessageText.Create("Scan.ManagedMod.Downloader.Evidence")),
+            ManagedSteamAlertMatch.ResidentHost => ("MANAGED-STEAM-CEF-HOST",
+                MessageText.Create("Scan.ManagedMod.Host.Title"), MessageText.Create("Scan.ManagedMod.Host.Description"), MessageText.Create("Scan.ManagedMod.Host.Evidence")),
+            _ => ("MANAGED-STEAM-CEF-CORE",
+                MessageText.Create("Scan.ManagedMod.Core.Title"), MessageText.Create("Scan.ManagedMod.Core.Description"), MessageText.Create("Scan.ManagedMod.Core.Evidence"))
+        };
+        context.Report.Findings.Add(new()
+        {
+            RuleId = rule,
+            Category = FindingCategory.File,
+            Severity = FindingSeverity.High,
+            Score = match == ManagedSteamAlertMatch.ModDownloader ? 75 : 90,
+            TitleText = title,
+            DescriptionText = description,
+            EvidenceText = evidence,
+            Target = node.OriginalTarget,
+            Sha256 = node.Sha256,
+            TargetSha256 = node.OriginalTargetSha256,
+            ContentPath = node.DisplayPath,
+            WorkshopId = context.WorkshopId,
+            CanRemediate = false,
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+        });
     }
 
     private async Task ScanContainerLeafAsync(FileStream file, Stream stream, ArchiveVolumeCandidate source,

@@ -1,5 +1,11 @@
 <?xml version='1.0' encoding='utf-8'?>
 <root>
+  <data name="Pawnshop.Ui.Title" xml:space="preserve"><value>Steam 界面从本机服务加载脚本</value></data>
+  <data name="Pawnshop.Ui.Observation" xml:space="preserve"><value>此文件创建脚本元素，将其来源指向本机回环地址，并将同一元素插入页面。本地 Steam 界面扩展也可能使用这种方式。</value></data>
+  <data name="Pawnshop.Ui.Evidence" xml:space="preserve"><value>脚本地址 {0}。文件 SHA-256 为 {1}。</value></data>
+  <data name="Pawnshop.Ui.Review" xml:space="preserve"><value>请核对已安装的 Steam 界面扩展。如果此修改未经授权，请使用 Steam 官方安装程序修复客户端文件。</value></data>
+  <data name="Pawnshop.Ui.Correlated" xml:space="preserve"><value>此脚本加载 SteamAlert 使用的地址。当前用户的常驻文件也与已知 SteamAlert 的 SHA-256 相符：{0}。</value></data>
+  <data name="Pawnshop.Ui.Repair" xml:space="preserve"><value>请单独核对常驻程序及其下载器。清除重复感染的来源后，使用 Steam 官方安装程序修复受影响的客户端文件。</value></data>
   <data name="Common.Semicolon" xml:space="preserve">
     <value>；</value>
   </data>
@@ -6124,6 +6130,24 @@ DER SHA-256：{3}
   <data name="Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.08" xml:space="preserve">
     <value>客服路由被映射到第三方主机 {0}</value>
   </data>
+  <data name="Rule.STEAMALERT-MOD-LOADER.label" xml:space="preserve">
+    <value>深空当铺 Mod 假红信下载器</value>
+  </data>
+  <data name="Rule.STEAMALERT-MOD-LOADER.evidence" xml:space="preserve">
+    <value>此 DLL 的 Mod 初始化代码将可执行文件下载到 SteamAlertDemo 目录并启动。</value>
+  </data>
+  <data name="Rule.STEAMALERT-RESIDENT.label" xml:space="preserve">
+    <value>深空当铺 Mod 假红信宿主</value>
+  </data>
+  <data name="Rule.STEAMALERT-RESIDENT.evidence" xml:space="preserve">
+    <value>此可执行文件从自身资源读取 SteamAlertCore.dll，在内存中加载并调用其入口。</value>
+  </data>
+  <data name="Rule.STEAMALERT-CORE.label" xml:space="preserve">
+    <value>深空当铺 Mod 假客服载荷</value>
+  </data>
+  <data name="Rule.STEAMALERT-CORE.evidence" xml:space="preserve">
+    <value>此 DLL 通过 Steam 客户端调试接口显示假提醒与客服页面，并含有收集和上报对话的代码。</value>
+  </data>
   <data name="Rule.STEAMRED-VPET-WRAPPER-001.label" xml:space="preserve">
     <value>已确认的 VPet 恶意插件外壳</value>
   </data>
@@ -11812,5 +11836,38 @@ DER SHA-256：{3}
   </data>
   <data name="Scope.ExistingAction" xml:space="preserve">
     <value>按此操作的专用规则核验</value>
+  </data>
+  <data name="Scan.ManagedMod.Downloader.Title" xml:space="preserve">
+    <value>模组初始化会下载并启动文件</value>
+  </data>
+  <data name="Scan.ManagedMod.Downloader.Description" xml:space="preserve">
+    <value>可从模组初始化方法到达的代码把同一个用户目录路径传给下载和启动 API。请复核模组及其来源。</value>
+  </data>
+  <data name="Scan.ManagedMod.Downloader.Evidence" xml:space="preserve">
+    <value>从 IMod.Init 可到达的代码把 HTTP(S) 资源下载到用户目录下的可执行文件路径，再把同一路径传给启动 API。</value>
+  </data>
+  <data name="Scan.ManagedMod.Host.Title" xml:space="preserve">
+    <value>内嵌组件包含 Steam 调试自启和脚本求值线索</value>
+  </data>
+  <data name="Scan.ManagedMod.Host.Description" xml:space="preserve">
+    <value>入口方法引用内嵌资源，并包含程序集加载与反射调用。内嵌组件中，调用注册表写入 API 的方法同时包含 Steam、CEF 调试参数和 Run 键路径。引用 Runtime.evaluate 的方法还调用了 WebSocket 连接和发送 API。</value>
+  </data>
+  <data name="Scan.ManagedMod.Host.Evidence" xml:space="preserve">
+    <value>内嵌托管资源 → Assembly.Load 和 Invoke；Run 键与 Steam CEF 调试参数；WebSocket 与 Runtime.evaluate</value>
+  </data>
+  <data name="SteamAlert.Plan.ModSources" xml:space="preserve">
+    <value>请同时核对已安装的 Mod 和常驻程序，退出游戏并取消受影响的工坊订阅，避免下载器再次出现。</value>
+  </data>
+  <data name="SteamAlert.Plan.ClientPatch" xml:space="preserve">
+    <value>需手动修复的 Steam 客户端脚本（加载本机脚本）：{0}。请使用可信 Steam 安装来源恢复该文件。</value>
+  </data>
+  <data name="Scan.ManagedMod.Core.Title" xml:space="preserve">
+    <value>托管组件包含 Steam 调试自启和脚本求值线索</value>
+  </data>
+  <data name="Scan.ManagedMod.Core.Description" xml:space="preserve">
+    <value>调用注册表写入 API 的方法同时包含 Steam、CEF 调试参数和 Run 键路径。引用 Runtime.evaluate 的方法还调用了 WebSocket 连接和发送 API。</value>
+  </data>
+  <data name="Scan.ManagedMod.Core.Evidence" xml:space="preserve">
+    <value>Run 键与 Steam CEF 调试参数；WebSocket 与 Runtime.evaluate</value>
   </data>
 </root>

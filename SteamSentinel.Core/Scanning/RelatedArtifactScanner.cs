@@ -25,6 +25,8 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
 
     private async Task CollectCoreAsync(SteamLayout layout, ScanReport report, ScanOptions options, CancellationToken token)
     {
+        // Discovery only. A directory name never authorizes quarantining its contents.
+        AddCandidate(SteamAlertInstallation.ResidentDirectory, report);
         foreach (string template in rules.KnownPathTemplates)
         {
             string path = Environment.ExpandEnvironmentVariables(template);

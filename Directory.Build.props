@@ -25,8 +25,8 @@
       safe local fallback is deliberately unattributed rather than pretending
       that an arbitrary working tree came from a particular commit.
     -->
-    <VersionPrefix>0.3.2</VersionPrefix>
-    <SteamSentinelMinimumSelfTests>2876</SteamSentinelMinimumSelfTests>
+    <VersionPrefix>0.3.3</VersionPrefix>
+    <SteamSentinelMinimumSelfTests>2927</SteamSentinelMinimumSelfTests>
     <Version>$(VersionPrefix)</Version>
     <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
     <FileVersion>$(VersionPrefix).0</FileVersion>

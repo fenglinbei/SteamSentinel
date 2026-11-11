@@ -42,8 +42,13 @@ public sealed partial class RelatedArtifactScanner
         new RelatedArtifactScanner(rules).MatchCoreAsync(command, report, token);
 
     /// <summary>Read-only snapshot validation. CandidatePaths must be checked by the UI's Low Worker before a second expansion.</summary>
-    public async Task<RelatedArtifactExpansion> ExpandAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token = default,
-        long maximumVerificationBytes = MaximumVerificationBytes, bool requestExplicitFileTargets = false)
+    public Task<RelatedArtifactExpansion> ExpandAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token = default,
+        long maximumVerificationBytes = MaximumVerificationBytes, bool requestExplicitFileTargets = false) =>
+        ExpandLocalAsync(selectedFindings, report, token, maximumVerificationBytes, requestExplicitFileTargets, null,
+            SteamAlertInstallation.ResidentDirectory);
+
+    internal async Task<RelatedArtifactExpansion> ExpandLocalAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token,
+        long maximumVerificationBytes, bool requestExplicitFileTargets, SteamLayout? layout, string residentDirectory)
     {
         RelatedArtifactScanner session = new(rules) { _verificationByteLimit = Math.Clamp(maximumVerificationBytes, 0, MaximumVerificationBytes) };
         Finding[] selected = selectedFindings.Take(257).ToArray();
@@ -51,7 +56,7 @@ public sealed partial class RelatedArtifactScanner
             foreach (Finding finding in selected.Where(f => RemediationEvidencePolicy.CanRemediate(f) &&
                 f.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile) && ContentDiscovery.IsLocalSafePath(f.Target)))
                 session._explicitFileTargets.Add(Path.GetFullPath(finding.Target));
-        try { return await session.ExpandCoreAsync(selected, report, token); }
+        try { return await session.ExpandCoreAsync(selected, report, token, layout, residentDirectory); }
         finally
         {
             foreach (var identity in session._lockedIdentities.Values) await identity.Stream.DisposeAsync();
@@ -103,7 +108,8 @@ public sealed partial class RelatedArtifactScanner
             .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).Take(64).ToArray();
     }
 
-    private async Task<RelatedArtifactExpansion> ExpandCoreAsync(IEnumerable<Finding> selectedFindings, ScanReport input, CancellationToken token)
+    private async Task<RelatedArtifactExpansion> ExpandCoreAsync(IEnumerable<Finding> selectedFindings, ScanReport input, CancellationToken token,
+        SteamLayout? layout, string residentDirectory)
     {
         token.ThrowIfCancellationRequested();
         ScanReport report = new();
@@ -173,6 +179,41 @@ public sealed partial class RelatedArtifactScanner
             }
         }
 
+        SteamLayout? familyLayout = null;
+        if (SteamSecurityScanner.IsCurrentUserReport(input))
+        {
+            foreach (Finding seed in selected)
+            {
+                string? role = SteamAlertInstallation.InstalledSeedRole(seed, _known);
+                if (role is null) continue;
+                string seedPath = Path.GetFullPath(seed.RelatedFilePath ?? seed.Target);
+                if (_blockedPaths.Contains(seedPath) || !_lockedIdentities.TryGetValue(seedPath, out var identity) ||
+                    !identity.Hash.Equals(RelatedArtifactRelations.FileHash(seed), StringComparison.OrdinalIgnoreCase)) continue;
+                familyLayout ??= layout ?? SteamLocator.Discover();
+                if (!SteamAlertInstallation.IsInstalled(role, seedPath, familyLayout, residentDirectory)) continue;
+                string targetRole = role == SteamAlertInstallation.LoaderRule ? SteamAlertInstallation.ResidentRule : SteamAlertInstallation.LoaderRule;
+                foreach (string peer in SteamAlertInstallation.ProbePaths(targetRole, familyLayout, residentDirectory))
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (candidates.Contains(peer) || !File.Exists(peer)) continue;
+                    if (candidates.Count >= 64)
+                    { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.03")); break; }
+                    string? hash = await HashAsync(peer, report, token);
+                    if (hash is not null && _known.TryGetValue(hash, out var rule) && rule.Id == targetRole)
+                        candidates.Add(peer);
+                }
+                foreach (Finding peer in SteamAlertInstallation.InstalledPeers(_previous, _known, familyLayout, residentDirectory))
+                {
+                    string peerPath = Path.GetFullPath(peer.Target);
+                    if (candidates.Count >= 64 && !candidates.Contains(peerPath))
+                    { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.03")); break; }
+                    candidates.Add(peerPath);
+                }
+                report.AddScopeNote(MessageText.Create("SteamAlert.Plan.ModSources"));
+                break;
+            }
+        }
+
         foreach (string path in candidates)
         {
             token.ThrowIfCancellationRequested();
@@ -193,6 +234,15 @@ public sealed partial class RelatedArtifactScanner
             if (current is not null && (RemediationEvidencePolicy.CanRemediate(current) || !report.Findings.Any(f => f.Id == source?.Id)))
                 report.Findings.Add(current);
         }
+
+        if (familyLayout is not null && _proofs.Values.Any(f => f.RuleId == SteamAlertInstallation.ResidentRule &&
+            SteamAlertInstallation.IsInstalled(f.RuleId, f.Target, familyLayout, residentDirectory)))
+            foreach (string patch in _previous.Where(f => f.RuleId == "STEAM-UI-LOOPBACK-SCRIPT" && f.ReasonCode == "SteamAlertResidentCorrelated" &&
+                f.Category == FindingCategory.Steam && ContentDiscovery.IsLocalSafePath(f.Target) &&
+                familyLayout.SteamRoots.Any(root => ContentDiscovery.IsWithin(f.Target, Path.Combine(root, "steamui")) ||
+                    ContentDiscovery.IsWithin(f.Target, Path.Combine(root, "clientui")))).Select(f => f.Target)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
+                report.AddScopeNote(MessageText.Create("SteamAlert.Plan.ClientPatch", patch));
 
         if (_proofs.Count > 0)
         {
@@ -239,7 +289,8 @@ public sealed partial class RelatedArtifactScanner
         bool known = _known.TryGetValue(hash, out HashRule? knownRule);
         if (source is null && !known) return null;
         bool actionable = known || source is not null && IsActionableFileSource(source);
-        bool tokenOnly = !known && source is not null && IsTokenCooccurrenceOnly(source);
+        bool tokenOnly = !known && source is not null && IsTokenCooccurrenceOnly(source) &&
+            !RemediationEvidencePolicy.IsBehaviorObservation(source.RuleId);
         Finding current = new()
         {
             // A fresh exact-hash match is independent evidence, not a revival of a retired

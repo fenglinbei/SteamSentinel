@@ -123,6 +123,7 @@ internal static partial class Program
             await TestPlanBuilderAsync(root, rules);
             TestV030RemediationScope();
             await TestV032CoreScopeAsync(root);
+            await TestSteamAlertAsync(root);
             await TestV032BrokerScopeAsync(root);
             await TestBoundBrokerPlanAsync();
             await TestSecureFileLeaseAsync(root);
@@ -838,6 +839,11 @@ internal static partial class Program
                 }
                 catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
                 await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "recovery-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--steamalert-tests" when args.Length == 2:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                await TestSteamAlertAsync(Path.GetFullPath(args[1]));
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "steamalert-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
                 return Failures.Count == 0 ? 0 : 1;
             case "--false-positive-tests" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));

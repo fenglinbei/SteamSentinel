@@ -1,14 +1,16 @@
-# SteamSentinel 0.3.2 — English quick start
+# SteamSentinel 0.3.3 — English quick start
 
 SteamSentinel is a local Windows tool for inspecting known fake Steam alert malware, related Workshop content, mods and plugins, and supported Steam modifications. It can quarantine precisely selected eligible files and retain records for review and rollback.
 
-Product version is **0.3.2**. This revision is [v0.3.2-preview.1 self-signed Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1), with rules `2026.09.28.1`. Existing stable/latest designations remain unchanged. Updated 2026-11-10; [简体中文](../README.md).
+Product version is **0.3.3**. This revision is [v0.3.3-preview.1 self-signed Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1), with rules `2026.11.10.1`. Existing stable/latest designations remain unchanged. Updated 2026-11-10; [简体中文](../README.md).
 
 Revision 5 uses one complete package with a native startup check. It verifies the payload and probes the actual hosts before starting the application. Only a confirmed, known CET initialization failure allows one compatibility attempt. Standard hosts retain CET; compatibility hosts opt out for this application without changing system security settings. Unknown startup errors stop and produce a local report instead of replaying business operations. Managed errors also provide a report path when available; reports are not uploaded automatically.
 
-Version 0.3.2 lets eligible exact files enter preview from any ordinary local directory, including unprotected ordinary files in Windows or Program Files. Results distinguish confirmation, sensitive-location verification and blocked items. Scope information is integrated into the existing confirmation window, with no extra authorization dialog and no increase in ordinary per-batch confirmations. See the [current release notes](RELEASE-0.3.2-preview.1.en.md).
+Version 0.3.3 detects the known SteamAlert mod downloader, resident host and independent core DLL. Run a full scan of the installed mods and resident files. Review behavior-only matches and affected Steam UI scripts before repairing the client. [Current release notes](RELEASE-0.3.3-preview.1.en.md).
 
-The 0.3.1 fixes for diagnostic counting, approved text budgets and large-case persistence remain. New cases use multipart storage; export a full record bundle and retain the entire case directory before downgrading to 0.3.0. Current scope acceptance is recorded in `SCOPE-AUTHORIZATION-RESULTS.json`; the final worker's large scan and same-report case persistence are recorded in `LARGE-SCAN-RESULTS.json`. Exact coverage, identities and counts come from current release attachments, not older test results.
+Version 0.3.2 lets eligible exact files enter preview from any ordinary local directory, including unprotected ordinary files in Windows or Program Files. Results distinguish confirmation, sensitive-location verification and blocked items. Scope information is integrated into the existing confirmation window, with no extra authorization dialog and no increase in ordinary per-batch confirmations. See the [0.3.2 scope notes](RELEASE-0.3.2-preview.1.en.md).
+
+New cases use multipart storage. Export a full record bundle and retain the entire case directory before downgrading to 0.3.0. This release includes static detection results for SteamAlert samples and clean mod controls. The scope authorization and large scan test records are available on the [0.3.2 release page](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1).
 
 Revision 4's recovery behavior is retained: startup checks old operations, and a confirmed finished operation no longer blocks a new scan and plan. Historical unknown outcomes remain unknown. Disabled controls explain the reason and offer **Check and continue**, **Scan again**, or **View records**. You do not need to delete cases or edit configuration, and saved plans are never replayed.
 
@@ -18,7 +20,7 @@ The optional system AMSI enhancement is currently paused: its controls are hidde
 
 ## Install or upgrade
 
-Use the complete installer from the [v0.3.2-preview.1 release page](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1). Check its identity and SHA-256 against `PUBLICATION-IDENTITY.json`, `RELEASE-METADATA.json` and the version-prefixed `RELEASE-SHA256.txt`. Read `SIGNING.txt` for signing status. Close both ordinary and administrator application windows before upgrading, and install the whole package without replacing individual EXEs/DLLs or mixing hosts from different packages. The older installer's `Code=UnsafePath; Path=; Mode=Preflight` short-path issue was fixed in revision 2 and that fix is retained; do not manually delete old files or weaken directory permissions.
+Use the complete installer from the [v0.3.3-preview.1 release page](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1). Check its identity and SHA-256 against `PUBLICATION-IDENTITY.json`, `RELEASE-METADATA.json` and the version-prefixed `RELEASE-SHA256.txt`. Read `SIGNING.txt` for signing status. Close both ordinary and administrator application windows before upgrading, and install the whole package without replacing individual EXEs/DLLs or mixing hosts from different packages. The older installer's `Code=UnsafePath; Path=; Mode=Preflight` short-path issue was fixed in revision 2 and that fix is retained; do not manually delete old files or weaken directory permissions.
 
 The installer supports English and Simplified Chinese and uses the same installation location and upgrade identity for both. Its language does not change another Windows user's application preference. Administrator remediation requires a protected, intact installation in Program Files. The portable package can scan and export reports, but administrator remediation and quarantine rollback are unavailable there.
 
@@ -88,4 +90,4 @@ Uninstalling the application retains quarantine and machine records. Keep those 
 - User settings and reports: `%LOCALAPPDATA%\SteamSentinel`.
 - Restricted worker temporary data: `%USERPROFILE%\AppData\LocalLow\SteamSentinel`.
 - Machine quarantine and results: `%PROGRAMDATA%\SteamSentinel\Quarantine` and `%PROGRAMDATA%\SteamSentinel\Results`.
-- [Current release identity and acceptance](RELEASE-0.3.2-preview.1.en.md), [Chinese overview and build instructions](../README.md), [historical implementation plan](PLAN-0.3.0.md), [signing](SIGNING.md), [third-party notices](../THIRD-PARTY-NOTICES.md), [Apache 2.0 license](../LICENSE).
+- [Current release identity and acceptance](RELEASE-0.3.3-preview.1.en.md), [Chinese overview and build instructions](../README.md), [historical implementation plan](PLAN-0.3.0.md), [signing](SIGNING.md), [third-party notices](../THIRD-PARTY-NOTICES.md), [Apache 2.0 license](../LICENSE).

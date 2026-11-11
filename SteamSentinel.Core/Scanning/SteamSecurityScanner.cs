@@ -9,7 +9,7 @@ using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
 
-public sealed class SteamSecurityScanner(RuleSet rules)
+public sealed partial class SteamSecurityScanner(RuleSet rules)
 {
     private const long MaximumScriptBytes = 32L * 1024 * 1024;
     private const long MaximumTotalScriptBytes = 256L * 1024 * 1024;
@@ -206,10 +206,16 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                 family.Observe(Path.GetRelativePath(steamRoot, path), sha256, text);
 
                 HashRule? known = FindKnownHash(sha256);
-                List<MessageText> signals = Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase) ? AnalyzeSteamUiMessages(text) : [];
+                bool isScript = Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase);
+                LoopbackScriptReference? loopback = isScript ? SteamUiLoopbackInspector.Find(text) : null;
+                if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback));
+                List<MessageText> signals = isScript ? AnalyzeSteamUiMessages(text) : [];
                 if (known?.Malware != true && signals.Count == 0) continue;
 
                 bool highConfidence = known?.Malware == true || signals.Count >= 2;
+                // A script loader can be a small edit in an otherwise necessary Steam chunk.
+                // Existing semantic observations of that same chunk must not propose deleting it.
+                bool canQuarantine = highConfidence && (loopback is null || known?.Malware == true);
                 report.Findings.Add(new Finding
                 {
                     RuleId = known?.Id ?? "STEAM-UI-SEMANTIC-TAMPERING",
@@ -222,8 +228,8 @@ public sealed class SteamSecurityScanner(RuleSet rules)
                     EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.05", (sha256), (System.FormattableString.Invariant($"{capturedLength:N0}"))),
                     Sha256 = sha256,
                     IsKnownMalware = known?.Malware == true,
-                    CanRemediate = highConfidence,
-                    SuggestedActions = highConfidence
+                    CanRemediate = canQuarantine,
+                    SuggestedActions = canQuarantine
                         ? [SuggestedActionKind.QuarantineFile, SuggestedActionKind.BlockKnownDomains]
                         : [SuggestedActionKind.ReviewOnly]
                 });

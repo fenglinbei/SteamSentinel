@@ -80,6 +80,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                     Record(batches[index], additional.CoverageTexts, ReasonCodes.EvidenceUnavailable);
                 }
                 verified.AddRange(expansion.Findings);
+                foreach (MessageText detail in expansion.ScopeTexts.Where(text =>
+                    text.Message?.MessageId is "SteamAlert.Plan.ModSources" or "SteamAlert.Plan.ClientPatch"))
+                    if (!notes.Contains(detail.OriginalText)) notes.AddText(detail);
                 Record(batches[index], expansion.NoteTexts, ReasonCodes.EvidenceUnavailable);
             }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)

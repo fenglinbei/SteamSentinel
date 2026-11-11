@@ -39,6 +39,8 @@ public static class ScanReportMerger
     {
         ScanReport merged = new()
         {
+            MachineName = string.Equals(first.MachineName, second.MachineName, StringComparison.OrdinalIgnoreCase) ? first.MachineName : string.Empty,
+            UserName = string.Equals(first.UserName, second.UserName, StringComparison.OrdinalIgnoreCase) ? first.UserName : string.Empty,
             ProductVersion = first.ProductVersion,
             BuildIdentity = first.BuildIdentity,
             Mode = first.Mode,
@@ -72,6 +74,8 @@ public static class ScanReportMerger
         // Preserve independently scanned occurrences; immutable groups cannot be changed by merging.
         merged.CoverageAggregates.AddRange(first.CoverageAggregates.Concat(second.CoverageAggregates));
         merged.Findings.AddRange(first.Findings.Concat(second.Findings));
+        if (Scanning.SteamSecurityScanner.IsCurrentUserReport(first) && Scanning.SteamSecurityScanner.IsCurrentUserReport(second))
+            Scanning.SteamSecurityScanner.CorrelateLoopbackScripts(merged);
         merged.RootSummaries.AddRange(first.RootSummaries.Concat(second.RootSummaries));
         merged.Metrics.QuickPriorityBytesHashed = first.Metrics.QuickPriorityBytesHashed + second.Metrics.QuickPriorityBytesHashed;
         merged.Metrics.MediaStructuresChecked = first.Metrics.MediaStructuresChecked + second.Metrics.MediaStructuresChecked;

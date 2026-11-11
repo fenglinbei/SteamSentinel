@@ -1,5 +1,11 @@
 <?xml version='1.0' encoding='utf-8'?>
 <root>
+  <data name="Pawnshop.Ui.Title" xml:space="preserve"><value>Steam UI loads a script from a local service</value></data>
+  <data name="Pawnshop.Ui.Observation" xml:space="preserve"><value>The file creates a script element, assigns a loopback URL to its source, and inserts that same element into the page. A local Steam UI extension can also do this.</value></data>
+  <data name="Pawnshop.Ui.Evidence" xml:space="preserve"><value>Script endpoint {0}. File SHA-256 {1}.</value></data>
+  <data name="Pawnshop.Ui.Review" xml:space="preserve"><value>Check the installed Steam UI extensions. If this edit is unexpected, repair the client files with the official Steam installer.</value></data>
+  <data name="Pawnshop.Ui.Correlated" xml:space="preserve"><value>This script loads the SteamAlert endpoint. The current user’s local resident file also matches the known SteamAlert SHA-256: {0}.</value></data>
+  <data name="Pawnshop.Ui.Repair" xml:space="preserve"><value>Review the resident and its downloaders separately. After removing the source of reinfection, repair the affected client files with the official Steam installer.</value></data>
   <data name="Common.Semicolon" xml:space="preserve">
     <value>; </value>
   </data>
@@ -6124,6 +6130,24 @@ Component error output: </value>
   <data name="Backend.Core.SteamSecurityScanner.AnalyzeSteamUi.08" xml:space="preserve">
     <value>The support route is mapped to third-party host {0}</value>
   </data>
+  <data name="Rule.STEAMALERT-MOD-LOADER.label" xml:space="preserve">
+    <value>Fake Steam alert downloader in a Space Pawn Shop mod</value>
+  </data>
+  <data name="Rule.STEAMALERT-MOD-LOADER.evidence" xml:space="preserve">
+    <value>The mod initialization code in this DLL downloads an executable to the SteamAlertDemo directory and starts it.</value>
+  </data>
+  <data name="Rule.STEAMALERT-RESIDENT.label" xml:space="preserve">
+    <value>Fake Steam alert host distributed with a Space Pawn Shop mod</value>
+  </data>
+  <data name="Rule.STEAMALERT-RESIDENT.evidence" xml:space="preserve">
+    <value>This executable reads SteamAlertCore.dll from its resources, loads it in memory, and calls its entry point.</value>
+  </data>
+  <data name="Rule.STEAMALERT-CORE.label" xml:space="preserve">
+    <value>Fake Steam support payload distributed with a Space Pawn Shop mod</value>
+  </data>
+  <data name="Rule.STEAMALERT-CORE.evidence" xml:space="preserve">
+    <value>This DLL uses the Steam client debugging interface to display fake alerts and support pages. It contains code to collect and send chat messages.</value>
+  </data>
   <data name="Rule.STEAMRED-VPET-WRAPPER-001.label" xml:space="preserve">
     <value>Confirmed malicious VPet plugin wrapper</value>
   </data>
@@ -11812,5 +11836,38 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
   </data>
   <data name="Scope.ExistingAction" xml:space="preserve">
     <value>Validated using the rules for this action</value>
+  </data>
+  <data name="SteamAlert.Plan.ModSources" xml:space="preserve">
+    <value>Review both the installed mod and its resident program. Exit the game and unsubscribe from any affected Workshop items to prevent the downloader from returning.</value>
+  </data>
+  <data name="SteamAlert.Plan.ClientPatch" xml:space="preserve">
+    <value>Steam client script with a loopback loader (manual repair): {0}. Restore the client file from a trusted Steam installation.</value>
+  </data>
+  <data name="Scan.ManagedMod.Downloader.Title" xml:space="preserve">
+    <value>Mod initialization downloads and launches a file</value>
+  </data>
+  <data name="Scan.ManagedMod.Downloader.Description" xml:space="preserve">
+    <value>Code reachable from the mod initializer passes the same user-profile path to a download API and a launch API. Review the mod and its source.</value>
+  </data>
+  <data name="Scan.ManagedMod.Downloader.Evidence" xml:space="preserve">
+    <value>IMod.Init reaches code that downloads an HTTP(S) resource to an executable path under the user profile and uses that same path as a launch target.</value>
+  </data>
+  <data name="Scan.ManagedMod.Host.Title" xml:space="preserve">
+    <value>Steam debug startup and script-evaluation indicators in an embedded component</value>
+  </data>
+  <data name="Scan.ManagedMod.Host.Description" xml:space="preserve">
+    <value>The entry point references an embedded resource and contains assembly-loading and reflection calls. In the embedded component, a registry-write method contains Steam, the CEF debugging flag and the Run key path. Code referencing Runtime.evaluate also calls WebSocket connection and send APIs.</value>
+  </data>
+  <data name="Scan.ManagedMod.Host.Evidence" xml:space="preserve">
+    <value>Embedded managed resource → Assembly.Load and Invoke; Run key + Steam CEF debugging; WebSocket + Runtime.evaluate</value>
+  </data>
+  <data name="Scan.ManagedMod.Core.Title" xml:space="preserve">
+    <value>Steam debug startup and script-evaluation indicators in a managed component</value>
+  </data>
+  <data name="Scan.ManagedMod.Core.Description" xml:space="preserve">
+    <value>A method calling a registry-write API contains Steam, the CEF debugging flag and the Run key path. Code referencing Runtime.evaluate also calls WebSocket connection and send APIs.</value>
+  </data>
+  <data name="Scan.ManagedMod.Core.Evidence" xml:space="preserve">
+    <value>Run key + Steam CEF debugging; WebSocket + Runtime.evaluate</value>
   </data>
 </root>

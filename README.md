@@ -2,7 +2,9 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.2**，本轮为 [v0.3.2-preview.1 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1)，规则版本为 `2026.09.28.1`，现有 stable/latest 指向保持不变。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。产品版本为 **0.3.3**，本轮为 [v0.3.3-preview.1 自签名 Pre-release](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1)，规则版本为 `2026.11.10.1`，现有 stable/latest 指向保持不变。
+
+0.3.3 新增深空当铺 SteamAlert Mod 检测。完整扫描可识别已知下载器、常驻宿主及独立核心 DLL。新变体的托管代码行为和 Steam 界面脚本单独列出供复核。建议先检查两个 Mod 目录，再核对常驻文件、自启动项和受影响的 Steam 界面文件。[本轮发行说明](docs/RELEASE-0.3.3-preview.1.md)。
 
 0.3.2 允许符合现有证据要求的精确文件从任意普通本地目录进入预览，包括 Windows 或 Program Files 中通过保护检查的普通文件。列表提前区分待确认、敏感位置需核验和阻断；范围说明并入原确认窗口，新增独立授权弹窗为 0，每批原有最终确认继续保留。详见[本轮发行说明](docs/RELEASE-0.3.2-preview.1.md)。
 
@@ -10,7 +12,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 兼容修订 5 的启动机制继续保留，使用同一个完整安装包，由原生启动器先核验文件并检测实际宿主；只有确认已知 CET 初始化错误后，才尝试随包提供的兼容宿主。未知启动错误停止并保存本地报告，运行时错误也可取得报告路径，不自动上传。标准宿主保留 CET；兼容模式只关闭本程序宿主的该项保护，不修改系统安全设置。详见[启动兼容说明](docs/RELEASE-0.3.0-preview.5.md)。
 
-发行要求从干净提交完整构建，并通过完整原生自测、统一启动、Worker 防火墙契约、安装维护及状态迁移门槛。范围授权专项以 `SCOPE-AUTHORIZATION-RESULTS.json` 核验，最终工作进程的大规模实扫及同一报告病例保存以 `LARGE-SCAN-RESULTS.json` 核验。实际身份、计数、通过与未测边界以本轮发行附件为准，不沿用旧包结果作为新包验收。
+本版从干净提交构建，检验完整原生自测、统一启动、Worker 防火墙契约、安装维护及状态迁移。发行附件提供最终构建对 SteamAlert 样本和正常 Mod 对照的静态检测结果。范围授权和大规模扫描的专项记录可在 [0.3.2 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1) 查看。
 
 处置修订 4 的恢复逻辑继续保留：启动时核验旧操作；确认已结束后恢复新方案入口，旧未知结果保留，旧计划不重放。按钮不可用时提供“检查并继续／重新扫描／查看记录”，无需删除病例或手工改配置。详见[处置恢复说明](docs/REMEDIATION-RECOVERY-0.3.0.md)。
 
@@ -26,7 +28,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 ## 主要能力
 
-0.3.0 提供“语言 / Language”页，可选择自动 / 简体中文 / English，保存后下次启动生效。Markdown 报告和记录包可单独选择本次导出语言；同一报告对象的 JSON 不因显示语言变化。后台消息已接通可选的稳定消息 ID 和有界参数，来源原文与旧记录保留。中英文使用方法见 [语言设置与导出](docs/LANGUAGE-SETTINGS-0.3.0.md)；资源与双语安装器的早期实现记录见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)，发布验收以[本轮说明](docs/RELEASE-0.3.2-preview.1.md)为准。
+0.3.0 提供“语言 / Language”页，可选择自动 / 简体中文 / English，保存后下次启动生效。Markdown 报告和记录包可单独选择本次导出语言；同一报告对象的 JSON 不因显示语言变化。后台消息已接通可选的稳定消息 ID 和有界参数，来源原文与旧记录保留。中英文使用方法见 [语言设置与导出](docs/LANGUAGE-SETTINGS-0.3.0.md)；资源与双语安装器的早期实现记录见[联合验收记录](docs/JOINT-ACCEPTANCE-0.3.0.md)，发布验收以[本轮说明](docs/RELEASE-0.3.3-preview.1.md)为准。
 
 当前源码已接入第三批精确证书/代理动作、依赖阻断、持久病例与跨会话复验，见 [第三批交付说明](docs/EXACT-REMEDIATION-PHASE3.md)。其中精确证书／代理配置的真实样本与重启验收尚未完成，精确配置规则目录暂为空，当前不会仅凭 PAC 或证书名称开放自动修复。第二批的有界补查、离线宿主签名、组件关联及 MSI 静态规则见 [第二批交付说明](docs/RELATED-COMPONENTS-PHASE2.md)。
 
@@ -61,7 +63,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 可在“代理与证书”页执行本机只读诊断，查看 8 个代理配置来源及当前用户／本机的物理 Root、CA 证书来源。结果会解释“待确认”“暂不支持”和“条件未满足”，不能选择处理的项目会保留原因和下一步；普通信息不计为未处理。诊断不连接外部地址、不修改配置，也不代表确认恶意或处理完成。范围和验证见 [第一批交付说明](docs/TRUST-PROXY-DIAGNOSTICS-PHASE1.md)。
 
-1. 从 [v0.3.2-preview.1 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.2-preview.1)取得完整安装包，对照带版本前缀的 `RELEASE-SHA256.txt`、`PUBLICATION-IDENTITY.json` 及 `RELEASE-METADATA.json` 核对哈希与来源。构建身份和验收边界见[本轮发行说明](docs/RELEASE-0.3.2-preview.1.md)。升级前退出主程序和管理员窗口，不要只替换 EXE 或混合不同包的宿主。早期安装器的短路径 `UnsafePath` 修复继续保留；无需手动删除旧文件或放宽目录权限。
+1. 从 [v0.3.3-preview.1 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1)取得完整安装包，对照带版本前缀的 `RELEASE-SHA256.txt`、`PUBLICATION-IDENTITY.json` 及 `RELEASE-METADATA.json` 核对哈希与来源。构建身份和验收边界见[本轮发行说明](docs/RELEASE-0.3.3-preview.1.md)。升级前退出主程序和管理员窗口，不要只替换 EXE 或混合不同包的宿主。早期安装器的短路径 `UnsafePath` 修复继续保留；无需手动删除旧文件或放宽目录权限。
 2. 使用安装器安装到固定的 Program Files 目录。默认普通权限扫描，处置时自动请求 UAC，也可点击“打开管理员窗口”主动授权，不需要在快捷方式中手动配置。
 3. 首次使用先执行“快速扫描”，随后执行“完整工坊扫描”。单独收到的 MP4、压缩包或安装包可用“扫描文件/目录”。
 4. 检查结果顶部的覆盖状态。`Complete` 只表示已完成支持范围内的检查，`Partial` 不能当作“安全”。
@@ -101,7 +103,7 @@ Broker 只接受 `%LOCALAPPDATA%\SteamSentinel\Plans` 下的短时 JSON 计划�
 - 用户计划、报告与 Low Integrity 临时区：`%LOCALAPPDATA%\SteamSentinel`、`%USERPROFILE%\AppData\LocalLow\SteamSentinel`
 - 管理员隔离区：`%PROGRAMDATA%\SteamSentinel\Quarantine`
 - 管理员结果区：`%PROGRAMDATA%\SteamSentinel\Results`
-- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.09.28.1`
+- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.11.10.1`
 
 ## 从源码构建
 
@@ -125,6 +127,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 
 
 ## 审查入口
 
+- [0.3.3 深空当铺 Mod 检测与处置](docs/RELEASE-0.3.3-preview.1.md) / [English release notes](docs/RELEASE-0.3.3-preview.1.en.md)
 - [0.3.2 精确文件范围与确认](docs/RELEASE-0.3.2-preview.1.md) / [English release notes](docs/RELEASE-0.3.2-preview.1.en.md)
 - [0.3.1 大规模扫描与病例保存修复](docs/RELEASE-0.3.1-preview.1.md) / [English release notes](docs/RELEASE-0.3.1-preview.1.en.md)
 

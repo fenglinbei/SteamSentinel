@@ -289,6 +289,7 @@ public sealed class ScanCoordinator
             if (report.ResourceAudit is { } audit) audit.Phase = ScanResourcePhase.Finished;
         }
 
+        SteamSecurityScanner.CorrelateLoopbackScripts(report, _rules);
         Checkpoint(report);
         // Checkpoints use append-only offsets. The UI sorts the merged report independently.
         if (checkpoint is null) report.Findings.Sort((left, right) =>

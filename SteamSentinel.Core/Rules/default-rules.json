@@ -1,8 +1,56 @@
 {
   "schemaVersion": "1",
-  "version": "2026.09.28.1",
-  "publishedAtUtc": "2026-09-20T00:00:00Z",
+  "version": "2026.11.10.1",
+  "publishedAtUtc": "2026-11-11T00:00:00Z",
   "knownHashes": [
+    {
+      "id": "STEAMALERT-MOD-LOADER",
+      "sha256": "20510416665705F7D3B55DE60F22B6072295B8A5BFB51139FE972E916B53F272",
+      "label": "深空当铺 Mod 假红信下载器",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "此 DLL 的 Mod 初始化代码将可执行文件下载到 SteamAlertDemo 目录并启动。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMALERT-MOD-LOADER.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMALERT-MOD-LOADER.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMALERT-RESIDENT",
+      "sha256": "86E0D69C3F7A0B376D88BFDF9DBEFDDA314541A8389FB66E399E4DD2A06C290B",
+      "label": "深空当铺 Mod 假红信宿主",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "此可执行文件从自身资源读取 SteamAlertCore.dll，在内存中加载并调用其入口。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMALERT-RESIDENT.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMALERT-RESIDENT.evidence",
+        "Arguments": []
+      }
+    },
+    {
+      "id": "STEAMALERT-CORE",
+      "sha256": "3CDD5D6ED2F62AD76EAF1CBCDFBD840CDFC12ED990F66FFD841B323D89ACB211",
+      "label": "深空当铺 Mod 假客服载荷",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "此 DLL 通过 Steam 客户端调试接口显示假提醒与客服页面，并含有收集和上报对话的代码。",
+      "labelMessage": {
+        "MessageId": "Rule.STEAMALERT-CORE.label",
+        "Arguments": []
+      },
+      "evidenceMessage": {
+        "MessageId": "Rule.STEAMALERT-CORE.evidence",
+        "Arguments": []
+      }
+    },
     {
       "id": "STEAMRED-VPET-WRAPPER-001",
       "sha256": "DF0F952428FCA45E07443DDF7A582B4470705047E794D2307800D7E0B7224601",
