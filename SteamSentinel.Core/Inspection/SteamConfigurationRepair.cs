@@ -18,6 +18,8 @@ public static class SteamConfigurationRepair
     public const string Shortcut = "SteamShortcutDebugArguments";
     public const string ShortcutReviewRule = "STEAM-SHORTCUT-DEBUG-UNVERIFIED";
     public const string DebugArgument = "-cef-enable-debugging";
+    private static readonly Guid UsersFilesRoot = new("59031a47-3f72-44a7-89c5-5595fe6b30ee");
+    private static readonly Guid UsersFilesKnownFolder = new("f3ce0f7c-4901-4acc-8648-d5d44b04ef8f");
     private static readonly Regex Setting = new(@"^(?<prefix>\s*)(?<key>BootStrapperInhibitAll|BootStrapperInhibitV3|BootStrapperForceSelfUpdate|ForceOfflineMode)\s*=\s*(?<value>[A-Za-z0-9]+)\s*(?:(?:;|#|//).*)?$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
 
@@ -124,6 +126,7 @@ public static class SteamConfigurationRepair
             if (argumentBytes == 0) return false;
             // Keep inert metadata. Known-folder relocation is accepted only when its current
             // local prefix exactly matches the filesystem PIDL; unknown target changes fail closed.
+            bool profileSpecialAlias = false, profileKnownAlias = false;
             while (position + 4 <= original.Length)
             {
                 uint size = BinaryPrimitives.ReadUInt32LittleEndian(original.Slice(position, 4));
@@ -133,11 +136,15 @@ public static class SteamConfigurationRepair
                 if (signature is 0xA0000005u or 0xA000000Bu)
                 {
                     if (idList is null || !KnownFolderMatches(original.Slice(position, checked((int)size)), idList)) return false;
+                    if (signature == 0xA0000005u && BinaryPrimitives.ReadUInt32LittleEndian(original.Slice(position + 8, 4)) == uint.MaxValue)
+                        profileSpecialAlias = true;
+                    if (signature == 0xA000000Bu && new Guid(original.Slice(position + 8, 16)) == UsersFilesKnownFolder)
+                        profileKnownAlias = true;
                 }
                 else if (signature is not (0xA0000003u or 0xA0000009u)) return false;
                 position += checked((int)size);
             }
-            if (position + 4 != original.Length) return false;
+            if (position + 4 != original.Length || profileSpecialAlias && !profileKnownAlias) return false;
             string? target = idTarget;
             if ((flags & 2) != 0)
             {
@@ -277,31 +284,83 @@ public static class SteamConfigurationRepair
         return new(output);
     }
 
-    // Only ordinary Computer -> local drive -> filesystem item PIDLs reach the Windows path reader.
-    // No ShellLink Resolve, icon lookup, custom namespace item, or executable is invoked.
+    // Accept ordinary Computer -> local drive -> filesystem items, or the specific Windows
+    // UsersFiles alias for the current profile and its filesystem delegate. Other namespaces
+    // never reach the native path reader. No ShellLink Resolve, icon lookup or execution occurs.
     private static bool TryReadLocalIdList(ReadOnlySpan<byte> list, out string path, int minimumItems = 3)
     {
         path = "";
-        int position = 0, count = 0;
+        int position = 0, count = 0, profileRootLength = 0;
+        bool profile = false;
         while (position + 2 <= list.Length)
         {
             int itemSize = BinaryPrimitives.ReadUInt16LittleEndian(list.Slice(position, 2));
-            if (itemSize == 0) { if (position + 2 != list.Length || count < minimumItems) return false; break; }
+            if (itemSize == 0)
+            {
+                int required = profile && minimumItems == 3 ? 2 : minimumItems;
+                if (position + 2 != list.Length || count < required) return false;
+                break;
+            }
             if (itemSize < 3 || itemSize > list.Length - position || count >= 128) return false;
             ReadOnlySpan<byte> item = list.Slice(position, itemSize);
             if (count == 0)
             {
-                if (itemSize != 20 || item[2] != 0x1f || !item.Slice(4, 16).SequenceEqual(new Guid("20d04fe0-3aea-1069-a2d8-08002b30309d").ToByteArray())) return false;
+                if (IsUsersFilesRootItem(item)) { profile = true; profileRootLength = itemSize; }
+                else if (itemSize != 20 || item[2] != 0x1f || !item.Slice(4, 16).SequenceEqual(new Guid("20d04fe0-3aea-1069-a2d8-08002b30309d").ToByteArray())) return false;
             }
-            else if (count == 1)
+            else if (count == 1 && !profile)
             {
                 if (itemSize < 7 || item[2] != 0x2f || !char.IsAsciiLetter((char)item[3]) || item[4] != ':' || item[5] != '\\' || item[6] != 0 ||
                     new DriveInfo(((char)item[3]) + ":\\").DriveType == DriveType.Network) return false;
             }
+            else if (profile && count == 1 && item[2] == 0x74)
+            { if (!IsUsersFilesFileSystemDelegate(item)) return false; }
             else if ((item[2] & 0x70) != 0x30 || itemSize < 14) return false;
             position += itemSize; count++;
         }
         if (position + 2 != list.Length) return false;
+        if (profile && !CurrentProfilePrefixMatches(list, profileRootLength)) return false;
+        if (!TryReadNativeLocalPath(list, out path)) return false;
+        return !profile || ContentDiscovery.IsWithin(path, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    }
+
+    private static bool IsUsersFilesRootItem(ReadOnlySpan<byte> item) =>
+        item.Length is 20 or 58 && item[2] == 0x1f && new Guid(item.Slice(4, 16)) == UsersFilesRoot &&
+        (item.Length == 20 || BinaryPrimitives.ReadUInt16LittleEndian(item.Slice(20, 2)) == 38 &&
+            BinaryPrimitives.ReadUInt16LittleEndian(item.Slice(22, 2)) == 1 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(item.Slice(24, 4)) == 0xBEEF0026 &&
+            BinaryPrimitives.ReadUInt16LittleEndian(item.Slice(56, 2)) == 20);
+
+    private static bool IsUsersFilesFileSystemDelegate(ReadOnlySpan<byte> item)
+    {
+        if (item.Length < 70 || item[2] != 0x74 || item[3] != 0 || !item.Slice(6, 4).SequenceEqual("CFSF"u8)) return false;
+        int inner = BinaryPrimitives.ReadUInt16LittleEndian(item.Slice(4, 2));
+        int fileBytes = BinaryPrimitives.ReadUInt16LittleEndian(item.Slice(10, 2));
+        int classOffset = 6 + inner, extensionOffset = classOffset + 32;
+        if (inner != fileBytes + 6 || fileBytes < 14 || extensionOffset > item.Length - 10 ||
+            (item[12] & 0x70) != 0x30 ||
+            new Guid(item.Slice(classOffset, 16)) != new Guid("5e591a74-df96-48d3-8d67-1733bcee28ba") ||
+            new Guid(item.Slice(classOffset + 16, 16)) != new Guid("dffacdc5-679f-4156-8947-c5c76bc0b67f")) return false;
+        int extensionBytes = BinaryPrimitives.ReadUInt16LittleEndian(item.Slice(extensionOffset, 2));
+        ushort version = BinaryPrimitives.ReadUInt16LittleEndian(item.Slice(extensionOffset + 2, 2));
+        return extensionBytes >= 10 && extensionOffset + extensionBytes == item.Length && version is 3 or 7 or 8 or 9 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(item.Slice(extensionOffset + 4, 4)) == 0xBEEF0004 &&
+            BinaryPrimitives.ReadUInt16LittleEndian(item[^2..]) == extensionOffset;
+    }
+
+    private static bool CurrentProfilePrefixMatches(ReadOnlySpan<byte> list, int offset)
+    {
+        if (list.Length < 22 || offset != BinaryPrimitives.ReadUInt16LittleEndian(list[..2]) || offset > list.Length - 2 ||
+            !IsUsersFilesRootItem(list[..offset])) return false;
+        byte[] prefix = [.. list[..offset], 0, 0];
+        string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return ContentDiscovery.IsLocalSafePath(profile) && TryReadNativeLocalPath(prefix, out string original) &&
+            Path.TrimEndingDirectorySeparator(original).Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(profile)), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryReadNativeLocalPath(ReadOnlySpan<byte> list, out string path)
+    {
+        path = "";
         IntPtr pidl = Marshal.AllocCoTaskMem(list.Length);
         try
         {
@@ -321,19 +380,25 @@ public static class SteamConfigurationRepair
         {
             if (block.Length != 16) return false;
             uint folderId = BinaryPrimitives.ReadUInt32LittleEndian(block.Slice(8, 4));
+            offset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(block.Slice(12, 4)));
+            // Windows uses -1 for this virtual alias. It is accepted only with the exact
+            // current-profile prefix and a matching UsersFiles KnownFolder block in the caller.
+            if (folderId == uint.MaxValue) return CurrentProfilePrefixMatches(idList, offset);
             if (folderId > 0x3f) return false;
             StringBuilder buffer = new(32768);
             if (SHGetFolderPath(IntPtr.Zero, (int)folderId | 0x4000, IntPtr.Zero, 0, buffer) != 0) return false;
-            folder = buffer.ToString(); offset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(block.Slice(12, 4)));
+            folder = buffer.ToString();
         }
         else
         {
             if (block.Length != 28) return false;
             Guid folderId = new(block.Slice(8, 16));
+            offset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(block.Slice(24, 4)));
+            // UsersFiles is virtual; SHGetKnownFolderPath is not its physical profile path.
+            if (folderId == UsersFilesKnownFolder) return CurrentProfilePrefixMatches(idList, offset);
             int result = SHGetKnownFolderPath(ref folderId, 0x4000, IntPtr.Zero, out IntPtr buffer);
             try { if (result != 0) return false; folder = Marshal.PtrToStringUni(buffer) ?? ""; }
             finally { if (buffer != IntPtr.Zero) Marshal.FreeCoTaskMem(buffer); }
-            offset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(block.Slice(24, 4)));
         }
         if (offset <= 0 || offset > idList.Length - 2 || !ContentDiscovery.IsLocalSafePath(folder)) return false;
         byte[] prefix = [.. idList.AsSpan(0, offset), 0, 0];

@@ -101,6 +101,7 @@ internal static partial class Program
         CreateSteamConfigSystemShortcut(knownShortcutPath, Path.Combine(knownRoot, "steam.exe"), "-silent -cef-enable-debugging");
         byte[] knownShortcut = await File.ReadAllBytesAsync(knownShortcutPath);
         Check("Steam系统生成的ProgramFiles已知目录快捷方式可精确修复", SteamConfigurationRepair.TryRepairShortcut(knownShortcut, knownLayout, out _, out _));
+        await TestSteamConfigurationOsTempShortcutAsync();
 
         string path = Path.Combine(directory, "steam.cfg"); byte[] original = Encoding.UTF8.GetBytes(cfg);
         await File.WriteAllBytesAsync(path, original);
@@ -204,6 +205,91 @@ internal static partial class Program
         {
             if (shortcut is not null) Marshal.FinalReleaseComObject(shortcut);
             Marshal.FinalReleaseComObject(shell);
+        }
+    }
+
+    private static async Task TestSteamConfigurationOsTempShortcutAsync()
+    {
+        // Always exercise the real OS Temp location even when the targeted suite root is on
+        // another drive. Windows encodes a current-profile alias differently from MyComputer.
+        string temporaryRoot = Path.Combine(Path.GetTempPath(), "SteamSentinel-SelfTest-" + Guid.NewGuid().ToString("N"));
+        string steamRoot = Path.Combine(temporaryRoot, "steam-config-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(steamRoot);
+        string target = Path.Combine(steamRoot, "steam.exe"), path = Path.Combine(steamRoot, "system-created-steam.lnk");
+        try
+        {
+            await File.WriteAllTextAsync(target, "inert OS Temp fixture; never executed");
+            CreateSteamConfigSystemShortcut(path, target, "-silent -cef-enable-debugging -language english");
+            byte[] original = await File.ReadAllBytesAsync(path);
+            SteamLayout layout = new(); layout.SteamRoots.Add(steamRoot);
+            Check("Steam真实OS临时目录快捷方式可精确修复", SteamConfigurationRepair.TryRepairShortcut(original, layout, out byte[] repaired, out string executable) &&
+                executable == target && repaired.Length == original.Length && !SteamConfigurationRepair.HasDebugShortcutArguments(repaired));
+            ScanReport report = new();
+            await SteamSecurityScanner.ScanSteamConfigurationFileAsync(path, SteamConfigurationRepair.Shortcut, report, CancellationToken.None, layout);
+            Finding finding = report.Findings.Single();
+            Check("Steam真实OS临时目录快捷方式从扫描到计划可准备", finding.CanRemediate &&
+                (await new RemediationPlanBuilder(new(), layout).BuildAsync([finding], false)).Actions.Single().Type == RemediationActionType.RepairSteamConfiguration);
+
+            int idLength = BitConverter.ToUInt16(original, 76), rootLength = BitConverter.ToUInt16(original, 78);
+            if ((BitConverter.ToUInt32(original, 20) & 1) != 0 && rootLength >= 20 &&
+                new Guid(original.AsSpan(82, 16)) == new Guid("59031a47-3f72-44a7-89c5-5595fe6b30ee"))
+            {
+                byte[] unknownRoot = original.ToArray(); unknownRoot[82] ^= 1;
+                Check("SteamProfile别名拒绝未知namespace根", !SteamConfigurationRepair.TryRepairShortcut(unknownRoot, layout, out _, out _));
+                int child = 78 + rootLength;
+                if (original[child + 2] == 0x74)
+                {
+                    int classOffset = child + 6 + BitConverter.ToUInt16(original, child + 4);
+                    byte[] badClass = original.ToArray(); badClass[classOffset] ^= 1;
+                    byte[] badFolder = original.ToArray(); badFolder[classOffset + 16] ^= 1;
+                    byte[] badLength = original.ToArray(); badLength[child + 4] ^= 1;
+                    Check("SteamProfile别名拒绝替换delegate类别GUID", !SteamConfigurationRepair.TryRepairShortcut(badClass, layout, out _, out _));
+                    Check("SteamProfile别名拒绝非filesystem委托GUID", !SteamConfigurationRepair.TryRepairShortcut(badFolder, layout, out _, out _));
+                    Check("SteamProfile别名拒绝委托内部长度不一致", !SteamConfigurationRepair.TryRepairShortcut(badLength, layout, out _, out _));
+                }
+                int extra = 78 + idLength;
+                uint flags = BitConverter.ToUInt32(original, 20);
+                if ((flags & 2) != 0) extra += checked((int)BitConverter.ToUInt32(original, extra));
+                foreach (uint flag in new uint[] { 4, 8, 16, 32, 64 })
+                    if ((flags & flag) != 0) extra += 2 + BitConverter.ToUInt16(original, extra) * ((flags & 128) != 0 ? 2 : 1);
+                int special = -1, known = -1;
+                for (int cursor = extra; cursor + 8 <= original.Length;)
+                {
+                    int size = checked((int)BitConverter.ToUInt32(original, cursor));
+                    if (size == 0) break;
+                    uint signature = BitConverter.ToUInt32(original, cursor + 4);
+                    if (signature == 0xA0000005) special = cursor;
+                    if (signature == 0xA000000B) known = cursor;
+                    cursor += size;
+                }
+                if (known >= 0)
+                {
+                    byte[] wrongFolder = original.ToArray();
+                    new Guid("fdd39ad0-238f-46af-adb4-6c85480369c7").ToByteArray().CopyTo(wrongFolder, known + 8);
+                    byte[] wrongOffset = original.ToArray(); wrongOffset[known + 24] ^= 1;
+                    Check("SteamProfile别名拒绝不一致KnownFolder", !SteamConfigurationRepair.TryRepairShortcut(wrongFolder, layout, out _, out _));
+                    Check("SteamProfile别名拒绝KnownFolder非边界offset", !SteamConfigurationRepair.TryRepairShortcut(wrongOffset, layout, out _, out _));
+                    if (special >= 0 && BitConverter.ToUInt32(original, special + 8) == uint.MaxValue)
+                    {
+                        byte[] missingPair = [.. original.AsSpan(0, known), .. original.AsSpan(known + checked((int)BitConverter.ToUInt32(original, known)))];
+                        byte[] wrongSpecial = original.ToArray(); wrongSpecial[special + 12] ^= 1;
+                        Check("SteamProfile虚拟SpecialFolder必须有精确KnownFolder配对", !SteamConfigurationRepair.TryRepairShortcut(missingPair, layout, out _, out _));
+                        Check("SteamProfile虚拟SpecialFolder拒绝非根offset", !SteamConfigurationRepair.TryRepairShortcut(wrongSpecial, layout, out _, out _));
+                    }
+                }
+                byte[] conflictingLinkInfo = SteamConfigShortcutFixture(Path.Combine(steamRoot, "other.exe"), "-cef-enable-debugging");
+                conflictingLinkInfo[20] |= 1;
+                byte[] conflicting = [.. conflictingLinkInfo.AsSpan(0, 76), .. original.AsSpan(76, idLength + 2), .. conflictingLinkInfo.AsSpan(76)];
+                Check("SteamProfile别名拒绝PIDL和本地LinkInfo目标冲突", !SteamConfigurationRepair.TryRepairShortcut(conflicting, layout, out _, out _));
+            }
+        }
+        finally
+        {
+            // Only the two exact files created above are removed; no recursive directory operation.
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(target)) File.Delete(target);
+            Directory.Delete(steamRoot);
+            Directory.Delete(temporaryRoot);
         }
     }
 
