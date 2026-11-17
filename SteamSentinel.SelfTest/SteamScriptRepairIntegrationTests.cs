@@ -32,9 +32,16 @@ internal static partial class Program
         RuleSet rules = new() { KnownHashes = [new() { Id = SteamAlertInstallation.ResidentRule, Sha256 = residentHash, Malware = true }] };
         Finding source = new()
         {
-            RuleId = SteamAlertInstallation.ResidentRule, Category = FindingCategory.File, Target = resident,
-            Sha256 = residentHash, TargetSha256 = residentHash, IsKnownMalware = true, CanRemediate = true,
-            Severity = FindingSeverity.Critical, Score = 100, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            RuleId = SteamAlertInstallation.ResidentRule,
+            Category = FindingCategory.File,
+            Target = resident,
+            Sha256 = residentHash,
+            TargetSha256 = residentHash,
+            IsKnownMalware = true,
+            CanRemediate = true,
+            Severity = FindingSeverity.Critical,
+            Score = 100,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         ScanReport report = new() { Findings = [source] };
         await new SteamSecurityScanner(rules).ScanAsync(layout, report);

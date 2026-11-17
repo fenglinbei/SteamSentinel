@@ -64,9 +64,15 @@ internal static partial class Program
         await File.WriteAllBytesAsync(resident, residentBytes);
         Finding source = new()
         {
-            RuleId = SteamAlertInstallation.ResidentRule, Category = FindingCategory.File, Target = resident,
-            Sha256 = residentHash, TargetSha256 = residentHash, IsKnownMalware = true, CanRemediate = true,
-            Score = 100, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            RuleId = SteamAlertInstallation.ResidentRule,
+            Category = FindingCategory.File,
+            Target = resident,
+            Sha256 = residentHash,
+            TargetSha256 = residentHash,
+            IsKnownMalware = true,
+            CanRemediate = true,
+            Score = 100,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         ScanReport sourceReport = new() { Findings = [source, .. findings] };
         RemediationBatchSession sourceOnly = await planner.PrepareAsync([source], sourceReport, false);
@@ -106,7 +112,9 @@ internal static partial class Program
                 VerificationStatus = RemediationVerificationStatus.ResidualDetected,
                 Actions = plan.Actions.Select(action => new RemediationActionResult
                 {
-                    ActionId = action.ActionId, Type = action.Type, Target = action.Target,
+                    ActionId = action.ActionId,
+                    Type = action.Type,
+                    Target = action.Target,
                     Success = false,
                     ExecutionStatus = action.Type == RemediationActionType.RepairSteamScript
                         ? RemediationExecutionStatus.SkippedDependency : RemediationExecutionStatus.Failed,

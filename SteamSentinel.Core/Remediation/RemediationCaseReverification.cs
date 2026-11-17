@@ -147,7 +147,8 @@ public sealed class RemediationCaseReverification(
                         state = RemediationVerificationStatus.Reappeared;
                     MessageText message = (state == RemediationVerificationStatus.Reappeared
                         ? MessageText.Create("Backend.Core.RemediationCaseReverification.RecheckAsync.28") : (MessageText)"") + observation.MessageText;
-                    if (item.Action.Type is RemediationActionType.StopProcess or RemediationActionType.StopHostProcess)
+                    if (item.Action.Type is RemediationActionType.StopProcess or RemediationActionType.StopHostProcess &&
+                        !SteamAlertWatchdogStateProbe.IsFamilyTargetAction(item.Action))
                         message += MessageText.Create("Backend.Core.RemediationCaseReverification.RecheckAsync.29");
                     AddTarget(episode, item.Plan, item.Action, run, executed, state, message);
                 }
@@ -249,6 +250,7 @@ public sealed class RemediationCaseReverification(
             IncidentId = run?.IncidentId,
             Type = action.Type,
             Target = action.Target,
+            ReenumeratedBoundInstances = SteamAlertWatchdogStateProbe.IsFamilyTargetAction(action),
             ExecutionSucceeded = run?.Success == true &&
             run.Disposition is not (RemediationRunDisposition.NotStarted or RemediationRunDisposition.ExecutionUnknown) &&
             result?.Success == true && result.ExecutionStatus == RemediationExecutionStatus.Succeeded,

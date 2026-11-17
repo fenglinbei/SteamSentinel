@@ -20,30 +20,36 @@ internal static class UserRiskCompanions
             (RegistryHive.LocalMachine, RegistryView.Registry32),
             (RegistryHive.LocalMachine, RegistryView.Registry64)
         })
-        foreach (string keyName in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
-        {
-            token.ThrowIfCancellationRequested();
-            using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
-            using RegistryKey? key = baseKey.OpenSubKey(keyName);
-            if (key is null) continue;
-            foreach (string name in key.GetValueNames())
+            foreach (string keyName in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
             {
-                if (key.GetValueKind(name) is not (RegistryValueKind.String or RegistryValueKind.ExpandString) ||
-                    key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string command ||
-                    !BoundContentEvidence.IsDirectInvocation(command, file.Target)) continue;
-                actions.Add(new()
+                token.ThrowIfCancellationRequested();
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
+                using RegistryKey? key = baseKey.OpenSubKey(keyName);
+                if (key is null) continue;
+                foreach (string name in key.GetValueNames())
                 {
-                    Type = RemediationActionType.RemoveRegistryValue, UserSelectedRisk = true,
-                    Target = command, ExpectedValueData = command,
-                    RegistryHive = hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM", RegistryView = view.ToString(),
-                    RegistryKey = keyName, RegistryValueName = name, RelatedFilePath = file.Target,
-                    RelatedFileSha256 = file.ExpectedSha256, ExpectedFileIdentity = file.ExpectedFileIdentity,
-                    ExpectedParentIdentity = file.ExpectedParentIdentity,
-                    DisplayNameText = MessageText.Create("Remediation.Mode.RemoveSelectedStartup", name),
-                    ConfidenceScore = file.ConfidenceScore
-                });
+                    if (key.GetValueKind(name) is not (RegistryValueKind.String or RegistryValueKind.ExpandString) ||
+                        key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string command ||
+                        !BoundContentEvidence.IsDirectInvocation(command, file.Target)) continue;
+                    actions.Add(new()
+                    {
+                        Type = RemediationActionType.RemoveRegistryValue,
+                        UserSelectedRisk = true,
+                        Target = command,
+                        ExpectedValueData = command,
+                        RegistryHive = hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM",
+                        RegistryView = view.ToString(),
+                        RegistryKey = keyName,
+                        RegistryValueName = name,
+                        RelatedFilePath = file.Target,
+                        RelatedFileSha256 = file.ExpectedSha256,
+                        ExpectedFileIdentity = file.ExpectedFileIdentity,
+                        ExpectedParentIdentity = file.ExpectedParentIdentity,
+                        DisplayNameText = MessageText.Create("Remediation.Mode.RemoveSelectedStartup", name),
+                        ConfidenceScore = file.ConfidenceScore
+                    });
+                }
             }
-        }
         if (!Path.GetExtension(file.Target).Equals(".exe", StringComparison.OrdinalIgnoreCase)) return actions;
         Process[] candidates = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(file.Target));
         try
@@ -59,11 +65,16 @@ internal static class UserRiskCompanions
                 catch (Win32Exception) { continue; }
                 actions.Add(new()
                 {
-                    Type = RemediationActionType.StopProcess, UserSelectedRisk = true, Target = file.Target,
-                    ExpectedSha256 = file.ExpectedSha256, ExpectedFileIdentity = file.ExpectedFileIdentity,
+                    Type = RemediationActionType.StopProcess,
+                    UserSelectedRisk = true,
+                    Target = file.Target,
+                    ExpectedSha256 = file.ExpectedSha256,
+                    ExpectedFileIdentity = file.ExpectedFileIdentity,
                     ExpectedParentIdentity = file.ExpectedParentIdentity,
-                    ProcessId = observation.ProcessId, ProcessStartedAtUtc = observation.StartedAtUtc,
-                    RelatedFilePath = file.Target, RelatedFileSha256 = file.ExpectedSha256,
+                    ProcessId = observation.ProcessId,
+                    ProcessStartedAtUtc = observation.StartedAtUtc,
+                    RelatedFilePath = file.Target,
+                    RelatedFileSha256 = file.ExpectedSha256,
                     DisplayNameText = MessageText.Create("Remediation.Mode.StopSelectedProcess", observation.ProcessId),
                     ConfidenceScore = file.ConfidenceScore
                 });

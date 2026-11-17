@@ -15,7 +15,7 @@ public sealed record SteamScriptRepairSnapshot(string OriginalSha256, string Rep
 public static class SteamScriptRepairTarget
 {
     public static HashSet<string> SourceHashes(RuleSet rules) => rules.KnownHashes
-        .Where(rule => rule.Malware && rule.Id is SteamAlertInstallation.LoaderRule or SteamAlertInstallation.ResidentRule)
+        .Where(rule => rule.Malware && (SteamAlertInstallation.FamilyRole(rule.Id) is not null || SteamAlertWatchdog.IsFamilyHash(rule.Sha256)))
         .Select(rule => rule.Sha256).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     public static void AddSourceDependencies(IReadOnlyList<RemediationAction> actions, RuleSet rules)

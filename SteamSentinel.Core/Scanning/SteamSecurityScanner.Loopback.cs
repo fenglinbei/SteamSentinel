@@ -60,13 +60,17 @@ public sealed partial class SteamSecurityScanner
                 (ContentDiscovery.IsWithin(finding.Target, Path.Combine(steam, "steamui")) ||
                  ContentDiscovery.IsWithin(finding.Target, Path.Combine(steam, "clientui")))) scripts.Add((i, finding));
         }
-        if (scripts.Count == 0 || !report.Findings.Any(f => f.RuleId == SteamAlertInstallation.ResidentRule)) return;
-        HashRule? rule = (rules ?? RuleLoader.LoadEmbedded()).KnownHashes.FirstOrDefault(
-            entry => entry.Id == SteamAlertInstallation.ResidentRule && entry.Malware && Validation.IsHexSha256(entry.Sha256));
-        if (rule is null) return;
+        if (scripts.Count == 0 || !report.Findings.Any(f =>
+            f.RuleId is SteamAlertInstallation.ResidentRule or SteamAlertInstallation.UpdatedResidentRule)) return;
+        Dictionary<string, HashRule> residentsByHash = (rules ?? RuleLoader.LoadEmbedded()).KnownHashes.Where(
+            entry => entry.Id is SteamAlertInstallation.ResidentRule or SteamAlertInstallation.UpdatedResidentRule &&
+                entry.Malware && Validation.IsHexSha256(entry.Sha256))
+            .ToDictionary(entry => entry.Sha256, StringComparer.OrdinalIgnoreCase);
+        if (residentsByHash.Count == 0) return;
         string root = localAppData is null ? SteamAlertInstallation.ResidentDirectory : Path.Combine(localAppData, "SteamAlertDemo");
         string prefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
-        IEnumerable<string> residents = report.Findings.Where(finding =>
+        IEnumerable<(string Path, string Hash)> residents = report.Findings.Where(finding =>
+            finding.Sha256 is { } hash && residentsByHash.TryGetValue(hash, out HashRule? rule) &&
             finding.RuleId == rule.Id && finding.IsKnownMalware && finding.Category is FindingCategory.File or FindingCategory.Process &&
             finding.RelatedFilePath is null && finding.Target.Length > prefix.Length &&
             finding.Target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
@@ -74,9 +78,9 @@ public sealed partial class SteamSecurityScanner
             (finding.ContentPath is null || string.Equals(finding.ContentPath, finding.Target, StringComparison.OrdinalIgnoreCase)) &&
             (finding.TargetSha256 is null || string.Equals(finding.TargetSha256, rule.Sha256, StringComparison.OrdinalIgnoreCase)) &&
             string.Equals(finding.Sha256, rule.Sha256, StringComparison.OrdinalIgnoreCase))
-            .Select(finding => finding.Target).Distinct(StringComparer.OrdinalIgnoreCase).Take(4);
+            .Select(finding => (Path: finding.Target, Hash: finding.Sha256!)).DistinctBy(item => item.Path, StringComparer.OrdinalIgnoreCase).Take(4);
         long remaining = MaximumCorrelationBytes;
-        string? resident = residents.FirstOrDefault(path => VerifyCurrentHash(path, rule.Sha256, 8 * 1024 * 1024, ref remaining));
+        string? resident = residents.FirstOrDefault(item => VerifyCurrentHash(item.Path, item.Hash, 8 * 1024 * 1024, ref remaining)).Path;
         if (resident is null) return;
 
         Dictionary<string, bool> checks = new(StringComparer.OrdinalIgnoreCase);

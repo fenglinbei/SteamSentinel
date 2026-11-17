@@ -28,8 +28,9 @@ public partial class MainWindow
     private void UpdateRemediationEligibility()
     {
         if (RemediateButton is null || SelectAllButton is null || Findings is null) return;
-        FindingHandlingCounts counts = FindingHandlingPresentation.Count(Findings.Select(item => item.Handling));
-        bool available = counts.SelectableCount > 0;
+        FindingHandlingCounts counts = FindingHandlingPresentation.Count(VisibleRemediationFindings.Select(item => item.Handling));
+        FindingHandlingCounts priorityCounts = FindingHandlingPresentation.Count(Findings.Where(item => !item.IsReference).Select(item => item.Handling));
+        bool available = priorityCounts.SelectableCount > 0;
         RemediationAvailability availability = GetRemediationAvailability(counts);
         RemediateButton.IsEnabled = availability.CanRemediate;
         RemediateButton.ToolTip = availability.State == RemediationAvailabilityState.InstallationUnavailable
@@ -38,15 +39,15 @@ public partial class MainWindow
             : RemediationAvailabilityText(availability.State);
         UpdateRemediationAvailabilityPresentation(availability);
         SelectAllButton.IsEnabled = !_busy && !_reportNeedsRefresh && available;
-        SelectAllButton.ToolTip = !available ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.08") + (counts.AttentionCount > 0 ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.09") : DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.10"))
+        SelectAllButton.ToolTip = !available ? DisplayText.Get("FindingPriority.NoSelectablePriority")
             : _busy ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.11")
-            : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.12") : DisplayText.Format("Ui.TrustProxy.UpdateRemediationEligibility.13", (counts.SelectableCount));
+            : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.12") : DisplayText.Format("Ui.TrustProxy.UpdateRemediationEligibility.13", (priorityCounts.SelectableCount));
     }
 
     private void UpdateFindingActions()
     {
         if (ReviewFindingButton is null || OccupancyButton is null || FindingsGrid is null) return;
-        FindingItemViewModel? item = FindingsGrid.SelectedItem as FindingItemViewModel;
+        FindingItemViewModel? item = SelectedFinding;
         bool diagnostic = item?.IsTrustProxyFinding == true;
         bool related = item is not null && RelatedComponentReportPresentation.IsRelatedFinding(item.Finding);
         bool relatedFileAvailable = !related || GetRelatedFindingReviewTargets(item!.Finding).Count > 0;

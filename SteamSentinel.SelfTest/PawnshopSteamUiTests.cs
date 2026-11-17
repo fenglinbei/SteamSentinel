@@ -113,6 +113,39 @@ internal static partial class Program
             correlated.SuggestedActions.SequenceEqual([SuggestedActionKind.ReviewOnly]) &&
             report.Findings.Single(f => f.RuleId == exact.RuleId && f.Target != chunk).Severity == FindingSeverity.Low &&
             await RejectsPlanAsync([correlated]));
+        string rebuilt = Path.Combine(local, "SteamAlertDemo", "361.exe");
+        await File.WriteAllTextAsync(rebuilt, "Inert rebuilt resident fixture. Never executed.");
+        string rebuiltHash = await Hashing.Sha256FileAsync(rebuilt);
+        family.KnownHashes.Add(new() { Id = SteamAlertInstallation.UpdatedResidentRule, Sha256 = rebuiltHash, Malware = true });
+        Finding rebuiltProof = new()
+        {
+            RuleId = SteamAlertInstallation.UpdatedResidentRule,
+            Category = FindingCategory.File,
+            IsKnownMalware = true,
+            Sha256 = rebuiltHash,
+            TargetSha256 = rebuiltHash,
+            Target = rebuilt,
+            ContentPath = rebuilt
+        };
+        ScanReport rebuiltReport = new() { Findings = [exact, rebuiltProof] };
+        SteamSecurityScanner.CorrelateLoopbackScripts(rebuiltReport, family, local);
+        Check("SteamAlert rebuilt resident corroborates the endpoint alongside the original exact rule",
+            rebuiltReport.Findings[0].ReasonCode == "SteamAlertResidentCorrelated" &&
+            !rebuiltReport.Findings[0].CanRemediate && !rebuiltReport.Findings[0].IsKnownMalware);
+        Finding wrongRule = new()
+        {
+            RuleId = SteamAlertInstallation.UpdatedResidentRule,
+            Category = FindingCategory.File,
+            IsKnownMalware = true,
+            Sha256 = hash,
+            TargetSha256 = hash,
+            Target = resident,
+            ContentPath = resident
+        };
+        ScanReport mismatchedRule = new() { Findings = [exact, wrongRule] };
+        SteamSecurityScanner.CorrelateLoopbackScripts(mismatchedRule, family, local);
+        Check("SteamAlert correlation requires the exact resident rule and hash pair",
+            ReferenceEquals(mismatchedRule.Findings[0], exact));
         await File.WriteAllTextAsync(chunk, "/* Repaired inert Steam chunk. */");
         ScanReport repaired = new() { Findings = [exact, proof] };
         SteamSecurityScanner.CorrelateLoopbackScripts(repaired, family, local);

@@ -10,13 +10,35 @@ public static class SteamAlertInstallation
 {
     public const string LoaderRule = "STEAMALERT-MOD-LOADER";
     public const string ResidentRule = "STEAMALERT-RESIDENT";
+    public const string UpdatedResidentRule = "STEAMALERT-RESIDENT-20261117";
     public static string ResidentDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamAlertDemo");
+    public static string UpdaterDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "SteamAlertUpdater");
+
+    internal static readonly string[] FamilyRoles = [LoaderRule, ResidentRule,
+        SteamAlertWatchdog.WatchdogRole, SteamAlertWatchdog.UpdaterRole, SteamAlertWatchdog.LauncherRole];
+
+    internal static string? FamilyRole(string ruleId) => ruleId switch
+    {
+        LoaderRule => LoaderRule,
+        ResidentRule or UpdatedResidentRule or SteamAlertEmbeddedEvidence.RuleId => ResidentRule,
+        SteamAlertWatchdog.WatchdogRole or "STEAMALERT-WATCHDOG-NOBOM" => SteamAlertWatchdog.WatchdogRole,
+        SteamAlertWatchdog.UpdaterRole or "STEAMALERT-UPDATER-NOBOM" => SteamAlertWatchdog.UpdaterRole,
+        SteamAlertWatchdog.LauncherRole or "STEAMALERT-LAUNCHER-NOBOM" => SteamAlertWatchdog.LauncherRole,
+        _ => null
+    };
+
+    public static IEnumerable<string> UpdaterDirectories(string residentDirectory, string? updaterDirectory = null)
+    {
+        yield return updaterDirectory ?? UpdaterDirectory;
+        yield return Path.Combine(residentDirectory, "Updater");
+    }
 
     // Match a physical file, never the identity of a member inside an archive.
     internal static bool IsFamilyFile(Finding finding, IReadOnlyDictionary<string, HashRule> known)
     {
-        bool knownFamily = finding.RuleId is LoaderRule or ResidentRule && finding.Sha256 is { } knownHash &&
+        bool knownFamily = FamilyRole(finding.RuleId) is not null && finding.Sha256 is { } knownHash &&
             known.TryGetValue(knownHash, out HashRule? rule) && rule.Malware && rule.Id == finding.RuleId;
         bool embedded = finding.RuleId == SteamAlertEmbeddedEvidence.RuleId && finding.ReasonCode == SteamAlertEmbeddedEvidence.ReasonCode &&
             Validation.IsHexSha256(finding.Sha256);
@@ -29,17 +51,22 @@ public static class SteamAlertInstallation
     }
 
     internal static IEnumerable<Finding> InstalledPeers(IEnumerable<Finding> findings, IReadOnlyDictionary<string, HashRule> known,
-        SteamLayout layout, string residentDirectory) =>
-        findings.Where(f => IsFamilyFile(f, known) && IsInstalled(f.RuleId, f.Target, layout, residentDirectory));
+        SteamLayout layout, string residentDirectory, string? updaterDirectory = null) =>
+        findings.Where(f => IsFamilyFile(f, known) && IsInstalled(f.RuleId, f.Target, layout, residentDirectory, updaterDirectory));
 
     // The system-only phase may finish before Workshop scanning. These paths are probes:
-    // only the exact opposite component hash can add an action to the preview.
-    public static IEnumerable<string> ProbePaths(string targetRole, SteamLayout layout, string residentDirectory)
+    // only a verified family component identity can add an action to the preview.
+    public static IEnumerable<string> ProbePaths(string targetRole, SteamLayout layout, string residentDirectory, string? updaterDirectory = null)
     {
         if (targetRole == ResidentRule)
         {
             yield return Path.Combine(residentDirectory, "Application Frame Host.exe");
             yield return Path.Combine(residentDirectory, "361.exe");
+            yield return Path.Combine(residentDirectory, "Application Frame Host.new.exe");
+            yield return Path.Combine(residentDirectory, "Application Frame Host.exe.old");
+            yield return Path.Combine(residentDirectory, "Application Frame Host.exe.bak");
+            foreach (string directory in UpdaterDirectories(residentDirectory, updaterDirectory))
+                yield return Path.Combine(directory, "cache", "new.exe");
         }
         else if (targetRole == LoaderRule)
         {
@@ -50,31 +77,49 @@ public static class SteamAlertInstallation
                 yield return Path.Combine(root, "3835252991", "PWLoader.dll");
             }
         }
+        else
+        {
+            string[] names = targetRole switch
+            {
+                SteamAlertWatchdog.WatchdogRole => ["sa_watch.ps1"],
+                SteamAlertWatchdog.UpdaterRole => ["sa_updater.ps1", "update.ps1"],
+                SteamAlertWatchdog.LauncherRole => ["sa_launch.ps1"],
+                _ => []
+            };
+            foreach (string directory in UpdaterDirectories(residentDirectory, updaterDirectory))
+                foreach (string name in names) yield return Path.Combine(directory, name);
+        }
     }
 
     internal static string? InstalledSeedRole(Finding finding, IReadOnlyDictionary<string, HashRule> known)
     {
-        if (IsFamilyFile(finding, known)) return finding.RuleId == SteamAlertEmbeddedEvidence.RuleId ? ResidentRule : finding.RuleId;
+        if (IsFamilyFile(finding, known)) return FamilyRole(finding.RuleId);
         if (finding.Category is not (FindingCategory.Persistence or FindingCategory.Process) ||
             !RemediationEvidencePolicy.CanRemediate(finding)) return null;
-        bool directProcess = finding.Category == FindingCategory.Process && finding.RuleId == ResidentRule &&
+        bool directProcess = finding.Category == FindingCategory.Process && FamilyRole(finding.RuleId) is not null &&
             finding.ProcessId is not null && finding.RelatedFilePath is null;
         string? hash = directProcess ? finding.Sha256 : finding.RelatedFileSha256;
         string? path = directProcess ? finding.Target : finding.RelatedFilePath;
         if (finding.ReasonCode == SteamAlertEmbeddedEvidence.ReasonCode && path is not null && Validation.IsHexSha256(hash) &&
             ContentDiscovery.IsLocalSafePath(path)) return ResidentRule;
         return path is not null && hash is not null && known.TryGetValue(hash, out HashRule? rule) &&
-            rule.Malware && rule.Id == ResidentRule && ContentDiscovery.IsLocalSafePath(path) ? ResidentRule : null;
+            rule.Malware && ContentDiscovery.IsLocalSafePath(path) ? FamilyRole(rule.Id) : null;
     }
 
-    public static bool IsInstalled(string ruleId, string path, SteamLayout layout, string residentDirectory) => ruleId switch
-    {
-        ResidentRule => string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)), residentDirectory, StringComparison.OrdinalIgnoreCase),
-        SteamAlertEmbeddedEvidence.RuleId => IsInstalledResidentPath(path, residentDirectory),
-        LoaderRule => layout.ContentRoots.Any(root => root.Kind == "mod" && ContentDiscovery.IsWithin(path, root.Path)) ||
-            ContentDiscovery.IsWorkshopContentPath(path) && layout.WorkshopRoots.Any(root => ContentDiscovery.IsWithin(path, root)),
-        _ => false
-    };
+    public static bool IsInstalled(string ruleId, string path, SteamLayout layout, string residentDirectory,
+        string? updaterDirectory = null) => ruleId == SteamAlertEmbeddedEvidence.RuleId
+        ? IsInstalledResidentPath(path, residentDirectory) : FamilyRole(ruleId) switch
+        {
+            ResidentRule => IsInstalledResidentPath(path, residentDirectory) ||
+                ProbePaths(ResidentRule, layout, residentDirectory, updaterDirectory).Any(probe => RelatedArtifactRelations.SamePath(path, probe)),
+            SteamAlertWatchdog.WatchdogRole or SteamAlertWatchdog.UpdaterRole or SteamAlertWatchdog.LauncherRole =>
+                ContentDiscovery.IsLocalSafePath(path) && Path.GetExtension(path).Equals(".ps1", StringComparison.OrdinalIgnoreCase) &&
+                UpdaterDirectories(residentDirectory, updaterDirectory).Any(directory =>
+                    RelatedArtifactRelations.SamePath(Path.GetDirectoryName(Path.GetFullPath(path))!, directory)),
+            LoaderRule => layout.ContentRoots.Any(root => root.Kind == "mod" && ContentDiscovery.IsWithin(path, root.Path)) ||
+                ContentDiscovery.IsWorkshopContentPath(path) && layout.WorkshopRoots.Any(root => ContentDiscovery.IsWithin(path, root)),
+            _ => false
+        };
 
     public static bool IsInstalledResidentPath(string path, string residentDirectory) => ContentDiscovery.IsLocalSafePath(path) &&
         Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase) &&

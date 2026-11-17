@@ -24,10 +24,14 @@ public partial class MainWindow
         if (RemediationModeComboBox is null || FindingsGrid is null || _busy) return;
         RemediationModeComboBox.ToolTip = RemediationModePresentation.Description(CurrentRemediationMode);
         if (_lastReport is null) return;
-        string? selectedId = (FindingsGrid.SelectedItem as FindingItemViewModel)?.Finding.Id;
+        string? selectedId = SelectedFinding?.Finding.Id;
+        bool referenceExpanded = ReferenceFindingsExpander.IsExpanded;
         PopulateFindings(_lastReport);
         foreach (FindingItemViewModel item in Findings) item.IsSelected = false;
-        FindingsGrid.SelectedItem = Findings.FirstOrDefault(item => item.Finding.Id == selectedId) ?? Findings.FirstOrDefault();
+        ReferenceFindingsExpander.IsExpanded = referenceExpanded && ReferenceFindings.Count > 0;
+        FindingItemViewModel? selected = Findings.FirstOrDefault(item => item.Finding.Id == selectedId);
+        if (selected?.IsReference == true && ReferenceFindingsExpander.IsExpanded) ReferenceFindingsGrid.SelectedItem = selected;
+        else FindingsGrid.SelectedItem = PriorityFindings.FirstOrDefault(item => item.Finding.Id == selectedId) ?? PriorityFindings.FirstOrDefault();
         UpdateSummary(_lastReport);
         FooterText.Text = DisplayText.Get("RemediationMode.SelectionCleared");
     }
@@ -49,7 +53,7 @@ public partial class MainWindow
                 "SteamSentinel", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        Finding[] selected = Findings.Where(i => i.IsSelected && i.CanSelect).Select(i => i.Finding).ToArray();
+        Finding[] selected = VisibleRemediationFindings.Where(i => i.IsSelected && i.CanSelect).Select(i => i.Finding).ToArray();
         if (selected.Length == 0) { MessageBox.Show(this, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.03"), "SteamSentinel"); return; }
         if (selected.Any(f => f.Category == FindingCategory.Steam) && IsSteamRunning())
         { MessageBox.Show(this, DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.04"), DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.05")); return; }

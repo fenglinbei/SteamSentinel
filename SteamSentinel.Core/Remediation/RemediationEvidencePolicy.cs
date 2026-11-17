@@ -18,7 +18,7 @@ public static class RemediationEvidencePolicy
 
     public static bool IsReviewOnlyEvidence(Finding finding) =>
         IsBehaviorObservation(finding.RuleId) || finding.RuleId is "HEUR-STEAM-DEPLOYMENT-CHAIN" or "HEUR-SCRIPT-TOKEN-COOCCURRENCE" or
-            "INSTALLER-STRUCTURE" or "SHORTCUT-EXECUTION-CHAIN" or "HISTORY-CLICKFIX" ||
+            "INSTALLER-STRUCTURE" or "SHORTCUT-EXECUTION-CHAIN" or "HISTORY-CLICKFIX" or "STEAMALERT-UPDATE-HANDOFF-CANDIDATE" ||
         string.Equals(finding.ReasonCode, ReviewOnlyReasonCode, StringComparison.Ordinal);
 
     public static bool CanRemediate(Finding finding) => finding.CanRemediate && !IsReviewOnlyEvidence(finding);

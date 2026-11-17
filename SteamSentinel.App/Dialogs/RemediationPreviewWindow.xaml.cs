@@ -102,13 +102,13 @@ public partial class RemediationPreviewWindow : Window
 
     private static string ConfidenceLabel(RemediationAction action) => action.UserSelectedRisk
         ? DisplayText.Get("RemediationMode.RiskLabel") : action.Type switch
-    {
-        RemediationActionType.RepairSteamScript => DisplayText.Get("SteamScript.PreviewEvidence"),
-        RemediationActionType.RepairSteamConfiguration => DisplayText.Get("SteamConfig.Handling"),
-        RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory =>
-            action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.01") : DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.02", (action.ConfidenceScore)),
-        _ => action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.03") : action.RelatedFilePath is not null ? DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.04", (action.ConfidenceScore)) : DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.05")
-    };
+        {
+            RemediationActionType.RepairSteamScript => DisplayText.Get("SteamScript.PreviewEvidence"),
+            RemediationActionType.RepairSteamConfiguration => DisplayText.Get("SteamConfig.Handling"),
+            RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory =>
+                action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.01") : DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.02", (action.ConfidenceScore)),
+            _ => action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.03") : action.RelatedFilePath is not null ? DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.04", (action.ConfidenceScore)) : DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.05")
+        };
 }
 
 public sealed record RemediationActionDisplayItem(

@@ -52,6 +52,8 @@ public partial class MainWindow : Window
         WorkshopScopeComboBox.ItemsSource = new[] { new WorkshopScopeItem("", DisplayText.Get("Ui.xaml.Constructor.02")) };
         WorkshopScopeComboBox.SelectedIndex = 0;
         Findings = [];
+        PriorityFindings = [];
+        ReferenceFindings = [];
         QuarantineItems = [];
         DataContext = this;
         SetBusy(true);
@@ -62,6 +64,8 @@ public partial class MainWindow : Window
     }
 
     public ObservableCollection<FindingItemViewModel> Findings { get; }
+    public ObservableCollection<FindingItemViewModel> PriorityFindings { get; }
+    public ObservableCollection<FindingItemViewModel> ReferenceFindings { get; }
     public ObservableCollection<QuarantineItemViewModel> QuarantineItems { get; }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -126,6 +130,7 @@ public partial class MainWindow : Window
 
     private void CoverageGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        DetailScoreText.Text = string.Empty;
         if (CoverageGrid.SelectedItem is not CoverageGroup group)
         {
             CoverSelectedButton.IsEnabled = false;
@@ -146,7 +151,8 @@ public partial class MainWindow : Window
     private void ResultTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!ReferenceEquals(e.Source, ResultTabs) || DetailDescriptionText is null) return;
-        FindingDetailCard.Visibility = ResultTabs.SelectedIndex is 2 or 3 or 4 or 5 or 6 ? Visibility.Collapsed : Visibility.Visible;
+        FindingDetailCard.Visibility = ResultTabs.SelectedIndex is 2 or 3 or 4 or 5 or 6 ||
+            ResultTabs.SelectedIndex == 0 && SelectedFinding is null ? Visibility.Collapsed : Visibility.Visible;
         SelectionActionsBar.Visibility = ResultTabs.SelectedIndex is 5 or 6 ? Visibility.Collapsed : Visibility.Visible;
         if (ResultTabs.SelectedIndex == 0) FindingsGrid_SelectionChanged(FindingsGrid, e);
         else if (ResultTabs.SelectedIndex == 1)
@@ -216,6 +222,7 @@ public partial class MainWindow : Window
         SetBusy(true);
         ShowActivity(ActivityPhase.Scanning);
         Findings.Clear();
+        ClearFindingGroups();
         CoverageGrid.ItemsSource = null;
         CoverageTab.Header = DisplayText.Get("Ui.xaml.StartScanAsync.01");
         CoverageStatusText.Text = DisplayText.Get("Ui.xaml.StartScanAsync.02");
@@ -364,7 +371,7 @@ public partial class MainWindow : Window
         _lastReport = ScanFailureReports.PreserveSystemResults(systemReport, mode, roots, _coordinator.Rules.Version, failure, cancelled);
         PopulateFindings(_lastReport);
         UpdateSummary(_lastReport);
-        if (!_lastReport.Findings.Any(f => f.Category != FindingCategory.Coverage && f.Severity >= FindingSeverity.Medium))
+        if (!PriorityFindings.Any(item => item.Finding.Severity >= FindingSeverity.Medium))
             HeaderStatusText.Text = cancelled ? DisplayText.Get("Ui.xaml.PreserveScanFailure.01") : DisplayText.Get("Ui.xaml.PreserveScanFailure.02");
         HeaderDetailText.Text = DisplayText.Get("Ui.xaml.PreserveScanFailure.03");
         ProgressStageText.Text = cancelled ? DisplayText.Get("Ui.xaml.PreserveScanFailure.04") : DisplayText.Get("Ui.xaml.PreserveScanFailure.05");
@@ -407,11 +414,25 @@ public partial class MainWindow : Window
     {
         InvalidateStaleRemediationReport(report);
         Findings.Clear();
+        ClearFindingGroups();
+        IReadOnlySet<string> referenceIds = FindingPriorityPresentation.ReferenceFindingIds(report);
         foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage))
-            Findings.Add(new FindingItemViewModel(finding, _coordinator.Rules, _findingScopeLayout, CurrentRemediationMode));
+        {
+            FindingItemViewModel item = new(finding, _coordinator.Rules, _findingScopeLayout, CurrentRemediationMode,
+                isReference: referenceIds.Contains(finding.Id));
+            Findings.Add(item);
+            if (item.IsReference) ReferenceFindings.Add(item);
+        }
+        foreach (FindingItemViewModel item in Findings.Where(item => !item.IsReference)
+            .OrderByDescending(item => item.Finding.IsKnownMalware)
+            .ThenByDescending(item => item.Finding.Severity).ThenByDescending(item => item.Score))
+            PriorityFindings.Add(item);
         _findingHandlingReport = report;
-        FindingCountText.Text = DisplayText.Format("Ui.xaml.PopulateFindings.01", (Findings.Count));
-        FindingHandlingSummaryText.Text = FindingHandlingPresentation.Count(Findings.Select(item => item.Handling)).Summary;
+        FindingCountText.Text = DisplayText.Format("FindingPriority.Counts", PriorityFindings.Count, ReferenceFindings.Count);
+        FindingHandlingSummaryText.Text = FindingHandlingPresentation.Count(PriorityFindings.Select(item => item.Handling)).Summary;
+        FindingCountText.ToolTip = FindingHandlingSummaryText.Text;
+        ReferenceFindingsExpander.Header = DisplayText.Format("FindingPriority.ReferenceGroup", ReferenceFindings.Count);
+        UpdateFindingGroupsLayout();
         DisplayTrustProxyDiagnostics(report.TrustProxyDiagnostics);
         DisplayRelatedComponentDiagnostics(report.RelatedComponentDiagnostics);
         DisplayContainers(report.Containers);
@@ -427,27 +448,31 @@ public partial class MainWindow : Window
         if (report.ResourceAudit is { } resourceAudit) CoverageStatusText.Text += "\n" + ScanResourcePresentation.Summary(resourceAudit);
         ExportButton.IsEnabled = true;
         UpdateRemediationEligibility();
-        if (Findings.Count > 0) FindingsGrid.SelectedIndex = 0;
+        if (PriorityFindings.Count > 0) FindingsGrid.SelectedIndex = 0;
     }
 
     private void UpdateSummary(ScanReport report)
     {
         bool confirmed = report.Findings.Any(finding => finding.IsKnownMalware);
-        bool suspicious = report.Findings.Any(finding => finding.Category != FindingCategory.Coverage && finding.Severity >= FindingSeverity.Medium);
+        IReadOnlySet<string> referenceIds = ReferenceEquals(report, _findingHandlingReport)
+            ? ReferenceFindings.Select(item => item.Finding.Id).ToHashSet(StringComparer.Ordinal)
+            : FindingPriorityPresentation.ReferenceFindingIds(report);
+        bool suspicious = report.Findings.Any(finding => finding.Category != FindingCategory.Coverage &&
+            !referenceIds.Contains(finding.Id) && finding.Severity >= FindingSeverity.Medium);
         FindingHandlingCounts handling = ReferenceEquals(report, _findingHandlingReport)
-            ? FindingHandlingPresentation.Count(Findings.Select(item => item.Handling))
-            : FindingHandlingPresentation.Count(report.Findings.Where(f => f.Category != FindingCategory.Coverage)
+            ? FindingHandlingPresentation.Count(PriorityFindings.Select(item => item.Handling))
+            : FindingHandlingPresentation.Count(report.Findings.Where(f => f.Category != FindingCategory.Coverage && !referenceIds.Contains(f.Id))
                 .Select(f => FindingHandlingPresentation.Get(f, _coordinator.Rules, _findingScopeLayout, CurrentRemediationMode)));
         if (confirmed)
         {
             bool hostEvidence = report.Findings.Any(f => f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam && f.Severity >= FindingSeverity.High);
             HeaderStatusText.Text = hostEvidence ? DisplayText.Get("Ui.xaml.UpdateSummary.01") : DisplayText.Get("Ui.xaml.UpdateSummary.02");
-            HeaderDetailText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.03");
+            HeaderDetailText.Text = string.Empty;
         }
         else if (suspicious)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.04");
-            HeaderDetailText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.05");
+            HeaderDetailText.Text = string.Empty;
         }
         else if (report.Coverage == ScanCoverage.Skipped)
         {
@@ -472,10 +497,17 @@ public partial class MainWindow : Window
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.12");
             HeaderDetailText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.13");
         }
+        else if (referenceIds.Count > 0)
+        {
+            HeaderStatusText.Text = report.ExecutionState is ScanExecutionState.Failed or ScanExecutionState.Cancelled
+                ? StatusPresentation.Scan(report)
+                : DisplayText.Get(report.Coverage == ScanCoverage.Complete ? "FindingPriority.ReferenceOnly" : "FindingPriority.Incomplete");
+            HeaderDetailText.Text = string.Empty;
+        }
         else if (report.Coverage == ScanCoverage.Complete)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.14");
-            HeaderDetailText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.15");
+            HeaderDetailText.Text = string.Empty;
         }
         else
         {
@@ -485,25 +517,32 @@ public partial class MainWindow : Window
                 : DisplayText.Get("Ui.xaml.UpdateSummary.18");
         }
 
-        if (confirmed || suspicious || report.Coverage != ScanCoverage.Skipped && (handling.AttentionCount > 0 || handling.Actionable > 0))
-            HeaderDetailText.Text += report.Coverage == ScanCoverage.Complete
-                ? DisplayText.Get("Ui.xaml.UpdateSummary.19") : DisplayText.Get("Ui.xaml.UpdateSummary.20");
+        if (report.Coverage == ScanCoverage.Partial &&
+            (confirmed || suspicious || handling.AttentionCount > 0 || handling.Actionable > 0))
+            HeaderDetailText.Text = DisplayText.Get("FindingPriority.Incomplete");
         string scanName = report.Mode == ScanMode.Quick ? DisplayText.Get("Ui.xaml.UpdateSummary.21") : DisplayText.Get("Ui.xaml.UpdateSummary.22");
         ProgressStageText.Text = report.Coverage == ScanCoverage.Skipped ? DisplayText.Get("Ui.xaml.UpdateSummary.23") :
             scanName + (report.Coverage == ScanCoverage.Complete ? DisplayText.Get("Ui.xaml.UpdateSummary.24") : DisplayText.Get("Ui.xaml.UpdateSummary.25"));
         ProgressItemText.Text = report.Coverage == ScanCoverage.Complete
-            ? DisplayText.Get("Ui.xaml.UpdateSummary.26")
-            : DisplayText.Get("Ui.xaml.UpdateSummary.27");
+            ? string.Empty : DisplayText.Get("FindingPriority.Incomplete");
         ScanProgressBar.Value = 100;
         FooterText.Text = DisplayText.Format("Ui.xaml.UpdateSummary.28", (report.Metrics.FilesVisited), (report.Metrics.WorkshopItemsVisited), (report.Metrics.ArchiveEntriesVisited), (ReportExporter.CoverageLabel(report.Coverage)));
     }
 
     private void FindingsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        FindingItemViewModel? item = FindingsGrid.SelectedItem as FindingItemViewModel;
+        if (sender is DataGrid selectedGrid && selectedGrid.SelectedItem is FindingItemViewModel)
+        {
+            DataGrid? otherGrid = selectedGrid == FindingsGrid ? ReferenceFindingsGrid : FindingsGrid;
+            if (otherGrid is not null) otherGrid.SelectedItem = null;
+        }
+        FindingItemViewModel? item = SelectedFinding;
+        if (ResultTabs.SelectedIndex == 0) FindingDetailCard.Visibility = item is null ? Visibility.Collapsed : Visibility.Visible;
         DetailDescriptionText.Text = item is null ? string.Empty : item.Title + "\n" + item.Description + "\n" + item.HandlingDetails +
             (RelatedComponentReportPresentation.IsRelatedFinding(item.Finding)
                 ? "\n" + RelatedComponentReportPresentation.DescribeFinding(item.Finding, _lastReport?.RelatedComponentDiagnostics) : string.Empty);
+        if (item?.IsReference == true) DetailDescriptionText.Text = item.Description;
+        DetailScoreText.Text = item is null ? string.Empty : DisplayText.Format("FindingPriority.Score", item.Score);
         DetailEvidenceText.Text = item?.Evidence ?? string.Empty;
         DetailHashText.Text = item is null ? string.Empty : DisplayText.Format("Ui.xaml.FindingsGrid_SelectionChanged.01", (item.Sha256), (item.Finding.TargetSha256 ?? DisplayText.Get("Ui.xaml.FindingsGrid_SelectionChanged.02")), (item.Finding.ContentPath ?? item.Target));
         DetailWorkshopText.Text = item?.WorkshopId ?? string.Empty;
@@ -512,7 +551,7 @@ public partial class MainWindow : Window
 
     private async void Occupancy_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy || FindingsGrid.SelectedItem is not FindingItemViewModel item || item.IsTrustProxyFinding ||
+        if (_busy || SelectedFinding is not FindingItemViewModel item || item.IsTrustProxyFinding ||
             RelatedComponentReportPresentation.IsRelatedFinding(item.Finding)) return;
         SetBusy(true);
         ShowActivity(ActivityPhase.Inspecting, DisplayText.Get("Ui.xaml.Occupancy_Click.01"));
@@ -542,7 +581,7 @@ public partial class MainWindow : Window
 
     private async void ReviewFinding_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy || FindingsGrid.SelectedItem is not FindingItemViewModel item) return;
+        if (_busy || SelectedFinding is not FindingItemViewModel item) return;
         if (item.IsTrustProxyFinding)
         {
             await RunTrustProxyDiagnosticsAsync();
@@ -570,7 +609,7 @@ public partial class MainWindow : Window
 
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (FindingItemViewModel item in Findings.Where(item => item.CanSelect)) item.IsSelected = true;
+        foreach (FindingItemViewModel item in Findings.Where(item => !item.IsReference && item.CanSelect)) item.IsSelected = true;
     }
 
     private void ClearSelection_Click(object sender, RoutedEventArgs e)

@@ -92,15 +92,20 @@ internal static partial class Program
 
             RemediationActionResult completed = new()
             {
-                ActionId = repair.ActionId, Type = repair.Type, Target = repair.Target,
-                Success = true, ExecutionStatus = RemediationExecutionStatus.Succeeded,
+                ActionId = repair.ActionId,
+                Type = repair.Type,
+                Target = repair.Target,
+                Success = true,
+                ExecutionStatus = RemediationExecutionStatus.Succeeded,
                 VerificationStatus = RemediationVerificationStatus.Verified,
                 MessageText = MessageText.Create("SteamScript.Repaired"),
                 VerificationSummaryText = MessageText.Create("SteamScript.Verified")
             };
             RemediationActionResult incomplete = new()
             {
-                ActionId = repair.ActionId, Type = repair.Type, Target = repair.Target,
+                ActionId = repair.ActionId,
+                Type = repair.Type,
+                Target = repair.Target,
                 ExecutionStatus = RemediationExecutionStatus.SkippedDependency,
                 VerificationStatus = RemediationVerificationStatus.Unknown,
                 MessageText = MessageText.Create("SteamScript.RepairFailed"),

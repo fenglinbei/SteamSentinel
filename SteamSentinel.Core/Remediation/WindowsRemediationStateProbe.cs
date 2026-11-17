@@ -13,7 +13,8 @@ using SteamSentinel.Core.Utilities;
 namespace SteamSentinel.Core.Remediation;
 
 /// <summary>Only reads actual state. The injected fixed-script runner must use a trusted system environment.</summary>
-public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken, Task<string?>> runReadOnlyScript, Guid? incidentId = null) : IRemediationStateProbe
+public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken, Task<string?>> runReadOnlyScript, Guid? incidentId = null,
+    SteamAlertWatchdogStateProbe? watchdogProbe = null) : IRemediationStateProbe
 {
     public const string SecurityStatusScript =
         "$m=$null;$mpError=$false;try{$m=Get-MpComputerStatus -ErrorAction Stop}catch{$mpError=$true};" +
@@ -28,14 +29,23 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
     public async Task<RemediationVerificationObservation> ObserveAsync(RemediationAction action, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (SteamAlertWatchdogStateProbe.IsFamilyTargetAction(action))
+        {
+            RemediationVerificationObservation instances = await Task.Run(() =>
+                (watchdogProbe ?? new SteamAlertWatchdogStateProbe()).ObserveAsync(action, cancellationToken), cancellationToken).ConfigureAwait(false);
+            if (instances.Status != RemediationVerificationStatus.NoResidual || action.Type != RemediationActionType.QuarantineFile)
+                return instances;
+            // Quarantining the script/image and stopping its running instances are separate facts.
+            return PathState(action.Target);
+        }
         switch (action.Type)
         {
             case RemediationActionType.RepairSteamConfiguration:
-            {
-                bool repaired = await SteamConfigurationRepairTarget.IsRepairedAsync(action, SteamSentinel.Core.Steam.SteamLocator.Discover(), cancellationToken);
-                return State(repaired ? RemediationVerificationStatus.Verified : RemediationVerificationStatus.Unknown,
-                    MessageText.Create(repaired ? "SteamConfig.Verified" : "SteamConfig.VerificationUnavailable"));
-            }
+                {
+                    bool repaired = await SteamConfigurationRepairTarget.IsRepairedAsync(action, SteamSentinel.Core.Steam.SteamLocator.Discover(), cancellationToken);
+                    return State(repaired ? RemediationVerificationStatus.Verified : RemediationVerificationStatus.Unknown,
+                        MessageText.Create(repaired ? "SteamConfig.Verified" : "SteamConfig.VerificationUnavailable"));
+                }
             case RemediationActionType.RepairSteamScript:
                 if (!Validation.IsHexSha256(action.RepairedSha256) || !FileScopeSafety.IsValidIdentity(action.ExpectedFileIdentity) ||
                     !FileScopeSafety.IsValidIdentity(action.ExpectedParentIdentity))

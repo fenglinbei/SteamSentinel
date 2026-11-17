@@ -74,7 +74,8 @@ public partial class MainWindow
             : FindingDetailCard.IsExpanded && FindingDetailCard.Visibility == Visibility.Visible ? FindingDetailScroll : null;
         if (optional is null) { _optionalLayoutInputs = null; return; }
         if (!ScanPage.IsMeasureValid || !ScanPage.IsArrangeValid) return;
-        DataGrid? grid = FindScanVisual<DataGrid>(ResultTabs);
+        DataGrid? grid = ResultTabs.SelectedIndex == 0 && ReferenceFindingsExpander.IsExpanded && PriorityFindings.Count == 0
+            ? ReferenceFindingsGrid : FindScanVisual<DataGrid>(ResultTabs);
         ScrollContentPresenter? viewport = grid is null ? null : FindScanVisual<ScrollContentPresenter>(grid);
         if (grid is null || viewport is null) return;
 
@@ -145,7 +146,8 @@ public partial class MainWindow
     {
         if (HeaderCard is null || ScanOptionsExpander is null || FindingDetailCard is null || MainTabs is null) return;
         bool needsRoom = MainTabs.SelectedIndex == 0 && (ActivityPanel.Visibility == Visibility.Visible ||
-            ScanOptionsExpander.IsExpanded || FindingDetailCard.Visibility == Visibility.Visible && FindingDetailCard.IsExpanded);
+            ReferenceFindings?.Count > 0 || ScanOptionsExpander.IsExpanded ||
+            FindingDetailCard.Visibility == Visibility.Visible && FindingDetailCard.IsExpanded);
         HeaderCard.Visibility = WindowLayout.ActualHeight is > 0 and < 540 && needsRoom
             ? Visibility.Collapsed : Visibility.Visible;
     }

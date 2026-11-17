@@ -35,17 +35,33 @@ public static class RemediationModePolicy
         // the reviewed physical target, not new malware evidence or permission to execute it.
         return new Finding
         {
-            Id = finding.Id, RuleId = finding.RuleId, Category = finding.Category, Severity = finding.Severity,
-            Score = finding.Score, TitleText = finding.TitleText, DescriptionText = finding.DescriptionText,
-            Target = finding.Target, EvidenceText = finding.EvidenceText, ReasonCode = finding.ReasonCode,
-            Sha256 = finding.Sha256, ContentPath = finding.ContentPath, TargetSha256 = finding.TargetSha256,
-            WorkshopId = finding.WorkshopId, AppId = finding.AppId, SourceKind = finding.SourceKind,
-            SteamUiEvidence = finding.SteamUiEvidence, IsKnownMalware = false, CanRemediate = true,
-            UserSelectedRisk = true, HandlingReason = finding.HandlingReason, HandlingDetailsText = finding.HandlingDetailsText,
+            Id = finding.Id,
+            RuleId = finding.RuleId,
+            Category = finding.Category,
+            Severity = finding.Severity,
+            Score = finding.Score,
+            TitleText = finding.TitleText,
+            DescriptionText = finding.DescriptionText,
+            Target = finding.Target,
+            EvidenceText = finding.EvidenceText,
+            ReasonCode = finding.ReasonCode,
+            Sha256 = finding.Sha256,
+            ContentPath = finding.ContentPath,
+            TargetSha256 = finding.TargetSha256,
+            WorkshopId = finding.WorkshopId,
+            AppId = finding.AppId,
+            SourceKind = finding.SourceKind,
+            SteamUiEvidence = finding.SteamUiEvidence,
+            IsKnownMalware = false,
+            CanRemediate = true,
+            UserSelectedRisk = true,
+            HandlingReason = finding.HandlingReason,
+            HandlingDetailsText = finding.HandlingDetailsText,
             DiagnosticObservationIds = [.. finding.DiagnosticObservationIds],
             AssociationObservationIds = [.. finding.AssociationObservationIds],
             AssociationEvidenceTier = finding.AssociationEvidenceTier,
-            SuggestedActions = [SuggestedActionKind.QuarantineFile], DetectedAtUtc = finding.DetectedAtUtc
+            SuggestedActions = [SuggestedActionKind.QuarantineFile],
+            DetectedAtUtc = finding.DetectedAtUtc
         };
     }
 }

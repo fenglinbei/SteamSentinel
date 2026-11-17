@@ -47,6 +47,14 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
             result.Verifications.Any(item => IsClear(item.Status)))
             status = RemediationVerificationStatus.Reappeared;
         MessageText message = Limit(observation.MessageText, MaximumMessageCharacters);
+        if (SteamAlertWatchdogStateProbe.IsFamilyTargetAction(action) &&
+            result.VerificationStatus == RemediationVerificationStatus.Reappeared && IsClear(status))
+        {
+            // A bounded later observation cannot erase a replacement instance observed at
+            // an action boundary during this run. Require a fresh review/scan of the chain.
+            status = RemediationVerificationStatus.Reappeared;
+            message = MessageText.Create("Watchdog.ReappearedDuringRun", result.VerificationSummaryText);
+        }
         if (result.ExecutionStatus == RemediationExecutionStatus.Failed && IsClear(status))
         {
             status = RemediationVerificationStatus.Unknown;

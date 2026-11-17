@@ -82,7 +82,7 @@ internal sealed partial class BrokerEngine
             if (stream.Length > 64 * 1024 * 1024) throw ScriptDenied("SteamScript.Unconfirmed");
             string hash = Convert.ToHexString(SHA256.HashData(stream));
             HashRule? rule = _rules.KnownHashes.FirstOrDefault(rule => rule.Malware &&
-                rule.Id is SteamAlertInstallation.LoaderRule or SteamAlertInstallation.ResidentRule &&
+                rule.Id is SteamAlertInstallation.LoaderRule or SteamAlertInstallation.ResidentRule or SteamAlertInstallation.UpdatedResidentRule &&
                 rule.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase));
             if (rule is not null && SteamAlertInstallation.IsInstalled(rule.Id, path, _steamLayout,
                     SteamAlertInstallation.ResidentDirectory)) yield return (path, hash);
@@ -99,23 +99,23 @@ internal sealed partial class BrokerEngine
                      (RegistryHive.LocalMachine, RegistryView.Registry32),
                      (RegistryHive.LocalMachine, RegistryView.Registry64)
                  })
-        foreach (string keyName in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
-        {
-            using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
-            using RegistryKey? key = baseKey.OpenSubKey(keyName);
-            if (key is null) continue;
-            foreach (string name in key.GetValueNames())
+            foreach (string keyName in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
             {
-                if (key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string command ||
-                    !CommandTargets.Extract(command).Any(target => PathsEquivalent(target, path))) continue;
-                RemediationAction? removal = plan.Actions.FirstOrDefault(a => a.Type == RemediationActionType.RemoveRegistryValue &&
-                    a.RegistryHive == (hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM") &&
-                    a.RegistryView == view.ToString() && a.RegistryKey == keyName && a.RegistryValueName == name &&
-                    a.ExpectedValueData == command);
-                if (removal is null || repairs.Any(repair => !dependencies[repair.ActionId].Contains(removal.ActionId)))
-                    throw ScriptDenied("SteamScript.Unconfirmed");
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
+                using RegistryKey? key = baseKey.OpenSubKey(keyName);
+                if (key is null) continue;
+                foreach (string name in key.GetValueNames())
+                {
+                    if (key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string command ||
+                        !CommandTargets.Extract(command).Any(target => PathsEquivalent(target, path))) continue;
+                    RemediationAction? removal = plan.Actions.FirstOrDefault(a => a.Type == RemediationActionType.RemoveRegistryValue &&
+                        a.RegistryHive == (hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM") &&
+                        a.RegistryView == view.ToString() && a.RegistryKey == keyName && a.RegistryValueName == name &&
+                        a.ExpectedValueData == command);
+                    if (removal is null || repairs.Any(repair => !dependencies[repair.ActionId].Contains(removal.ActionId)))
+                        throw ScriptDenied("SteamScript.Unconfirmed");
+                }
             }
-        }
     }
 
     private static void RequireSteamClosed()
@@ -163,11 +163,18 @@ internal sealed partial class BrokerEngine
             throw ScriptDenied();
         QuarantineRecord record = new()
         {
-            ActionId = action.ActionId, Type = action.Type, OriginalTarget = source.FinalPath,
-            QuarantinedPath = destination, Sha256 = ScriptHash(original), RepairedSha256 = ScriptHash(repaired),
-            OriginalFileIdentity = FileScopeSafety.ReadIdentity(source.Handle), OriginalParentIdentity = parent.ParentIdentity,
-            OriginalSecurityDescriptor = metadata.SecurityDescriptor, OriginalAttributes = metadata.Attributes,
-            OriginalCreationTimeUtc = metadata.CreationTimeUtc, OriginalLastWriteTimeUtc = metadata.LastWriteTimeUtc,
+            ActionId = action.ActionId,
+            Type = action.Type,
+            OriginalTarget = source.FinalPath,
+            QuarantinedPath = destination,
+            Sha256 = ScriptHash(original),
+            RepairedSha256 = ScriptHash(repaired),
+            OriginalFileIdentity = FileScopeSafety.ReadIdentity(source.Handle),
+            OriginalParentIdentity = parent.ParentIdentity,
+            OriginalSecurityDescriptor = metadata.SecurityDescriptor,
+            OriginalAttributes = metadata.Attributes,
+            OriginalCreationTimeUtc = metadata.CreationTimeUtc,
+            OriginalLastWriteTimeUtc = metadata.LastWriteTimeUtc,
             VerifiedContentRuleId = SteamScriptRepair.RuleId
         };
         await persist(record, token);

@@ -44,6 +44,8 @@ internal static partial class Program
             RuleSet rules = RuleLoader.LoadEmbedded();
             Check("规则集载入", rules.KnownHashes.Count >= 14 && rules.KnownDomains.Contains("luminovastella.top"));
             TestServiceAppCoverage(rules);
+            TestFindingPriorityPresentation();
+            await TestFindingPriorityScannerAsync(root);
 
             await TestFileTypesAsync(root);
             await TestJsonFileSynchronizationContextAsync(root);
@@ -124,6 +126,14 @@ internal static partial class Program
             TestV030RemediationScope();
             await TestV032CoreScopeAsync(root);
             await TestSteamAlertAsync(root);
+            await TestSteamAlertWatchdogHostAsync(root);
+            await TestSteamAlertWatchdogDiscoveryAsync(root);
+            await TestSteamAlertWatchdogBrokerAsync(root);
+            await TestSteamAlertWatchdogPlanAsync(root);
+            await TestSteamAlertUpdateHandoffAsync(root);
+            await TestSteamAlertHandoffBrokerAsync(root);
+            await TestSteamAlertHandoffDiscoveryAsync(root);
+            await TestSteamAlertClosureAsync(root);
             await TestSteamScriptRepairAsync(root);
             await TestSteamScriptRepairIntegrationAsync(root);
             await TestSteamScriptBatchRegressionAsync(root);
@@ -767,6 +777,10 @@ internal static partial class Program
     {
         switch (args[0])
         {
+            case "--finding-priority-ui" when args.Length == 2:
+                TestFindingPriorityPresentation();
+                await TestFindingPriorityScannerAsync(Path.GetFullPath(args[1]));
+                return RunFindingPriorityUi(args[1]);
             case "--v032-scope-ui" when args.Length == 2:
                 return RunV032ScopeUi(args[1]);
             case "--scope-authorization-tests" when args.Length is 2 or 4:
@@ -873,6 +887,46 @@ internal static partial class Program
                 }
                 catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
                 await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "script-repair-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--steamalert-watchdog-tests" when args.Length == 2:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                try
+                {
+                    string watchdogRoot = Path.GetFullPath(args[1]);
+                    await TestSteamAlertWatchdogHostAsync(watchdogRoot);
+                    await TestSteamAlertWatchdogDiscoveryAsync(watchdogRoot);
+                    await TestSteamAlertWatchdogBrokerAsync(watchdogRoot);
+                    await TestSteamAlertWatchdogPlanAsync(watchdogRoot);
+                    await TestSteamAlertUpdateHandoffAsync(watchdogRoot);
+                    await TestSteamAlertHandoffBrokerAsync(watchdogRoot);
+                    await TestSteamAlertHandoffDiscoveryAsync(watchdogRoot);
+                    await TestSteamAlertClosureAsync(watchdogRoot);
+                }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "watchdog-results.json"), new
+                {
+                    passed = _passed,
+                    failed = Failures.Count,
+                    failures = Failures,
+                    skipped = _skipped,
+                    version = ProductInfo.Version,
+                    buildIdentity = ProductInfo.BuildIdentity
+                });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--steamalert-watchdog-samples" when args.Length == 3:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                try { await TestSteamAlertHandoffStaticSampleAsync(Path.GetFullPath(args[1]), Path.GetFullPath(args[2])); }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "watchdog-static-sample-results.json"), new
+                {
+                    passed = _passed,
+                    failed = Failures.Count,
+                    failures = Failures,
+                    skipped = _skipped,
+                    samplesExecuted = false,
+                    version = ProductInfo.Version,
+                    buildIdentity = ProductInfo.BuildIdentity
+                });
                 return Failures.Count == 0 ? 0 : 1;
             case "--steamalert-tests" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));

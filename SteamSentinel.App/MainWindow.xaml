@@ -153,13 +153,20 @@
                                 </ComboBox>
                             </StackPanel>
                         </StackPanel>
-                        <TextBlock x:Name="FindingHandlingSummaryText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#475467"
+                        <TextBlock x:Name="FindingHandlingSummaryText" Visibility="Collapsed" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#475467"
                                    Text="{ui:Text Ui.Xaml.MainWindow.035}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                     </Grid>
 
                     <TabControl Grid.Row="2" x:Name="ResultTabs" SelectionChanged="ResultTabs_SelectionChanged">
                     <TabItem Header="{ui:Text Ui.Xaml.MainWindow.036}">
-                    <DataGrid x:Name="FindingsGrid" ItemsSource="{Binding Findings}" AutoGenerateColumns="False"
+                    <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition x:Name="PriorityFindingsRow" Height="*" />
+                        <RowDefinition x:Name="ReferenceFindingsRow" Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="PriorityFindingsEmptyText" Text="{ui:Text FindingPriority.Empty}" Foreground="#667085"
+                               Margin="12" TextWrapping="Wrap" Visibility="Collapsed" />
+                    <DataGrid x:Name="FindingsGrid" ItemsSource="{Binding PriorityFindings}" AutoGenerateColumns="False"
                               CanUserAddRows="False" IsReadOnly="False" SelectionMode="Single" SelectionChanged="FindingsGrid_SelectionChanged"
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal">
                         <DataGrid.Columns>
@@ -173,7 +180,6 @@
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.038}" Binding="{Binding Severity}" IsReadOnly="True" Width="72" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.039}" Binding="{Binding Category}" IsReadOnly="True" Width="64" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.040}" Binding="{Binding Score}" IsReadOnly="True" Width="48" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.041}" Binding="{Binding Title}" IsReadOnly="True" Width="2*" MinWidth="110" ElementStyle="{StaticResource GridPathText}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.042}" Binding="{Binding TargetDisplay}" IsReadOnly="True" Width="2*" MinWidth="120" ElementStyle="{StaticResource GridPathText}" />
                             <DataGridTemplateColumn Header="{ui:Text Ui.Xaml.MainWindow.043}" Width="3*" MinWidth="174" IsReadOnly="True">
@@ -188,6 +194,26 @@
                             </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
+                    <Expander x:Name="ReferenceFindingsExpander" Grid.Row="1" Header="{ui:Text FindingPriority.ReferenceGroup}" IsExpanded="False"
+                              Visibility="Collapsed" Background="#F8FAFC" Expanded="ReferenceFindings_ExpansionChanged" Collapsed="ReferenceFindings_ExpansionChanged">
+                        <DataGrid x:Name="ReferenceFindingsGrid" ItemsSource="{Binding ReferenceFindings}" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" IsReadOnly="False" SelectionMode="Single" SelectionChanged="FindingsGrid_SelectionChanged"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" Background="White">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="{ui:Text Ui.Xaml.MainWindow.037}" Width="46" HeaderStyle="{StaticResource GridCenteredHeader}">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center" IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
+                                                      IsEnabled="{Binding CanSelect}" ToolTip="{Binding HandlingDetails}" ToolTipService.ShowOnDisabled="True" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.041}" Binding="{Binding Title}" IsReadOnly="True" Width="*" MinWidth="120" ElementStyle="{StaticResource GridPathText}" />
+                                <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.042}" Binding="{Binding TargetDisplay}" IsReadOnly="True" Width="2*" MinWidth="140" ElementStyle="{StaticResource GridPathText}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Expander>
+                    </Grid>
                     </TabItem>
                     <TabItem x:Name="CoverageTab" Header="{ui:Text Ui.Xaml.MainWindow.044}">
                         <Grid Margin="8">
@@ -314,7 +340,10 @@
                                 <TextBlock Margin="0,0,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.089}" />
                                 <TextBlock x:Name="DetailDescriptionText" Grid.Column="1" TextWrapping="Wrap" />
                                 <TextBlock Grid.Row="1" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.090}" />
-                                <TextBlock x:Name="DetailEvidenceText" Grid.Row="1" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
+                                <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,7,0,0">
+                                    <TextBlock x:Name="DetailScoreText" Foreground="#667085" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="DetailEvidenceText" TextWrapping="Wrap" />
+                                </StackPanel>
                                 <TextBlock Grid.Row="2" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="SHA-256" />
                                 <TextBlock x:Name="DetailHashText" Grid.Row="2" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
                                 <TextBlock Grid.Row="3" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.091}" />
@@ -336,6 +365,9 @@
                                     </MultiDataTrigger.Conditions>
                                     <Setter Property="Visibility" Value="Collapsed"/>
                                 </MultiDataTrigger>
+                                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="reference-only">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
                             </Style.Triggers>
                         </Style></Border.Style>
                         <Grid>

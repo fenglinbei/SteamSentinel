@@ -313,6 +313,8 @@ try {
     $machineStateTestPath = Join-Path $stageRoot 'INSTALLER-MACHINE-STATE-RESULTS.json'
     $startupTestPath = Join-Path $stageRoot 'UNIFIED-STARTUP-RESULTS.json'
     $workerFirewallTestPath = Join-Path $stageRoot 'WORKER-FIREWALL-CONTRACT-RESULTS.json'
+    $watchdogTestPath = Join-Path $stageRoot 'WATCHDOG-RESULTS.json'
+    $findingPriorityTestPath = Join-Path $stageRoot 'FINDING-PRIORITY-UI-RESULTS.json'
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
     & git -C $solutionRoot archive --format=zip --prefix=SteamSentinel/ -o $sourceArchivePath $sourceTree
@@ -467,6 +469,35 @@ try {
     }
     if ($selfTest.version -ne $version -or $selfTest.buildIdentity -ne $buildIdentity) {
         throw "SelfTest provenance mismatch (version=$($selfTest.version), buildIdentity=$($selfTest.buildIdentity))."
+    }
+
+    # Bind the merged watchdog and UI acceptance to the same self-contained source
+    # snapshot as the full suite. These utilities use inert fixtures, never samples.
+    $focusedTests = @{}
+    foreach ($focused in @(
+        @{ Name = 'watchdog'; Argument = '--steamalert-watchdog-tests'; File = 'watchdog-results.json'; Minimum = 297; Destination = $watchdogTestPath },
+        @{ Name = 'finding-priority'; Argument = '--finding-priority-ui'; File = 'finding-priority-ui-results.json'; Minimum = 106; Destination = $findingPriorityTestPath }
+    )) {
+        $focusedRoot = Join-Path $workRoot $focused.Name
+        & $selfTestExecutable $focused.Argument $focusedRoot
+        if ($LASTEXITCODE -ne 0) { throw "Focused acceptance failed: $($focused.Name) (exit=$LASTEXITCODE)." }
+        $focusedResultPath = Join-Path $focusedRoot $focused.File
+        $focusedResult = Get-Content -LiteralPath $focusedResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($field in @('passed', 'failed', 'skipped', 'failures', 'version', 'buildIdentity')) {
+            if ($null -eq $focusedResult.PSObject.Properties[$field]) { throw "Focused acceptance is missing $field : $($focused.Name)." }
+        }
+        if ([int]$focusedResult.passed -lt $focused.Minimum -or [int]$focusedResult.failed -ne 0 -or
+            [int]$focusedResult.skipped -ne 0 -or @($focusedResult.failures).Count -ne 0 -or
+            $focusedResult.version -ne $version -or $focusedResult.buildIdentity -ne $buildIdentity) {
+            throw "Focused acceptance count or source identity mismatch: $($focused.Name)."
+        }
+        Copy-Item -LiteralPath $focusedResultPath -Destination $focused.Destination
+        $focusedTests[$focused.Name] = [ordered]@{
+            passed = [int]$focusedResult.passed; failed = 0; skipped = 0
+            version = $version; buildIdentity = $buildIdentity
+            resultsFile = [IO.Path]::GetFileName($focused.Destination)
+            resultsSha256 = (Get-FileHash -LiteralPath $focused.Destination -Algorithm SHA256).Hash
+        }
     }
 
     $publishArgs = @(
@@ -639,6 +670,8 @@ try {
         unifiedStartup = $unifiedStartup
         unifiedStartupTests = $startupTests
         workerFirewallContractTests = $workerFirewallTests
+        watchdogTests = $focusedTests['watchdog']
+        findingPriorityUiTests = $focusedTests['finding-priority']
         runtimeVerification = [ordered]@{
             requestedDownloads = $runtimePackRequests
             tested = $testedRuntimes

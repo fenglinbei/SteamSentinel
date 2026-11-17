@@ -2960,10 +2960,6 @@ This replaces the current report. Cancel and export first if you need to keep it
     <value>Processed {0:N0} items · {1}</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
-  <data name="Ui.xaml.PopulateFindings.01" xml:space="preserve">
-    <value>{0:N0} findings</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
   <data name="Ui.xaml.PopulateFindings.02" xml:space="preserve">
     <value>Unchecked ({0})</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
@@ -2996,16 +2992,8 @@ This replaces the current report. Cancel and export first if you need to keep it
     <value>Known threats in scanned content</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
-  <data name="Ui.xaml.UpdateSummary.03" xml:space="preserve">
-    <value>Review the content location and outer quarantine target. A file detection does not establish an active infection on this computer.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
   <data name="Ui.xaml.UpdateSummary.04" xml:space="preserve">
     <value>Suspicious items found</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.05" xml:space="preserve">
-    <value>Manual review required; these items have not automatically been classified as malware</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.06" xml:space="preserve">
@@ -3044,10 +3032,6 @@ This replaces the current report. Cancel and export first if you need to keep it
     <value>Checks complete; no actionable risk found</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
-  <data name="Ui.xaml.UpdateSummary.15" xml:space="preserve">
-    <value>Checks within the selected scope are complete. This does not establish that the entire computer is safe.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
   <data name="Ui.xaml.UpdateSummary.16" xml:space="preserve">
     <value>Checks incomplete; no actionable risk found</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
@@ -3058,14 +3042,6 @@ This replaces the current report. Cancel and export first if you need to keep it
   </data>
   <data name="Ui.xaml.UpdateSummary.18" xml:space="preserve">
     <value>Some content remains unchecked. See Unchecked content for reasons and follow-up steps or adjust the scan options.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.19" xml:space="preserve">
-    <value>. Conclusions apply only to the selected scope.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.20" xml:space="preserve">
-    <value>; some content remains unchecked. See Unchecked content for follow-up steps.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.21" xml:space="preserve">
@@ -3086,14 +3062,6 @@ This replaces the current report. Cancel and export first if you need to keep it
   </data>
   <data name="Ui.xaml.UpdateSummary.25" xml:space="preserve">
     <value> ended</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.26" xml:space="preserve">
-    <value>Results apply only to the selected scope. Review them before deciding whether to remediate.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.27" xml:space="preserve">
-    <value>See Findings for detections and Unchecked content for reasons and follow-up options.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.28" xml:space="preserve">
@@ -3673,18 +3641,6 @@ Case records exported. Backup payloads are excluded from the bundle.</value>
     <value>Review the remediation preview first. Execution will request Windows administrator authorization.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
   </data>
-  <data name="Ui.TrustProxy.UpdateRemediationEligibility.08" xml:space="preserve">
-    <value>No items are currently eligible for remediation selection.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
-  </data>
-  <data name="Ui.TrustProxy.UpdateRemediationEligibility.09" xml:space="preserve">
-    <value>See why each item remains unresolved.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
-  </data>
-  <data name="Ui.TrustProxy.UpdateRemediationEligibility.10" xml:space="preserve">
-    <value>Informational notices need no remediation.</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
-  </data>
   <data name="Ui.TrustProxy.UpdateRemediationEligibility.11" xml:space="preserve">
     <value>Another operation is running. Please wait until it finishes.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
@@ -4198,10 +4154,6 @@ See exported records for more detail.</value>
     <value>Type</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
-  <data name="Ui.Xaml.MainWindow.040" xml:space="preserve">
-    <value>Score</value>
-    <comment>Display only: MainWindow.xaml</comment>
-  </data>
   <data name="Ui.Xaml.MainWindow.041" xml:space="preserve">
     <value>Rule</value>
     <comment>Display only: MainWindow.xaml</comment>
@@ -4427,7 +4379,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.097" xml:space="preserve">
-    <value>Select eligible</value>
+    <value>Select priority</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.098" xml:space="preserve">
@@ -11942,4 +11894,60 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
   <data name="SteamConfig.PreviewIntent" xml:space="preserve"><value>Planned change: {0} Content and target identity will be independently verified again before execution.</value></data>
   <data name="SteamConfig.OriginalValue" xml:space="preserve"><value>Original value: {0}</value></data>
   <data name="SteamConfig.RepairedValue" xml:space="preserve"><value>Expected value after repair: {0}</value></data>
+  <data name="FindingPriority.Counts" xml:space="preserve"><value>Priority {0:N0} · Reference {1:N0}</value></data>
+  <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>Reference · File format notices ({0:N0})</value></data>
+  <data name="FindingPriority.FormatHint" xml:space="preserve"><value>File format notice</value></data>
+  <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>Only file format notices found</value></data>
+  <data name="FindingPriority.Empty" xml:space="preserve"><value>No priority findings</value></data>
+  <data name="FindingPriority.Incomplete" xml:space="preserve"><value>Some checks are incomplete</value></data>
+  <data name="FindingPriority.Score" xml:space="preserve"><value>Rule score: {0}</value></data>
+  <data name="FindingPriority.NoSelectablePriority" xml:space="preserve"><value>No selectable priority findings</value></data>
+  <data name="SteamAlert.Watchdog.InvalidHost" xml:space="preserve"><value>The script host identity or command does not match the verified malicious script. Scan again.</value></data>
+  <data name="SteamAlert.Watchdog.StopHost" xml:space="preserve"><value>Stop the verified malicious script instance (PID {0}): {1}</value></data>
+  <data name="SteamAlert.Watchdog.HostIdentity" xml:space="preserve"><value>Bound process: PID {0}; created at {1}. Exact command: {2}. The system interpreter file is preserved.</value></data>
+  <data name="SteamAlert.Watchdog.ClosureChanged" xml:space="preserve"><value>The active updater chain has changed or could not be fully checked. Further cleanup is stopped. Scan again and review the complete script, startup and program list.</value></data>
+  <data name="SteamAlert.Watchdog.PlanScope" xml:space="preserve"><value>The preview includes verified watchdog scripts, updater copies, bound interpreter instances and startup entries. A changed or restarted instance stops dependent cleanup; scan again before continuing.</value></data>
+  <data name="SteamAlert.Watchdog.HostTitle" xml:space="preserve"><value>Interpreter running a verified malicious SteamAlert script</value></data>
+  <data name="SteamAlert.Watchdog.HostDescription" xml:space="preserve"><value>Only this script, command line and creation-time-bound process can be stopped. The system interpreter itself is not quarantined.</value></data>
+  <data name="SteamAlert.Watchdog.HostEvidence" xml:space="preserve"><value>PID {0}; verified script {1}; observed parent PID {2}.</value></data>
+  <data name="SteamAlert.Watchdog.HostReadIncomplete" xml:space="preserve"><value>Could not inspect {0} interpreter instances within the confirmed infection scope. This chain is not fully checked.</value></data>
+  <data name="SteamAlert.Watchdog.HostLimit" xml:space="preserve"><value>The bounded interpreter inspection limit was reached. The updater chain requires another check.</value></data>
+  <data name="SteamAlert.Watchdog.ScriptUnconfirmed" xml:space="preserve"><value>The identity of this potential updater component could not be confirmed; review it before cleanup: {0}</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG.label" xml:space="preserve"><value>SteamAlert PowerShell watchdog</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG.evidence" xml:space="preserve"><value>Exact reviewed script bytes periodically run the updater and launcher to restore the SteamAlert resident.</value></data>
+  <data name="Rule.STEAMALERT-UPDATER.label" xml:space="preserve"><value>SteamAlert download updater</value></data>
+  <data name="Rule.STEAMALERT-UPDATER.evidence" xml:space="preserve"><value>Exact reviewed updater bytes download, verify and replace the malicious resident, including when its file is missing.</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER.label" xml:space="preserve"><value>SteamAlert resident launcher</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER.evidence" xml:space="preserve"><value>Exact reviewed launcher bytes restart the SteamAlert resident under the watchdog's control.</value></data>
+  <data name="Rule.STEAMALERT-RESIDENT-20261117.label" xml:space="preserve"><value>SteamAlert resident with watchdog installation</value></data>
+  <data name="Rule.STEAMALERT-RESIDENT-20261117.evidence" xml:space="preserve"><value>Exact reviewed executable embeds the malicious Core, installs updater scripts and a Run startup entry, and starts the watchdog.</value></data>
+  <data name="Watchdog.InvalidBinding" xml:space="preserve"><value>The updater process binding is invalid; verification is incomplete.</value></data>
+  <data name="Watchdog.ReadIncomplete" xml:space="preserve"><value>The bound updater instances could not be fully read: {0}</value></data>
+  <data name="Watchdog.ReadLimit" xml:space="preserve"><value>The bound updater verification limit was reached; the result is incomplete.</value></data>
+  <data name="Watchdog.ScriptChanged" xml:space="preserve"><value>The script identity changed. The updater chain is not verified clear.</value></data>
+  <data name="Watchdog.ImageChanged" xml:space="preserve"><value>The program identity changed. The updater chain is not verified clear.</value></data>
+  <data name="Watchdog.ScriptStillRunning" xml:space="preserve"><value>An interpreter is still running, or has restarted, for this bound script. PID: {0}</value></data>
+  <data name="Watchdog.ImageStillRunning" xml:space="preserve"><value>The bound program is still running or has restarted. PID: {0}</value></data>
+  <data name="Watchdog.NoBoundInstance" xml:space="preserve"><value>No active instance of this exact target was found in this check. Repeat the scan after a new logon.</value></data>
+  <data name="Watchdog.ReappearedDuringRun" xml:space="preserve"><value>The target reappeared during cleanup. That observation is retained even if a later check no longer sees it: {0}</value></data>
+  <data name="Watchdog.Stopped" xml:space="preserve"><value>Stopped the independently verified script interpreter instance, PID {0}.</value></data>
+  <data name="Watchdog.ProcessChanged" xml:space="preserve"><value>The process identity or command changed. It was not stopped; scan again.</value></data>
+  <data name="Watchdog.PredecessorActive" xml:space="preserve"><value>An active instance is not covered by the approved process stops, or its state could not be confirmed. Further cleanup is stopped; scan again.</value></data>
+  <data name="Watchdog.HandoffProofInvalid" xml:space="preserve"><value>The temporary update script or its bound payloads changed, or their identity could not be verified. Scan again.</value></data>
+  <data name="SteamAlert.Handoff.Limit" xml:space="preserve"><value>The temporary updater inspection limit was reached. This update chain is not fully checked.</value></data>
+  <data name="SteamAlert.Handoff.Incomplete" xml:space="preserve"><value>The temporary update script, payload or interpreter could not be safely inspected. This update chain is not fully checked.</value></data>
+  <data name="SteamAlert.Handoff.Unconfirmed" xml:space="preserve"><value>The identity of this potential temporary updater could not be confirmed; review it before cleanup: {0}</value></data>
+  <data name="SteamAlert.Handoff.Title" xml:space="preserve"><value>Verified SteamAlert temporary update script</value></data>
+  <data name="SteamAlert.Handoff.Description" xml:space="preserve"><value>The complete script matches the reviewed replacement and restart template and is bound to verified malicious payload bytes. Cleanup includes the script and its related update copies.</value></data>
+  <data name="SteamAlert.Handoff.Evidence" xml:space="preserve"><value>Bound replacement target: {0}; process awaited by the script: {1}.</value></data>
+  <data name="SteamAlert.Handoff.HostTitle" xml:space="preserve"><value>Command interpreter running a verified SteamAlert update script</value></data>
+  <data name="SteamAlert.Handoff.CandidateTitle" xml:space="preserve"><value>Temporary update script requires identity review</value></data>
+  <data name="Rule.STEAMALERT-CORE-20261117.label" xml:space="preserve"><value>SteamAlert embedded malicious payload (2026-11-17 sample)</value></data>
+  <data name="Rule.STEAMALERT-CORE-20261117.evidence" xml:space="preserve"><value>The complete SteamAlertCore.dll resource extracted from the reviewed resident matches this independently verified SHA-256.</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG-NOBOM.label" xml:space="preserve"><value>SteamAlert embedded watchdog script</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG-NOBOM.evidence" xml:space="preserve"><value>Exact embedded watchdog bytes without a BOM; adding the UTF-8 BOM reproduces the reviewed installed script byte for byte.</value></data>
+  <data name="Rule.STEAMALERT-UPDATER-NOBOM.label" xml:space="preserve"><value>SteamAlert embedded updater script</value></data>
+  <data name="Rule.STEAMALERT-UPDATER-NOBOM.evidence" xml:space="preserve"><value>Exact embedded updater bytes without a BOM; adding the UTF-8 BOM reproduces the reviewed installed script byte for byte.</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER-NOBOM.label" xml:space="preserve"><value>SteamAlert embedded launcher script</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER-NOBOM.evidence" xml:space="preserve"><value>Exact embedded launcher bytes without a BOM; adding the UTF-8 BOM reproduces the reviewed installed script byte for byte.</value></data>
 </root>

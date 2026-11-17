@@ -22,7 +22,7 @@ public partial class MainWindow
         RemediationAvailabilityState State, RemediationAvailabilityAction Action, bool CanRemediate);
 
     internal RemediationAvailability GetRemediationAvailability() =>
-        GetRemediationAvailability(FindingHandlingPresentation.Count(Findings.Select(item => item.Handling)));
+        GetRemediationAvailability(FindingHandlingPresentation.Count(VisibleRemediationFindings.Select(item => item.Handling)));
 
     private RemediationAvailability GetRemediationAvailability(FindingHandlingCounts counts)
     {
@@ -73,7 +73,9 @@ public partial class MainWindow
         // it already explains a busy operation; do not reserve a duplicate footer row.
         // Recovery, rescan and installation blockers keep their full inline explanation/action.
         bool compact = availability.Action == RemediationAvailabilityAction.None;
-        RemediationAvailabilityPanel.Tag = availability.State == RemediationAvailabilityState.Busy;
+        RemediationAvailabilityPanel.Tag = ReferenceFindings.Count > 0 && PriorityFindings.Count == 0 &&
+            availability.State is RemediationAvailabilityState.NoActionableFindings or RemediationAvailabilityState.ReviewRequired
+                ? "reference-only" : (object)(availability.State == RemediationAvailabilityState.Busy);
         RemediationAvailabilityPanel.Margin = compact ? new Thickness(0) : new Thickness(0, 4, 0, 0);
         RemediationAvailabilityPanel.Padding = compact ? new Thickness(0) : new Thickness(8, 5, 8, 5);
         RemediationAvailabilityPanel.BorderThickness = new Thickness(compact ? 0 : 1);

@@ -43,8 +43,12 @@ public sealed partial class SteamSecurityScanner
                     : kind == SteamConfigurationRepair.Marker ? "SteamConfig.MarkerDescription" : "SteamConfig.ArgumentsDescription"),
                 HandlingDetailsText = repairable ? MessageText.Create("SteamConfig.Handling") : (MessageText)"",
                 EvidenceText = MessageText.Create("SteamConfig.Evidence", hash, kind),
-                Target = path, Sha256 = hash, TargetSha256 = hash, ConfigurationKind = kind,
-                IsKnownMalware = false, CanRemediate = repairable,
+                Target = path,
+                Sha256 = hash,
+                TargetSha256 = hash,
+                ConfigurationKind = kind,
+                IsKnownMalware = false,
+                CanRemediate = repairable,
                 SuggestedActions = repairable ? [SuggestedActionKind.RepairSteamConfiguration] : [SuggestedActionKind.ReviewOnly]
             });
         }
@@ -60,40 +64,49 @@ public sealed partial class SteamSecurityScanner
             (RegistryHive.CurrentUser, RegistryView.Default), (RegistryHive.LocalMachine, RegistryView.Registry32),
             (RegistryHive.LocalMachine, RegistryView.Registry64)
         })
-        foreach (string keyPath in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
-        {
-            token.ThrowIfCancellationRequested();
-            try
+            foreach (string keyPath in new[] { @"Software\Microsoft\Windows\CurrentVersion\Run", @"Software\Microsoft\Windows\CurrentVersion\RunOnce" })
             {
-                using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
-                using RegistryKey? key = baseKey.OpenSubKey(keyPath);
-                if (key is null) continue;
-                string[] names = key.GetValueNames();
-                if (names.Length > 4096) ConfigurationScanIncomplete(report, keyPath);
-                foreach (string name in names.Take(4096))
+                token.ThrowIfCancellationRequested();
+                try
                 {
-                    if (key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string value ||
-                        !SteamConfigurationRepair.TryRepairCommand(value, layout, out string repaired, out string executable)) continue;
-                    RegistryValueKind kind = key.GetValueKind(name);
-                    if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) continue;
-                    string hiveName = hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM";
-                    report.Findings.Add(new()
+                    using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using RegistryKey? key = baseKey.OpenSubKey(keyPath);
+                    if (key is null) continue;
+                    string[] names = key.GetValueNames();
+                    if (names.Length > 4096) ConfigurationScanIncomplete(report, keyPath);
+                    foreach (string name in names.Take(4096))
                     {
-                        RuleId = "STEAM-RUN-DEBUG-ARGUMENT", Category = FindingCategory.Steam,
-                        Severity = FindingSeverity.Medium, Score = 45,
-                        TitleText = MessageText.Create("SteamConfig.ArgumentsTitle"), DescriptionText = MessageText.Create("SteamConfig.ArgumentsDescription"),
-                        HandlingDetailsText = MessageText.Create("SteamConfig.Handling"),
-                        Target = $"{hiveName}\\{keyPath}\\{name}", RelatedFilePath = executable,
-                        ConfigurationKind = SteamConfigurationRepair.Run,
-                        ConfigurationSnapshot = JsonSerializer.Serialize(new SteamConfigurationSnapshot(SteamConfigurationRepair.Run, executable, value, repaired, (int)kind)),
-                        RegistryHive = hiveName, RegistryView = view.ToString(), RegistryKey = keyPath, RegistryValueName = name,
-                        IsKnownMalware = false, CanRemediate = true, SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
-                    });
+                        if (key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string value ||
+                            !SteamConfigurationRepair.TryRepairCommand(value, layout, out string repaired, out string executable)) continue;
+                        RegistryValueKind kind = key.GetValueKind(name);
+                        if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) continue;
+                        string hiveName = hive == RegistryHive.CurrentUser ? "HKCU" : "HKLM";
+                        report.Findings.Add(new()
+                        {
+                            RuleId = "STEAM-RUN-DEBUG-ARGUMENT",
+                            Category = FindingCategory.Steam,
+                            Severity = FindingSeverity.Medium,
+                            Score = 45,
+                            TitleText = MessageText.Create("SteamConfig.ArgumentsTitle"),
+                            DescriptionText = MessageText.Create("SteamConfig.ArgumentsDescription"),
+                            HandlingDetailsText = MessageText.Create("SteamConfig.Handling"),
+                            Target = $"{hiveName}\\{keyPath}\\{name}",
+                            RelatedFilePath = executable,
+                            ConfigurationKind = SteamConfigurationRepair.Run,
+                            ConfigurationSnapshot = JsonSerializer.Serialize(new SteamConfigurationSnapshot(SteamConfigurationRepair.Run, executable, value, repaired, (int)kind)),
+                            RegistryHive = hiveName,
+                            RegistryView = view.ToString(),
+                            RegistryKey = keyPath,
+                            RegistryValueName = name,
+                            IsKnownMalware = false,
+                            CanRemediate = true,
+                            SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
+                        });
+                    }
                 }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+                { ConfigurationScanIncomplete(report, keyPath); }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-            { ConfigurationScanIncomplete(report, keyPath); }
-        }
         HashSet<string> visited = new(StringComparer.OrdinalIgnoreCase);
         foreach (string root in new[]
         {

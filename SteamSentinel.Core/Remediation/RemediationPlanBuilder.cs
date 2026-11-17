@@ -49,6 +49,22 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                 if (finding.ProcessId is null or <= 4 || finding.ProcessStartedAtUtc is null)
                     throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.02"), sourceText => new InvalidDataException(sourceText));
                 await VerifyFileIdentityAsync(finding.Target, finding.Sha256, cancellationToken);
+                if (finding.ConfigurationKind == SteamAlertWatchdog.ScriptHostKind)
+                {
+                    if (!finding.SuggestedActions.SequenceEqual([SuggestedActionKind.StopHostProcess]) || finding.IsKnownMalware ||
+                        !SteamAlertWatchdog.IsScriptHash(finding.RelatedFileSha256) ||
+                        !PowerShellScriptHost.IsTrustedImagePath(finding.Target) ||
+                        !PowerShellScriptHost.TryParse(finding.ConfigurationSnapshot, out var invocation) ||
+                        !RelatedArtifactRelations.SamePath(invocation.ScriptPath, finding.RelatedFilePath ?? string.Empty))
+                        throw MessageExceptions.Create(MessageText.Create("SteamAlert.Watchdog.InvalidHost"), text => new InvalidDataException(text));
+                }
+                if (finding.ConfigurationKind == SteamAlertUpdateHandoff.ScriptHostKind &&
+                    (!finding.SuggestedActions.SequenceEqual([SuggestedActionKind.StopHostProcess]) || finding.IsKnownMalware ||
+                     !SteamAlertUpdateHandoff.IsTrustedImagePath(finding.Target) ||
+                     !SteamAlertUpdateHandoff.TryParseCommandLine(finding.ConfigurationSnapshot, out string? handoffPath) ||
+                     !RelatedArtifactRelations.SamePath(handoffPath, finding.RelatedFilePath ?? string.Empty) ||
+                     await SteamAlertUpdateHandoff.VerifyAsync(handoffPath, finding.RelatedFileSha256!, cancellationToken) is null))
+                    throw MessageExceptions.Create(MessageText.Create("SteamAlert.Watchdog.InvalidHost"), text => new InvalidDataException(text));
             }
             shouldBlockDomains |= (finding.IsKnownMalware && finding.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam) ||
                                   finding.SuggestedActions.Contains(SuggestedActionKind.BlockKnownDomains);
@@ -106,7 +122,10 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                         IsKnownMalware = finding.IsKnownMalware,
                         ConfidenceScore = finding.Score
                     },
-                    SuggestedActionKind.StopHostProcess => BoundAction(finding, RemediationActionType.StopHostProcess, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.StopHostProcess.01")),
+                    SuggestedActionKind.StopHostProcess => BoundAction(finding, RemediationActionType.StopHostProcess,
+                        finding.ConfigurationKind is SteamAlertWatchdog.ScriptHostKind or SteamAlertUpdateHandoff.ScriptHostKind
+                            ? MessageText.Create("SteamAlert.Watchdog.StopHost", finding.ProcessId, finding.RelatedFilePath)
+                            : MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.StopHostProcess.01")),
                     SuggestedActionKind.DisableService => BoundAction(finding, RemediationActionType.DisableService, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableService.01")),
                     SuggestedActionKind.RemoveRelatedDefenderExclusion => BoundAction(finding, RemediationActionType.RemoveRelatedDefenderExclusion, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveRelatedDefenderExclusion.01")),
                     SuggestedActionKind.DisableRelatedFirewallRule => BoundAction(finding, RemediationActionType.DisableRelatedFirewallRule, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableRelatedFirewallRule.01")),
@@ -133,7 +152,8 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     if (!string.Equals(previous.ExpectedSha256, action.ExpectedSha256, StringComparison.OrdinalIgnoreCase) ||
                         previous.ExpectedFileIdentity != action.ExpectedFileIdentity || previous.ExpectedParentIdentity != action.ExpectedParentIdentity ||
                         previous.ProcessStartedAtUtc != action.ProcessStartedAtUtc || previous.ExpectedValueData != action.ExpectedValueData ||
-                        previous.ConfigurationSnapshot != action.ConfigurationSnapshot)
+                        previous.ConfigurationSnapshot != action.ConfigurationSnapshot || previous.ConfigurationKind != action.ConfigurationKind ||
+                        previous.RelatedFilePath != action.RelatedFilePath || previous.RelatedFileSha256 != action.RelatedFileSha256)
                         throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.03"), sourceText => new InvalidDataException(sourceText));
                 }
                 else { deduplication.Add(key, action); plan.Actions.Add(action); }
@@ -225,16 +245,19 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     path.Length <= 4096 ? path : path[..2046] + " … " + path[^2046..]),
                 sourceText => new FileRemediationScopeException(sourceText));
         bool embeddedProof = !finding.UserSelectedRisk && finding.RuleId == SteamSentinel.Core.Inspection.SteamAlertEmbeddedEvidence.RuleId;
+        bool handoffProof = !finding.UserSelectedRisk && finding.RuleId == SteamAlertUpdateHandoff.RuleId;
+        if (handoffProof && await SteamAlertUpdateHandoff.VerifyAsync(path, hash, cancellationToken) is null)
+            throw MessageExceptions.Create(MessageText.Create("SteamAlert.Handoff.Unconfirmed", path), text => new InvalidDataException(text));
         return new RemediationAction
         {
             Type = RemediationActionType.QuarantineFile,
             UserSelectedRisk = finding.UserSelectedRisk,
-            ContentEvidenceRuleId = embeddedProof ? SteamSentinel.Core.Inspection.SteamAlertEmbeddedEvidence.RuleId : null,
+            ContentEvidenceRuleId = embeddedProof ? SteamSentinel.Core.Inspection.SteamAlertEmbeddedEvidence.RuleId : handoffProof ? SteamAlertUpdateHandoff.RuleId : null,
             DisplayNameText = MessageText.Create("Backend.Core.RemediationPlanBuilder.CreateFileActionAsync.01"),
             Target = path,
             ExpectedSha256 = hash,
-            ExpectedFileIdentity = requestExplicitFileTargets || embeddedProof ? FileScopeSafety.CaptureIdentity(path) : null,
-            ExpectedParentIdentity = requestExplicitFileTargets || embeddedProof ? FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, true) : null,
+            ExpectedFileIdentity = requestExplicitFileTargets || embeddedProof || handoffProof ? FileScopeSafety.CaptureIdentity(path) : null,
+            ExpectedParentIdentity = requestExplicitFileTargets || embeddedProof || handoffProof ? FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, true) : null,
             IsKnownMalware = finding.IsKnownMalware,
             ConfidenceScore = finding.Score
         };
@@ -265,6 +288,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
     private static RemediationAction BoundAction(Finding finding, RemediationActionType type, MessageText label) => new()
     {
         Type = type,
+        ContentEvidenceRuleId = finding.ConfigurationKind == SteamAlertUpdateHandoff.ScriptHostKind ? SteamAlertUpdateHandoff.RuleId : null,
         DisplayNameText = label,
         Target = finding.Target,
         ExpectedSha256 = finding.Sha256,

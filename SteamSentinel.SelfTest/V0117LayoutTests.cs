@@ -102,10 +102,10 @@ internal static partial class Program
                 Check($"UI {size} 风险行已真实生成且保留纵向浏览", UiLayoutHarness.Descendants<DataGridRow>(findings).Any() &&
                     UiLayoutHarness.Descendants<ScrollViewer>(findings).Any(viewer => viewer.ScrollableHeight > 0));
                 DataGridRow? first = findings.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;
-                Check($"UI {size} 风险严重度分类和分数实际绑定可读", first is not null &&
+                Check($"UI {size} 风险严重度分类和详情分数实际绑定可读", first is not null &&
                     ((TextBlock?)findings.Columns[1].GetCellContent(first))?.Text == window.Findings[0].Severity &&
                     ((TextBlock?)findings.Columns[2].GetCellContent(first))?.Text == window.Findings[0].Category &&
-                    ((TextBlock?)findings.Columns[3].GetCellContent(first))?.Text == "100");
+                    ((TextBlock)window.FindName("DetailScoreText")).Text == DisplayText.Format("FindingPriority.Score", 100));
                 Check($"UI {size} 默认至少完整显示第一条风险摘要", first is not null && layout.IsFullyVisible(first));
                 if (output is not null) layout.Save("layout-risk-" + size, output);
                 findings.SelectedIndex = 45;
@@ -301,13 +301,13 @@ internal static partial class Program
                     window.Findings.All(finding => finding.Severity == UiExpected("信息", "Information") && !finding.CanSelect) &&
                     !((Button)window.FindName("RemediateButton")).IsEnabled);
                 Check($"UI 表格 {size} 处理状态与原因双行可读且行高有界", first.ActualHeight >= findings.MinRowHeight && first.ActualHeight <= 52 &&
-                    findings.Columns.Count == 7 && findings.Columns[6].GetCellContent(first) is { } handling &&
+                    findings.Columns.Count == 6 && findings.Columns[5].GetCellContent(first) is { } handling &&
                     UiLayoutHarness.Descendants<TextBlock>(handling).Where(text => !string.IsNullOrWhiteSpace(text.Text)).ToArray() is { Length: >= 2 } lines &&
                     lines.All(layout.IsFullyVisible));
                 Check($"UI 表格 {size} 真实单元格保留左右8上下3像素留白", layout.CellsHaveRealPadding(findings));
-                Check($"UI 表格 {size} 严重度分类分数与处置复选框居中", new[] { 1, 2, 3 }.All(column => layout.CellTextIsCentered(findings, 0, column)) &&
+                Check($"UI 表格 {size} 严重度分类与处置复选框居中", new[] { 1, 2 }.All(column => layout.CellTextIsCentered(findings, 0, column)) &&
                     layout.CellCheckIsCentered(findings, 0, 0));
-                Check($"UI 表格 {size} 发现和目标左对齐并垂直居中", new[] { 4, 5 }.All(column => layout.CellTextIsLeftAligned(findings, 0, column)));
+                Check($"UI 表格 {size} 发现和目标左对齐并垂直居中", new[] { 3, 4 }.All(column => layout.CellTextIsLeftAligned(findings, 0, column)));
                 if (output is not null) layout.Save("visual-information-" + size, output);
 
                 ((TabControl)window.FindName("ResultTabs")).SelectedIndex = 1;

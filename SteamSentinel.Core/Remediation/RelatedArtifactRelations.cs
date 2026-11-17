@@ -36,6 +36,8 @@ public static class RelatedArtifactRelations
     }
 
     public static bool SupportsBoundEntry(Finding finding, string? residentDirectory = null) => SupportsHeuristicEntry(finding) ||
+        finding.RuleId == SteamAlertUpdateHandoff.RuleId && finding.ReasonCode == "KnownResidentUpdateHandoff" &&
+        !finding.IsKnownMalware && finding.Score == 100 && IsFileEvidence(finding) ||
         finding.RuleId == SteamAlertEmbeddedEvidence.RuleId && finding.ReasonCode == SteamAlertEmbeddedEvidence.ReasonCode &&
         !finding.IsKnownMalware && finding.Score >= 100 && IsFileEvidence(finding) &&
         (finding.ContentPath is null || SamePath(finding.ContentPath, finding.Target)) &&
@@ -93,6 +95,8 @@ public static class RelatedArtifactRelations
                     a == SuggestedActionKind.RemoveRegistryValue && (file.RuleId != SteamAlertEmbeddedEvidence.RuleId ||
                         related.RegistryHive == "HKCU" && related.RegistryKey == @"Software\Microsoft\Windows\CurrentVersion\Run") ||
                     a == SuggestedActionKind.RemoveScheduledTask && file.RuleId != SteamAlertEmbeddedEvidence.RuleId ||
+                    a == SuggestedActionKind.StopHostProcess && file.RuleId == SteamAlertUpdateHandoff.RuleId &&
+                        related.ConfigurationKind == SteamAlertUpdateHandoff.ScriptHostKind ||
                     a == SuggestedActionKind.StopProcess && SamePath(related.Target, path));
                 if (supported) result.Add(related);
             }

@@ -29,7 +29,7 @@ internal static partial class Program
             layout.Refresh();
             Check("DPI 留白恢复后通过物理像素检查", layout.CellsHaveRealPadding(grid));
 
-            DataGridCell handling = UiLayoutHarness.Descendants<DataGridCell>(grid).First(candidate => candidate.Column.DisplayIndex == 6);
+            DataGridCell handling = UiLayoutHarness.Descendants<DataGridCell>(grid).First(candidate => candidate.Column.DisplayIndex == 5);
             ContentPresenter presenter = (ContentPresenter)handling.Template.FindName("CellContent", handling);
             Rect initialContent = presenter.TransformToAncestor(handling).TransformBounds(new Rect(presenter.RenderSize));
             presenter.RenderTransform = new TranslateTransform(0, 3 - 2 / dpi.DpiScaleY - initialContent.Top);

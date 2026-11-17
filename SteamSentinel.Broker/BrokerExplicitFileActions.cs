@@ -76,6 +76,8 @@ internal sealed partial class BrokerEngine
             ? SecureFileLease.OpenWithSecurity(action.Target) : SecureFileLease.Open(action.Target);
         VerifiedBrokerFileTarget verified = await authorization.VerifyLockedAsync(action, source, parent, token);
         string? contentProof = await VerifyQuarantineContentEvidenceAsync(action, source, token);
+        await using SteamAlertHandoffLease? handoffProof = action.ContentEvidenceRuleId == SteamAlertUpdateHandoff.RuleId
+            ? await OpenHandoffProofLeaseAsync(action.Target, action.ExpectedSha256!, token, source) : null;
         QuarantineRecord record = new()
         {
             ActionId = action.ActionId,

@@ -54,12 +54,20 @@ public static class SteamConfigurationRepairTarget
             if (observed.Kind != SteamConfigurationRepair.Run || observed.SteamExecutable != executable || observed.RepairedValue != repairedValue) throw Denied();
             return new()
             {
-                Type = RemediationActionType.RepairSteamConfiguration, Target = finding.Target, DisplayName = finding.Title,
-                ConfigurationKind = SteamConfigurationRepair.Run, ConfigurationSnapshot = JsonSerializer.Serialize(observed),
-                RegistryHive = finding.RegistryHive, RegistryView = finding.RegistryView, RegistryKey = finding.RegistryKey,
-                RegistryValueName = finding.RegistryValueName, ExpectedValueData = value,
-                RelatedFilePath = executable, RelatedFileSha256 = await CaptureExecutableHashAsync(executable, token),
-                IsKnownMalware = false, ConfidenceScore = finding.Score
+                Type = RemediationActionType.RepairSteamConfiguration,
+                Target = finding.Target,
+                DisplayName = finding.Title,
+                ConfigurationKind = SteamConfigurationRepair.Run,
+                ConfigurationSnapshot = JsonSerializer.Serialize(observed),
+                RegistryHive = finding.RegistryHive,
+                RegistryView = finding.RegistryView,
+                RegistryKey = finding.RegistryKey,
+                RegistryValueName = finding.RegistryValueName,
+                ExpectedValueData = value,
+                RelatedFilePath = executable,
+                RelatedFileSha256 = await CaptureExecutableHashAsync(executable, token),
+                IsKnownMalware = false,
+                ConfidenceScore = finding.Score
             };
         }
         if (!IsFileTarget(finding.Target, finding.ConfigurationKind, layout) || !FileScopeSafety.EvaluatePath(finding.Target).Allowed ||
@@ -77,13 +85,19 @@ public static class SteamConfigurationRepairTarget
         RelatedArtifactReader.ValidatePath(input.SafeFileHandle, Path.GetFullPath(finding.Target));
         return new()
         {
-            Type = RemediationActionType.RepairSteamConfiguration, Target = Path.GetFullPath(finding.Target), DisplayName = finding.Title,
-            ConfigurationKind = finding.ConfigurationKind, ConfigurationSnapshot = JsonSerializer.Serialize(new SteamConfigurationSnapshot(finding.ConfigurationKind!, target)),
-            ExpectedSha256 = hash, RepairedSha256 = repairedHash,
+            Type = RemediationActionType.RepairSteamConfiguration,
+            Target = Path.GetFullPath(finding.Target),
+            DisplayName = finding.Title,
+            ConfigurationKind = finding.ConfigurationKind,
+            ConfigurationSnapshot = JsonSerializer.Serialize(new SteamConfigurationSnapshot(finding.ConfigurationKind!, target)),
+            ExpectedSha256 = hash,
+            RepairedSha256 = repairedHash,
             ExpectedFileIdentity = FileScopeSafety.ReadIdentity(input.SafeFileHandle),
             ExpectedParentIdentity = FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(finding.Target)!, true),
-            RelatedFilePath = target, RelatedFileSha256 = target is null ? null : await CaptureExecutableHashAsync(target, token),
-            IsKnownMalware = false, ConfidenceScore = finding.Score
+            RelatedFilePath = target,
+            RelatedFileSha256 = target is null ? null : await CaptureExecutableHashAsync(target, token),
+            IsKnownMalware = false,
+            ConfidenceScore = finding.Score
         };
     }
 

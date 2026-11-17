@@ -33,8 +33,11 @@ internal sealed partial class BrokerEngine
                     catch (InvalidOperationException) { continue; }
                     catch (Win32Exception ex)
                     {
-                        result.Add(observation with { Status = DiagnosticReadStatus.Failed,
-                            DetailText = observation.DetailText + " " + MessageExceptions.Describe(ex) });
+                        result.Add(observation with
+                        {
+                            Status = DiagnosticReadStatus.Failed,
+                            DetailText = observation.DetailText + " " + MessageExceptions.Describe(ex)
+                        });
                         continue;
                     }
                     result.Add(observation);

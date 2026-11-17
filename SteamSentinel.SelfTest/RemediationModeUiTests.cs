@@ -42,8 +42,11 @@ internal static partial class Program
         if (error is not null) Failures.Add("Remediation mode UI fixture error: " + error);
         File.WriteAllText(Path.Combine(output, "remediation-mode-ui-results.json"), JsonSerializer.Serialize(new
         {
-            passed = _passed, failed = Failures.Count, failures = Failures,
-            version = ProductInfo.Version, buildIdentity = ProductInfo.BuildIdentity,
+            passed = _passed,
+            failed = Failures.Count,
+            failures = Failures,
+            version = ProductInfo.Version,
+            buildIdentity = ProductInfo.BuildIdentity,
             safety = "Hidden inert UI fixtures; no scan, process termination, Broker execution, or remediation."
         }, new JsonSerializerOptions { WriteIndented = true }));
         foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
@@ -56,23 +59,42 @@ internal static partial class Program
         string target = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "inert-mode-risk.exe");
         Finding risk = new()
         {
-            Id = "mode-risk", RuleId = "MANAGED-STEAM-CEF-HOST", Category = FindingCategory.File,
-            Severity = FindingSeverity.High, Score = 90, Title = "Inert managed behavior finding",
-            Target = target, Sha256 = new string('A', 64), SuggestedActions = [SuggestedActionKind.ReviewOnly]
+            Id = "mode-risk",
+            RuleId = "MANAGED-STEAM-CEF-HOST",
+            Category = FindingCategory.File,
+            Severity = FindingSeverity.High,
+            Score = 90,
+            Title = "Inert managed behavior finding",
+            Target = target,
+            Sha256 = new string('A', 64),
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
         };
         Finding known = new()
         {
-            Id = "mode-known", RuleId = "INERT-KNOWN", Category = FindingCategory.File,
-            Severity = FindingSeverity.Critical, Score = 100, Title = "Inert known finding",
-            Target = target + ".known", Sha256 = new string('B', 64), IsKnownMalware = true,
-            CanRemediate = true, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            Id = "mode-known",
+            RuleId = "INERT-KNOWN",
+            Category = FindingCategory.File,
+            Severity = FindingSeverity.Critical,
+            Score = 100,
+            Title = "Inert known finding",
+            Target = target + ".known",
+            Sha256 = new string('B', 64),
+            IsKnownMalware = true,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         Finding unbound = new()
         {
-            Id = "mode-unbound", RuleId = "INERT-UNBOUND", Category = FindingCategory.File,
-            Severity = FindingSeverity.High, Score = 90, Title = "Inert unbound member",
-            Target = target + ".zip", ContentPath = target + ".zip!/inner.exe",
-            Sha256 = new string('C', 64), SuggestedActions = [SuggestedActionKind.ReviewOnly]
+            Id = "mode-unbound",
+            RuleId = "INERT-UNBOUND",
+            Category = FindingCategory.File,
+            Severity = FindingSeverity.High,
+            Score = 90,
+            Title = "Inert unbound member",
+            Target = target + ".zip",
+            ContentPath = target + ".zip!/inner.exe",
+            Sha256 = new string('C', 64),
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
         };
         ScanReport report = new() { Findings = [known, risk, unbound], CompletedAtUtc = DateTimeOffset.UtcNow };
         string original = JsonSerializer.Serialize(report, JsonFile.Options);
@@ -129,12 +151,17 @@ internal static partial class Program
 
             RemediationPlan plan = new()
             {
-                Mode = RemediationMode.Aggressive, ExplicitFileTargetsRequested = true,
+                Mode = RemediationMode.Aggressive,
+                ExplicitFileTargetsRequested = true,
                 Actions = new[] { RemediationActionType.StopProcess, RemediationActionType.RemoveRegistryValue, RemediationActionType.QuarantineFile }
                     .Select(type => new RemediationAction
                     {
-                        Type = type, Target = target, DisplayName = "Inert user-selected risk action",
-                        UserSelectedRisk = true, ConfidenceScore = 90, ExpectedSha256 = new string('A', 64)
+                        Type = type,
+                        Target = target,
+                        DisplayName = "Inert user-selected risk action",
+                        UserSelectedRisk = true,
+                        ConfidenceScore = 90,
+                        ExpectedSha256 = new string('A', 64)
                     }).ToList()
             };
             string originalPlan = JsonSerializer.Serialize(plan, JsonFile.Options);
@@ -170,16 +197,20 @@ internal static partial class Program
                 rows.Length == 3 && rows.All(row => row.Verification.Contains(DisplayText.Get("RemediationMode.BrokerRisk"), StringComparison.Ordinal)));
             RemediationAction cfgRepair = new()
             {
-                Type = RemediationActionType.RepairSteamConfiguration, Target = @"C:\Steam\steam.cfg",
+                Type = RemediationActionType.RepairSteamConfiguration,
+                Target = @"C:\Steam\steam.cfg",
                 ConfigurationKind = SteamConfigurationRepair.Cfg,
-                ExpectedSha256 = new string('D', 64), RepairedSha256 = new string('E', 64)
+                ExpectedSha256 = new string('D', 64),
+                RepairedSha256 = new string('E', 64)
             };
             const string originalRun = "\"C:\\Steam\\steam.exe\" -cef-enable-debugging -token=private-preview-secret -silent";
             const string repairedRun = "\"C:\\Steam\\steam.exe\" -token=private-preview-secret -silent";
             RemediationAction runRepair = new()
             {
-                Type = RemediationActionType.RepairSteamConfiguration, Target = @"HKCU\Run\Steam",
-                ConfigurationKind = SteamConfigurationRepair.Run, ExpectedValueData = originalRun,
+                Type = RemediationActionType.RepairSteamConfiguration,
+                Target = @"HKCU\Run\Steam",
+                ConfigurationKind = SteamConfigurationRepair.Run,
+                ExpectedValueData = originalRun,
                 ConfigurationSnapshot = JsonSerializer.Serialize(new SteamConfigurationSnapshot(
                     SteamConfigurationRepair.Run, @"C:\Steam\steam.exe", originalRun, repairedRun))
             };

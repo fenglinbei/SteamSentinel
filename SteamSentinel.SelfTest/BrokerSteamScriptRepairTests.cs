@@ -261,19 +261,26 @@ internal static partial class Program
         SteamScriptRepairSnapshot capture = await SteamScriptRepairTarget.CaptureAsync(path, await Hashing.Sha256FileAsync(path), layout);
         return new RemediationAction
         {
-            Type = RemediationActionType.RepairSteamScript, Target = path,
-            ExpectedSha256 = capture.OriginalSha256, RepairedSha256 = capture.RepairedSha256,
-            ExpectedFileIdentity = capture.FileIdentity, ExpectedParentIdentity = capture.ParentIdentity
+            Type = RemediationActionType.RepairSteamScript,
+            Target = path,
+            ExpectedSha256 = capture.OriginalSha256,
+            RepairedSha256 = capture.RepairedSha256,
+            ExpectedFileIdentity = capture.FileIdentity,
+            ExpectedParentIdentity = capture.ParentIdentity
         };
     }
 
     private static RemediationAction BrokerScriptActionCopy(RemediationAction action, string? target = null,
         string? identity = null, string? repairedHash = null) => new()
-    {
-        ActionId = action.ActionId, Type = action.Type, Target = target ?? action.Target,
-        ExpectedSha256 = action.ExpectedSha256, RepairedSha256 = repairedHash ?? action.RepairedSha256,
-        ExpectedFileIdentity = identity ?? action.ExpectedFileIdentity, ExpectedParentIdentity = action.ExpectedParentIdentity
-    };
+        {
+            ActionId = action.ActionId,
+            Type = action.Type,
+            Target = target ?? action.Target,
+            ExpectedSha256 = action.ExpectedSha256,
+            RepairedSha256 = repairedHash ?? action.RepairedSha256,
+            ExpectedFileIdentity = identity ?? action.ExpectedFileIdentity,
+            ExpectedParentIdentity = action.ExpectedParentIdentity
+        };
 
     private static void TestBrokerScriptProcessPrerequisites(string fixture)
     {
@@ -284,8 +291,11 @@ internal static partial class Program
         RemediationAction repair = new() { Type = RemediationActionType.RepairSteamScript, Target = Path.Combine(fixture, "fixture.js") };
         RemediationAction Stop(DateTimeOffset? start = null, string? path = null, int? pid = null) => new()
         {
-            Type = RemediationActionType.StopProcess, Target = path ?? source, ExpectedSha256 = hash,
-            ProcessId = pid ?? running.ProcessId, ProcessStartedAtUtc = start ?? started
+            Type = RemediationActionType.StopProcess,
+            Target = path ?? source,
+            ExpectedSha256 = hash,
+            ProcessId = pid ?? running.ProcessId,
+            ProcessStartedAtUtc = start ?? started
         };
         Dictionary<string, string> proof = new(StringComparer.OrdinalIgnoreCase) { [source] = hash };
         static bool Denied(Action check)

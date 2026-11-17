@@ -31,18 +31,20 @@ internal static partial class Program
                 layout.Refresh();
                 TextBlock title = TrustProxyUiText(window, "HeaderStatusText");
                 TextBlock counts = TrustProxyUiText(window, "FindingHandlingSummaryText");
+                TextBlock priorityCounts = TrustProxyUiText(window, "FindingCountText");
                 Button remediate = TrustProxyUiButton(window, "RemediateButton");
                 Button selectAll = TrustProxyUiButton(window, "SelectAllButton");
                 DataGrid grid = (DataGrid)window.FindName("FindingsGrid");
                 DataGridRow? row = grid.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;
                 Check($"诊断UI {viewport} 信息级PAC仍明确尚未处理且资格可见",
                     title.Text.Contains(UiExpected("尚未处理", "remain unresolved"), StringComparison.Ordinal) && !title.Text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal) &&
-                    counts.Text.Contains(UiExpected("待确认 1 项", "Review needed 1"), StringComparison.Ordinal) && layout.IsFullyVisible(counts) &&
-                    counts.ToolTip?.ToString() == counts.Text && row is not null && layout.IsFullyVisible(row));
+                    priorityCounts.Text == DisplayText.Format("FindingPriority.Counts", 1, 0) && layout.IsFullyVisible(priorityCounts) &&
+                    priorityCounts.ToolTip?.ToString()?.Contains(UiExpected("待确认 1 项", "Review needed 1"), StringComparison.Ordinal) == true &&
+                    row is not null && layout.IsFullyVisible(row));
                 Check($"诊断UI {viewport} 零可处理项禁用全选和处理并说明真实原因",
                     !remediate.IsEnabled && !selectAll.IsEnabled &&
                     remediate.ToolTip?.ToString()?.Contains(UiExpected("没有可处理项", "No items are currently actionable"), StringComparison.Ordinal) == true &&
-                    selectAll.ToolTip?.ToString()?.Contains(UiExpected("没有可选择处理", "No items are currently eligible"), StringComparison.Ordinal) == true &&
+                    selectAll.ToolTip?.ToString() == DisplayText.Get("FindingPriority.NoSelectablePriority") &&
                     !remediate.ToolTip!.ToString()!.Contains(UiExpected("管理员处置可用", "Administrator remediation available"), StringComparison.Ordinal) &&
                     ToolTipService.GetShowOnDisabled(remediate) && ToolTipService.GetShowOnDisabled(selectAll));
                 Check($"诊断UI {viewport} PAC提供只读诊断而不提供文件占用操作",
@@ -51,8 +53,8 @@ internal static partial class Program
                     TrustProxyUiButton(window, "OccupancyButton").Visibility == Visibility.Collapsed &&
                     TrustProxyUiText(window, "DetailDescriptionText").Text.Contains(UiExpected("尚不能确认", "unconfirmed"), StringComparison.Ordinal));
                 Check($"诊断UI {viewport} 新状态列不挤出表格且原因不只存在于悬浮提示",
-                    grid.Columns.Count == 7 && layout.HasReadableColumns(grid) && row is not null &&
-                    grid.Columns[6].GetCellContent(row) is { } cell &&
+                    grid.Columns.Count == 6 && layout.HasReadableColumns(grid) && row is not null &&
+                    grid.Columns[5].GetCellContent(row) is { } cell &&
                     UiLayoutHarness.Descendants<TextBlock>(cell).Any(text => text.Text == UiExpected("需进一步确认", "Further review needed") && layout.IsFullyVisible(text)) &&
                     UiLayoutHarness.Descendants<TextBlock>(cell).Any(text => text.Text.Contains(UiExpected("配置线索", "Configuration indicators"), StringComparison.Ordinal) && layout.IsFullyVisible(text)));
                 if (output is not null) layout.Save("trust-proxy-pending-" + viewport, output);

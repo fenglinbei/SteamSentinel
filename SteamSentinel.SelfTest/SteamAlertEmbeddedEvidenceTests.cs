@@ -70,8 +70,14 @@ internal static partial class Program
         using (Stream member = archive.CreateEntry("member.exe").Open()) member.Write(host);
         ScanReport scan = await new ScanCoordinator(rules, new SteamLayout()).RunAsync(new ScanOptions
         {
-            Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false,
-            UseAmsi = false, InspectArchives = true, InspectDeepSignatures = false, CustomRoots = [directory]
+            Mode = ScanMode.Custom,
+            IncludeSystem = false,
+            IncludeSteam = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            InspectArchives = true,
+            InspectDeepSignatures = false,
+            CustomRoots = [directory]
         });
         Finding[] foundHosts = scan.Findings.Where(f => f.RuleId == SteamAlertEmbeddedEvidence.RuleId).ToArray();
         Check("Embedded Core: loose hosts and archive members retain their distinct identities",
@@ -88,10 +94,16 @@ internal static partial class Program
 
         Finding Source(string source, string? expected = null) => new()
         {
-            RuleId = SteamAlertEmbeddedEvidence.RuleId, ReasonCode = SteamAlertEmbeddedEvidence.ReasonCode,
-            Category = FindingCategory.File, Target = source, ContentPath = source,
-            Sha256 = expected ?? hostHash, TargetSha256 = expected ?? hostHash,
-            CanRemediate = true, Score = 100, Severity = FindingSeverity.Critical,
+            RuleId = SteamAlertEmbeddedEvidence.RuleId,
+            ReasonCode = SteamAlertEmbeddedEvidence.ReasonCode,
+            Category = FindingCategory.File,
+            Target = source,
+            ContentPath = source,
+            Sha256 = expected ?? hostHash,
+            TargetSha256 = expected ?? hostHash,
+            CanRemediate = true,
+            Score = 100,
+            Severity = FindingSeverity.Critical,
             SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         RelatedArtifactScanner related = new(rules);
@@ -122,9 +134,16 @@ internal static partial class Program
         SteamLayout layout = new(); layout.ContentRoots.Add(new(mods, "1234", "mod", "Test"));
         Finding loaderFinding = new()
         {
-            RuleId = SteamAlertInstallation.LoaderRule, Category = FindingCategory.File, Target = loaderPath,
-            ContentPath = loaderPath, Sha256 = loaderHash, TargetSha256 = loaderHash, IsKnownMalware = true,
-            CanRemediate = true, Score = 100, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            RuleId = SteamAlertInstallation.LoaderRule,
+            Category = FindingCategory.File,
+            Target = loaderPath,
+            ContentPath = loaderPath,
+            Sha256 = loaderHash,
+            TargetSha256 = loaderHash,
+            IsKnownMalware = true,
+            CanRemediate = true,
+            Score = 100,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         async Task<RelatedArtifactExpansion> Expand(Finding selected) => await new RelatedArtifactScanner(rules).ExpandLocalAsync([selected],
             new ScanReport { Findings = [selected] }, default, RelatedArtifactScanner.MaximumVerificationBytes, true, layout, resident);
@@ -148,9 +167,17 @@ internal static partial class Program
         string hash = Hashing.Sha256Bytes(inertHost);
         Finding finding = new()
         {
-            RuleId = SteamAlertEmbeddedEvidence.RuleId, ReasonCode = SteamAlertEmbeddedEvidence.ReasonCode,
-            Category = FindingCategory.File, Target = path, ContentPath = path, Sha256 = hash, TargetSha256 = hash,
-            CanRemediate = true, Score = 100, Severity = FindingSeverity.Critical, SuggestedActions = [SuggestedActionKind.QuarantineFile]
+            RuleId = SteamAlertEmbeddedEvidence.RuleId,
+            ReasonCode = SteamAlertEmbeddedEvidence.ReasonCode,
+            Category = FindingCategory.File,
+            Target = path,
+            ContentPath = path,
+            Sha256 = hash,
+            TargetSha256 = hash,
+            CanRemediate = true,
+            Score = 100,
+            Severity = FindingSeverity.Critical,
+            SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         RemediationPlan plan = await new RemediationPlanBuilder(new RuleSet()).BuildAsync([finding], false, requestExplicitFileTargets: true);
         RemediationAction file = plan.Actions.Single();
@@ -204,12 +231,22 @@ internal static partial class Program
         RemediationAction Action(RemediationActionType type = RemediationActionType.RemoveRegistryValue, string? path = null,
             string hive = "HKCU", string key = @"Software\Microsoft\Windows\CurrentVersion\Run", string? image = null,
             string? imageHash = null, bool known = false, bool risk = false, int score = 100) => new()
-        {
-            Type = type, Target = image ?? path ?? installed, RelatedFilePath = path ?? installed, RelatedFileSha256 = hash,
-            ExpectedSha256 = imageHash ?? hash, ConfidenceScore = score, ProcessId = 54321,
-            ProcessStartedAtUtc = DateTimeOffset.UnixEpoch, RegistryHive = hive, RegistryView = "Default",
-            RegistryKey = key, RegistryValueName = "inert-fixture", IsKnownMalware = known, UserSelectedRisk = risk
-        };
+            {
+                Type = type,
+                Target = image ?? path ?? installed,
+                RelatedFilePath = path ?? installed,
+                RelatedFileSha256 = hash,
+                ExpectedSha256 = imageHash ?? hash,
+                ConfidenceScore = score,
+                ProcessId = 54321,
+                ProcessStartedAtUtc = DateTimeOffset.UnixEpoch,
+                RegistryHive = hive,
+                RegistryView = "Default",
+                RegistryKey = key,
+                RegistryValueName = "inert-fixture",
+                IsKnownMalware = known,
+                UserSelectedRisk = risk
+            };
         string command = '"' + installed + '"';
         Check("Embedded Broker: independent proof still needs installed direct Run scope",
             BrokerEngine.SupportsEmbeddedBoundAction(Action(), command, resident));
@@ -232,12 +269,21 @@ internal static partial class Program
             !BrokerEngine.SupportsEmbeddedBoundAction(Action(score: 99), command, resident));
         QuarantineRecord Record(string path, string? proof = SteamAlertEmbeddedEvidence.RuleId, string hive = "HKCU",
             string key = @"Software\Microsoft\Windows\CurrentVersion\Run", string? saved = null, bool risk = false) => new()
-        {
-            Type = RemediationActionType.RemoveRegistryValue, OriginalTarget = path, RelatedFilePath = path,
-            RelatedFileSha256 = hash, VerifiedContentRuleId = proof, RegistryHive = hive, RegistryView = "Default",
-            RegistryKey = key, RegistryValueName = "inert-fixture", RegistryValueData = saved ?? ('"' + path + '"'),
-            RegistryValueKind = (int)RegistryValueKind.String, UserSelectedRisk = risk, MutationConfirmed = true
-        };
+            {
+                Type = RemediationActionType.RemoveRegistryValue,
+                OriginalTarget = path,
+                RelatedFilePath = path,
+                RelatedFileSha256 = hash,
+                VerifiedContentRuleId = proof,
+                RegistryHive = hive,
+                RegistryView = "Default",
+                RegistryKey = key,
+                RegistryValueName = "inert-fixture",
+                RegistryValueData = saved ?? ('"' + path + '"'),
+                RegistryValueKind = (int)RegistryValueKind.String,
+                UserSelectedRisk = risk,
+                MutationConfirmed = true
+            };
         Check("Embedded Broker: trusted rollback shape preserves exact installed Run binding",
             BrokerEngine.SupportsEmbeddedRegistryRecord(Record(installed), resident));
         Check("Embedded Broker: rollback rejects a moved target, missing proof and changed command",

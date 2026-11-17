@@ -99,7 +99,9 @@ internal sealed partial class BrokerEngine
         }
         if (!HasPersistenceBinding(action)) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.OpenBoundLeaseAsync.01"), sourceText => new UnauthorizedAccessException(sourceText));
         // Indirect script chains are reported for review, never authorized from a transient text read.
-        if (command is not null && !CommandTargets.Extract(command).Any(path => PathsEquivalent(path, action.RelatedFilePath!)))
+        if (command is not null && (SteamAlertWatchdog.IsScriptHash(action.RelatedFileSha256)
+            ? !IsBoundWatchdogInvocation(command, action.RelatedFilePath)
+            : !CommandTargets.Extract(command).Any(path => PathsEquivalent(path, action.RelatedFilePath!))))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.OpenBoundLeaseAsync.02"), sourceText => new InvalidOperationException(sourceText));
         if (!HasKnownBinding(action) && (command is null || !BoundContentEvidence.IsDirectInvocation(command, action.RelatedFilePath!)))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.OpenBoundLeaseAsync.03"), sourceText => new InvalidOperationException(sourceText));
@@ -136,7 +138,9 @@ internal sealed partial class BrokerEngine
                 (e.Elements().FirstOrDefault(c => c.Name.LocalName == "Arguments")?.Value ?? "")));
     }
 
-    private bool CommandTargetsAreBound(RemediationAction action, string command) => HasKnownBinding(action)
+    private bool CommandTargetsAreBound(RemediationAction action, string command) => SteamAlertWatchdog.IsScriptHash(action.RelatedFileSha256)
+        ? command.Split('\n').Any(invocation => IsBoundWatchdogInvocation(invocation, action.RelatedFilePath))
+        : HasKnownBinding(action)
         ? CommandTargets.Extract(command).Any(path => PathsEquivalent(path, action.RelatedFilePath!))
         : command.Split('\n').Any(invocation => BoundContentEvidence.IsDirectInvocation(invocation, action.RelatedFilePath!));
 
@@ -191,6 +195,11 @@ internal sealed partial class BrokerEngine
 
     private async Task VerifyRecordedContentAsync(QuarantineRecord record, QuarantineManifest manifest, CancellationToken token)
     {
+        if (record.VerifiedContentRuleId == SteamAlertUpdateHandoff.RuleId)
+        {
+            await VerifyHandoffQuarantineRecordAsync(record, manifest, token);
+            return;
+        }
         if (record.VerifiedContentRuleId == SteamAlertEmbeddedEvidence.RuleId && record.Type == RemediationActionType.QuarantineFile)
         {
             await VerifyEmbeddedQuarantineRecordAsync(record, token);

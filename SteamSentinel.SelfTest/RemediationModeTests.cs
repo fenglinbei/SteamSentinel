@@ -23,9 +23,14 @@ internal static partial class Program
         string hash = await Hashing.Sha256FileAsync(path);
         Finding weak = new()
         {
-            RuleId = "HEUR-SCRIPT-TOKEN-COOCCURRENCE", Target = path, Sha256 = hash,
-            Category = FindingCategory.File, Severity = FindingSeverity.High, Score = 90,
-            CanRemediate = false, SuggestedActions = [SuggestedActionKind.ReviewOnly]
+            RuleId = "HEUR-SCRIPT-TOKEN-COOCCURRENCE",
+            Target = path,
+            Sha256 = hash,
+            Category = FindingCategory.File,
+            Severity = FindingSeverity.High,
+            Score = 90,
+            CanRemediate = false,
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
         };
         string original = JsonSerializer.Serialize(weak, JsonFile.Options);
         Check("Modes conservative keeps review-only evidence", ReferenceEquals(weak, RemediationModePolicy.ProjectFinding(weak, RemediationMode.Conservative)));
@@ -36,11 +41,11 @@ internal static partial class Program
         Check("Modes serialized reports cannot import user authority", !JsonSerializer.Deserialize<Finding>(JsonSerializer.Serialize(projected, JsonFile.Options), JsonFile.Options)!.UserSelectedRisk);
         Check("Modes missing target hash cannot be selected", !RemediationModePolicy.CanRequestQuarantine(new() { Target = path, Severity = FindingSeverity.High }));
         Check("Modes archive inner hash cannot authorize outer file", !RemediationModePolicy.CanRequestQuarantine(new()
-            { Target = path, ContentPath = path + ">inside.exe", Sha256 = hash, Severity = FindingSeverity.High }));
+        { Target = path, ContentPath = path + ">inside.exe", Sha256 = hash, Severity = FindingSeverity.High }));
         Check("Modes archive outer hash can authorize physical file", RemediationModePolicy.CanRequestQuarantine(new()
-            { Target = path, ContentPath = path + ">inside.exe", Sha256 = new('A', 64), TargetSha256 = hash, Severity = FindingSeverity.High }));
+        { Target = path, ContentPath = path + ">inside.exe", Sha256 = new('A', 64), TargetSha256 = hash, Severity = FindingSeverity.High }));
         Check("Modes coverage and configuration do not become arbitrary file actions", !RemediationModePolicy.CanRequestQuarantine(new()
-            { Category = FindingCategory.Coverage, Target = path, Sha256 = hash, Severity = FindingSeverity.High }));
+        { Category = FindingCategory.Coverage, Target = path, Sha256 = hash, Severity = FindingSeverity.High }));
         RemediationPlanBuilder builder = new(new RuleSet());
         bool conservativeDenied = false;
         try { await builder.BuildAsync([weak], false); } catch (UnauthorizedAccessException) { conservativeDenied = true; }
@@ -83,17 +88,25 @@ internal static partial class Program
                 startup.RelatedFileSha256 == hash && RemediationDependencies.Build(companions.Actions)[companionFile.ActionId].Contains(startup.ActionId));
             BrokerEngine.ValidateUserRiskRequestShape(companions);
             Check("Modes orphan companion rejected", ScopeRejects(() => BrokerEngine.ValidateUserRiskRequestShape(new()
-                { Mode = RemediationMode.Aggressive, ExplicitFileTargetsRequested = true, Actions = [startup] })));
+            { Mode = RemediationMode.Aggressive, ExplicitFileTargetsRequested = true, Actions = [startup] })));
             JsonObject tampered = JsonSerializer.SerializeToNode(companions, JsonFile.Options)!.AsObject();
             tampered[nameof(RemediationPlan.Actions)]![0]![nameof(RemediationAction.ExpectedValueData)] = "cmd.exe /c " + command;
             Check("Modes wrapped companion rejected", ScopeRejects(() => BrokerEngine.ValidateUserRiskRequestShape(tampered.Deserialize<RemediationPlan>(JsonFile.Options)!)));
             QuarantineRecord registryRecord = new()
             {
-                Type = RemediationActionType.RemoveRegistryValue, UserSelectedRisk = true, OriginalTarget = command,
-                RelatedFilePath = path, RelatedFileSha256 = hash, RegistryValueData = command,
-                RegistryHive = "HKCU", RegistryView = "Default", RegistryKey = runPath, RegistryValueName = name,
+                Type = RemediationActionType.RemoveRegistryValue,
+                UserSelectedRisk = true,
+                OriginalTarget = command,
+                RelatedFilePath = path,
+                RelatedFileSha256 = hash,
+                RegistryValueData = command,
+                RegistryHive = "HKCU",
+                RegistryView = "Default",
+                RegistryKey = runPath,
+                RegistryValueName = name,
                 RegistryValueKind = (int)RegistryValueKind.String,
-                OriginalFileIdentity = file.ExpectedFileIdentity, OriginalParentIdentity = file.ExpectedParentIdentity
+                OriginalFileIdentity = file.ExpectedFileIdentity,
+                OriginalParentIdentity = file.ExpectedParentIdentity
             };
             await BrokerEngine.VerifyUserRiskRecordedContentAsync(registryRecord, new() { Records = [registryRecord] }, CancellationToken.None);
             Check("Modes interrupted cleanup can validate still-present source for rollback", File.Exists(path));

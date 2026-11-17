@@ -1,8 +1,88 @@
 {
   "schemaVersion": "1",
-  "version": "2026.11.10.1",
-  "publishedAtUtc": "2026-11-11T00:00:00Z",
+  "version": "2026.11.17.1",
+  "publishedAtUtc": "2026-11-17T00:00:00Z",
   "knownHashes": [
+    {
+      "id": "STEAMALERT-CORE-20261117",
+      "sha256": "CDE5643722DBD6487625D5CF592E445FFA3C771FB8A5197EC9A97D249C19C7B7",
+      "label": "SteamAlert 假红信内嵌载荷（2026-11-17 样本）",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "从已审查的新宿主提取 SteamAlertCore.dll，完整资源字节的 SHA-256 已独立核验。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-CORE-20261117.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-CORE-20261117.evidence", "Arguments": [] }
+    },
+    {
+      "id": "STEAMALERT-WATCHDOG-NOBOM",
+      "sha256": "4D68A9C6F0C2802339BC572CF3E4EFF0462C01D1E894CFF9E8B578F9C2736FFF",
+      "label": "SteamAlert 内嵌守护脚本",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确匹配无 BOM 的内嵌守护脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-WATCHDOG-NOBOM.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-WATCHDOG-NOBOM.evidence", "Arguments": [] }
+    },
+    {
+      "id": "STEAMALERT-UPDATER-NOBOM",
+      "sha256": "0EC69EF47D19F52DA69B88FCA57191F5323D3CFD7DE9F3A933313A44EA090150",
+      "label": "SteamAlert 内嵌更新脚本",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确匹配无 BOM 的内嵌更新脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-UPDATER-NOBOM.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-UPDATER-NOBOM.evidence", "Arguments": [] }
+    },
+    {
+      "id": "STEAMALERT-LAUNCHER-NOBOM",
+      "sha256": "DFD442A5B61AF0607A94F5E2AEFF69E8F68F3B89264C424A91BFEA6D2184FD4B",
+      "label": "SteamAlert 内嵌启动脚本",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确匹配无 BOM 的内嵌启动脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-LAUNCHER-NOBOM.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-LAUNCHER-NOBOM.evidence", "Arguments": [] }
+    },
+    {
+      "id": "STEAMALERT-WATCHDOG",
+      "sha256": "94FCA6D53A1D7DF49E0AAA6C8388950B1527DF7439969FE3F16FB64832E12699",
+      "label": "SteamAlert PowerShell 守护脚本",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确命中已核验脚本，周期运行更新器与启动器以恢复 SteamAlert 驻留程序。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-WATCHDOG.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-WATCHDOG.evidence", "Arguments": [] }
+    },
+    {
+      "id": "STEAMALERT-UPDATER",
+      "sha256": "35233E36BF0F03B4CEA2F2DCD296E927CCD014F35ACCB126D2BAF9861D49BBA8",
+      "label": "SteamAlert 下载更新脚本",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确命中已核验更新脚本，会下载、校验并替换恶意驻留程序，包括主程序文件缺失的情况。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-UPDATER.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-UPDATER.evidence", "Arguments": [] }
+    },
+    {
+      "id": "STEAMALERT-LAUNCHER",
+      "sha256": "3CFBC8C910FB4F24E88380948655873486DD3D0A505F451816FD9A50C362940F",
+      "label": "SteamAlert 驻留程序启动脚本",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确命中已核验启动脚本，在守护脚本控制下重新启动 SteamAlert 驻留程序。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-LAUNCHER.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-LAUNCHER.evidence", "Arguments": [] }
+    },
+    {
+      "id": "STEAMALERT-RESIDENT-20261117",
+      "sha256": "54799E1B7B90961F29284226210CD6029CAB87EC82635B3FB7AB99D0BDB72FE2",
+      "label": "带守护脚本安装逻辑的 SteamAlert 驻留程序",
+      "severity": "Critical",
+      "malware": true,
+      "evidence": "精确命中已核验可执行文件，内嵌恶意 Core，安装更新脚本和 Run 自启动项，并启动守护进程。",
+      "labelMessage": { "MessageId": "Rule.STEAMALERT-RESIDENT-20261117.label", "Arguments": [] },
+      "evidenceMessage": { "MessageId": "Rule.STEAMALERT-RESIDENT-20261117.evidence", "Arguments": [] }
+    },
     {
       "id": "STEAMALERT-MOD-LOADER",
       "sha256": "20510416665705F7D3B55DE60F22B6072295B8A5BFB51139FE972E916B53F272",

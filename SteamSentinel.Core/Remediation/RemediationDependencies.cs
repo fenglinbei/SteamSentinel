@@ -19,6 +19,25 @@ public static class RemediationDependencies
         _ => 4
     };
 
+    // A caller-supplied chain ID cannot remove the ordering of this independently
+    // identified family. Keep the watcher ahead of its in-flight child scripts.
+    public static bool IsSteamAlertChainAction(RemediationAction action) =>
+        SteamAlertWatchdog.IsFamilyHash(action.ExpectedSha256) || SteamAlertWatchdog.IsFamilyHash(action.RelatedFileSha256) ||
+        action.ContentEvidenceRuleId == SteamAlertUpdateHandoff.RuleId;
+
+    public static int Phase(RemediationAction action)
+    {
+        if (!IsSteamAlertChainAction(action)) return Phase(action.Type);
+        if (action.Type == RemediationActionType.StopHostProcess && action.ConfigurationKind == SteamAlertWatchdog.ScriptHostKind)
+            return SteamAlertWatchdog.RoleForHash(action.RelatedFileSha256) == SteamAlertWatchdog.WatchdogRole ? -3 : -2;
+        if (action.Type == RemediationActionType.StopHostProcess && action.ConfigurationKind == SteamAlertUpdateHandoff.ScriptHostKind) return -2;
+        if (action.Type is RemediationActionType.RemoveRegistryValue or RemediationActionType.RemoveScheduledTask or RemediationActionType.DisableService)
+            return -1;
+        if (action.Type == RemediationActionType.QuarantineFile && action.ContentEvidenceRuleId != SteamAlertUpdateHandoff.RuleId &&
+            !SteamAlertWatchdog.IsScriptHash(action.ExpectedSha256)) return 4;
+        return Phase(action.Type);
+    }
+
     public static IReadOnlyDictionary<Guid, HashSet<Guid>> Build(IReadOnlyList<RemediationAction> actions, bool requireOrder = true)
     {
         if (actions.Count > 64 || actions.Any(a => a is null || a.ActionId == Guid.Empty) ||
@@ -40,7 +59,7 @@ public static class RemediationDependencies
         }
         foreach (List<RemediationAction> group in Groups(actions))
             foreach (RemediationAction action in group)
-                foreach (RemediationAction predecessor in group.Where(a => Phase(a.Type) < Phase(action.Type)))
+                foreach (RemediationAction predecessor in group.Where(a => Phase(a) < Phase(action)))
                     result[action.ActionId].Add(predecessor.ActionId);
         // Reconstruct source-cleanup dependencies independently of request chain labels.
         HashSet<string> sourceHashes = SteamScriptRepairTarget.SourceHashes(RuleLoader.LoadEmbedded());
@@ -91,6 +110,7 @@ public static class RemediationDependencies
 
     private static IEnumerable<string> Keys(RemediationAction action)
     {
+        if (IsSteamAlertChainAction(action)) yield return "verified-family:SteamAlert";
         if (action.ChainId is { } chain) yield return "chain:" + chain;
         if (action.ProcessId is { } pid) yield return "pid:" + pid + ":" + action.ProcessStartedAtUtc?.ToUniversalTime().ToString("O");
         foreach (string? hash in new[] { action.ExpectedSha256, action.RelatedFileSha256 })
@@ -122,7 +142,7 @@ public static class RemediationDependencies
             action.DependsOnActionIds.Clear();
             action.DependsOnActionIds.AddRange(dependencies[action.ActionId].Order());
         }
-        List<RemediationAction> pending = actions.OrderBy(a => Phase(a.Type)).ToList(), ordered = [];
+        List<RemediationAction> pending = actions.OrderBy(Phase).ToList(), ordered = [];
         HashSet<Guid> emitted = [];
         while (pending.Count > 0)
         {

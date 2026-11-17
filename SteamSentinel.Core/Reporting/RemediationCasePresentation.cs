@@ -81,6 +81,10 @@ public static class RemediationCasePresentation
             (action.RelatedFilePath is null ? "" : DisplayText.Format("RemediationCase.ActionIdentity.01", (action.RelatedFilePath), (action.RelatedFileSha256)));
         if (action.Type == RemediationActionType.RepairSteamScript)
             identity += "\n" + DisplayText.Format("SteamScript.RepairedIdentity", action.RepairedSha256 ?? string.Empty);
+        if (action.Type == RemediationActionType.StopHostProcess &&
+            action.ConfigurationKind is SteamAlertWatchdog.ScriptHostKind or SteamAlertUpdateHandoff.ScriptHostKind)
+            identity += "\n" + DisplayText.Format("SteamAlert.Watchdog.HostIdentity", action.ProcessId,
+                action.ProcessStartedAtUtc?.ToUniversalTime().ToString("O") ?? string.Empty, action.ConfigurationSnapshot ?? string.Empty);
         if (action.Type == RemediationActionType.RepairSteamConfiguration)
         {
             identity = action.ConfigurationKind == SteamConfigurationRepair.Run

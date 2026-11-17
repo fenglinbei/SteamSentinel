@@ -88,7 +88,10 @@ public sealed partial class CaseActionVerification
     public DateTimeOffset CheckedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public RemediationVerificationStatus Status { get; init; } = RemediationVerificationStatus.Unknown;
     public string Message { get; init; } = string.Empty;
-    public bool IsOriginalProcessIdentityOnly => Type is RemediationActionType.StopProcess or RemediationActionType.StopHostProcess;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ReenumeratedBoundInstances { get; init; }
+    public bool IsOriginalProcessIdentityOnly => !ReenumeratedBoundInstances &&
+        Type is RemediationActionType.StopProcess or RemediationActionType.StopHostProcess;
 }
 
 public sealed partial class CaseFollowUpResult

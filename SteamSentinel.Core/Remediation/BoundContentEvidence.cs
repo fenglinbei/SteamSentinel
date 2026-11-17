@@ -37,6 +37,7 @@ public static class BoundContentEvidence
                 if (option == "-file") return index < arguments.Length && Same(arguments[index]);
                 if (option is "-noprofile" or "-noninteractive" or "-nologo") continue;
                 if (option == "-executionpolicy" && index < arguments.Length) { index++; continue; }
+                if (option == "-windowstyle" && index < arguments.Length && PowerShellScriptHost.IsWindowStyle(arguments[index])) { index++; continue; }
                 return false;
             }
             return false;
@@ -84,6 +85,8 @@ public static class BoundContentEvidence
             Buffer.BlockCopy(buffer, count - retained, buffer, 0, retained);
         }
         if (!Convert.ToHexString(hash.GetHashAndReset()).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase)) return null;
+        if (Path.GetExtension(path).Equals(".cmd", StringComparison.OrdinalIgnoreCase) &&
+            await SteamAlertUpdateHandoff.VerifyAsync(path, expectedSha256, token) is not null) return SteamAlertUpdateHandoff.RuleId;
         // Re-read the same hash-bound file stream. Report flags and resource names cannot authorize this proof.
         stream.Position = 0;
         if (SteamAlertEmbeddedEvidence.Inspect(stream, token: token) is not null) return SteamAlertEmbeddedEvidence.RuleId;

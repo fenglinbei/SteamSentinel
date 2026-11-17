@@ -276,7 +276,7 @@ public static class SteamAlertEmbeddedEvidence
             _resourceBytes += length;
             ImmutableArray<byte> data = block.GetContent((int)offset + 4, length);
             string hash = Convert.ToHexString(SHA256.HashData(data.AsSpan()));
-            if (!rules.KnownHashes.Any(rule => rule.Id == "STEAMALERT-CORE" && rule.Malware &&
+            if (!rules.KnownHashes.Any(rule => rule.Id is "STEAMALERT-CORE" or "STEAMALERT-CORE-20261117" && rule.Malware &&
                 rule.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase))) return null;
             using PEReader core = new(data);
             if (!core.HasMetadata || core.PEHeaders.CorHeader is not { MetadataDirectory.Size: > 0 and <= 2 * 1024 * 1024 }) return null;

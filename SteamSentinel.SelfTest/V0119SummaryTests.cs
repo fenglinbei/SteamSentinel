@@ -166,19 +166,15 @@ internal static partial class Program
 
     private static bool SummaryDetailIsAccurate(ScanMode mode, ScanCoverage coverage, SummaryFindings findings, string text)
     {
-        if (findings is SummaryFindings.Known or SummaryFindings.KnownWithHostEvidence)
-            return text.Contains(UiExpected("文件检出不等于本机已感染", "A file detection does not establish an active infection on this computer"), StringComparison.Ordinal) && !text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal);
-        if (findings == SummaryFindings.Suspicious)
-            return text.Contains(UiExpected("人工复核", "Manual review required"), StringComparison.Ordinal) && text.Contains(UiExpected("未自动判定为病毒", "have not automatically been classified as malware"), StringComparison.Ordinal) &&
-                !text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal);
+        if (findings is SummaryFindings.Known or SummaryFindings.KnownWithHostEvidence or SummaryFindings.Suspicious)
+            return text == (coverage == ScanCoverage.Partial ? DisplayText.Get("FindingPriority.Incomplete") : string.Empty);
         return coverage switch
         {
             ScanCoverage.Partial when mode == ScanMode.Quick => text == QuickPartialGuidance,
             ScanCoverage.Partial => text.Contains(UiExpected("未检查内容", "Unchecked"), StringComparison.Ordinal) &&
                 text.Contains(UiExpected("原因", "reasons"), StringComparison.Ordinal) && text.Contains(UiExpected("选项", "options"), StringComparison.Ordinal) &&
                 text != QuickPartialGuidance,
-            ScanCoverage.Complete => text.Contains(UiExpected("本次", "selected"), StringComparison.Ordinal) && text.Contains(UiExpected("范围", "scope"), StringComparison.Ordinal) &&
-                text.Contains(UiExpected("不代表", "does not establish"), StringComparison.Ordinal) && text.Contains(UiExpected("绝对安全", "entire computer is safe"), StringComparison.Ordinal),
+            ScanCoverage.Complete => text.Length == 0,
             _ => !string.IsNullOrWhiteSpace(text) && !text.Contains(UiExpected("已完成支持范围内", "All supported checks complete"), StringComparison.Ordinal)
         };
     }

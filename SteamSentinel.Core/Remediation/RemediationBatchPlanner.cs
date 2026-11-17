@@ -100,7 +100,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                 }
                 verified.AddRange(expansion.Findings);
                 foreach (MessageText detail in expansion.ScopeTexts.Where(text =>
-                    text.Message?.MessageId is "SteamAlert.Plan.ModSources" or "SteamAlert.Plan.ClientPatch"))
+                    text.Message?.MessageId is "SteamAlert.Plan.ModSources" or "SteamAlert.Plan.ClientPatch" or "SteamAlert.Watchdog.PlanScope"))
                     if (!notes.Contains(detail.OriginalText)) notes.AddText(detail);
                 Record(batches[index], expansion.NoteTexts, ReasonCodes.EvidenceUnavailable);
             }
@@ -272,6 +272,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         {
             Finding f = findings[i];
             IEnumerable<string> keys = FileKeys(f).Select(p => "file:" + p).Append("goal:" + GoalKey(f));
+            if (SteamAlertWatchdog.IsFamilyHash(RelatedArtifactRelations.FileHash(f)) || f.RuleId == SteamAlertUpdateHandoff.RuleId ||
+                f.ConfigurationKind == SteamAlertUpdateHandoff.ScriptHostKind)
+                keys = keys.Append("verified-family:SteamAlert");
             if (f.ProcessId is not null) keys = keys.Append("pid:" + f.ProcessId);
             foreach (string key in keys)
             { if (owners.TryGetValue(key, out int old)) Union(i, old); else owners[key] = i; }

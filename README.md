@@ -2,7 +2,7 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。当前源码版本为 **0.3.5 本地预览**，规则版本为 `2026.11.10.1`。本轮增加保守／激进处置模式、精确 Steam 配置修复及已知恶意内嵌载荷的加载链核验，尚未外部发布。详见[本地预览说明](docs/RELEASE-0.3.5-preview.md)；已公开的旧检测版仍为 [v0.3.3-preview.1](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1)。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。当前源码版本为 **0.3.6 预发布版**，规则版本为 `2026.11.17.1`。本轮整合 PowerShell watchdog／临时 CMD 更新链清理和结果页分组，并包含保守／激进模式、Steam 脚本与配置修复。详见[发行说明](docs/RELEASE-0.3.6-preview.1.md)及 [v0.3.6-preview.1 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.6-preview.1)。
 
 **默认保守模式**按已验证证据提供清理与配置修复；其余可疑文件继续复核。**激进模式**允许用户主动选择具备精确文件身份且通过安全范围检查的可疑实体文件，相关直接启动同文件的 Run／RunOnce 和仍运行的同文件进程会列入同一次预览。新增候选不会自动勾选，切换模式会清空勾选。原始规则、分数和风险定性保持不变，“用户选择处置”不代表已确认为恶意；误报可能影响软件或扩展使用。
 
@@ -69,7 +69,7 @@ SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam
 
 可在“代理与证书”页执行本机只读诊断，查看 8 个代理配置来源及当前用户／本机的物理 Root、CA 证书来源。结果会解释“待确认”“暂不支持”和“条件未满足”，不能选择处理的项目会保留原因和下一步；普通信息不计为未处理。诊断不连接外部地址、不修改配置，也不代表确认恶意或处理完成。范围和验证见 [第一批交付说明](docs/TRUST-PROXY-DIAGNOSTICS-PHASE1.md)。
 
-1. 使用本次提供的完整 0.3.5 本地预览安装包，并核对随包的 `VERSION.txt`、`SIGNING.txt`、SHA-256 清单及构建记录。公开旧版可从 [v0.3.3-preview.1 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.3-preview.1)取得；它不包含本轮新功能。升级前退出主程序和管理员窗口，不要只替换 EXE 或混合不同包的宿主，无需手动删除旧文件或放宽目录权限。
+1. 从 [v0.3.6-preview.1 发行页](https://github.com/fenglinbei/SteamSentinel/releases/tag/v0.3.6-preview.1)取得完整安装包，并核对随包的 `VERSION.txt`、`SIGNING.txt`、SHA-256 清单及构建记录。升级前退出主程序和管理员窗口，不要只替换 EXE 或混合不同包的宿主，无需手动删除旧文件或放宽目录权限。
 2. 使用安装器安装到固定的 Program Files 目录。默认普通权限扫描，处置时自动请求 UAC，也可点击“打开管理员窗口”主动授权，不需要在快捷方式中手动配置。
 3. 首次使用先执行“快速扫描”，随后执行“完整工坊扫描”。单独收到的 MP4、压缩包或安装包可用“扫描文件/目录”。
 4. 检查结果顶部的覆盖状态。`Complete` 只表示已完成支持范围内的检查，`Partial` 不能当作“安全”。
@@ -110,7 +110,7 @@ Broker 只接受 `%LOCALAPPDATA%\SteamSentinel\Plans` 下的短时 JSON 计划�
 - 用户计划、报告与 Low Integrity 临时区：`%LOCALAPPDATA%\SteamSentinel`、`%USERPROFILE%\AppData\LocalLow\SteamSentinel`
 - 管理员隔离区：`%PROGRAMDATA%\SteamSentinel\Quarantine`
 - 管理员结果区：`%PROGRAMDATA%\SteamSentinel\Results`
-- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.11.10.1`
+- 规则：编译进程序集的 `default-rules.json`，当前规则版本 `2026.11.17.1`
 
 ## 从源码构建
 

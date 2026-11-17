@@ -204,6 +204,7 @@ internal static partial class Program
                 TestV0115Window();
                 TestV0117Layout();
                 TestV030UiPresentation(null);
+                TestFindingPriorityUi();
                 TestV030LanguageControls(null);
                 Check("UI 夹具没有安排或加载真实产品窗口", app.StartupUri is null &&
                     app.Windows.OfType<MainWindow>().All(window => !window.IsLoaded));

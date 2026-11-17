@@ -419,6 +419,28 @@ public sealed partial class ContentScanner
     private async Task ScanContainerLeafAsync(FileStream file, Stream stream, ArchiveVolumeCandidate source,
         ContainerContext context, ContainerScanNode node, FileTypeResult type, bool suspicious, bool archive)
     {
+        if (type.Type == DetectedFileType.Batch && stream.Length <= SteamAlertUpdateHandoff.MaximumScriptBytes)
+        {
+            stream.Position = 0;
+            byte[] batch = new byte[checked((int)stream.Length)];
+            await stream.ReadExactlyAsync(batch, context.Token);
+            if (SteamAlertUpdateHandoff.TryParse(batch, node.DisplayPath, out var handoff))
+                context.Report.Findings.Add(new()
+                {
+                    RuleId = "STEAMALERT-UPDATE-HANDOFF-CANDIDATE",
+                    Category = FindingCategory.File,
+                    Severity = FindingSeverity.Medium,
+                    Score = 60,
+                    Target = node.OriginalTarget,
+                    Sha256 = node.Sha256,
+                    TargetSha256 = node.OriginalTargetSha256,
+                    ContentPath = node.DisplayPath,
+                    TitleText = MessageText.Create("SteamAlert.Handoff.CandidateTitle"),
+                    DescriptionText = MessageText.Create("SteamAlert.Handoff.Unconfirmed", node.DisplayPath),
+                    EvidenceText = MessageText.Create("SteamAlert.Handoff.Evidence", handoff.TargetExe, handoff.WaitProcessId),
+                    SuggestedActions = [SuggestedActionKind.ReviewOnly]
+                });
+        }
         bool strings = type.IsExecutableOrScript || suspicious || type.Type is DetectedFileType.Unknown or DetectedFileType.Html or DetectedFileType.Json or DetectedFileType.Xml;
         if (strings)
         {

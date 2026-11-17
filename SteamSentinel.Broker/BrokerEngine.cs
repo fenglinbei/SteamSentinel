@@ -65,6 +65,7 @@ internal sealed partial class BrokerEngine
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         ValidateConfigurationPlan(plan);
         ValidateSteamScriptPlan(plan);
+        RequireSteamAlertClosure(plan);
         if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration))
             RequireSteamConfigurationClosed();
     }
@@ -101,6 +102,7 @@ internal sealed partial class BrokerEngine
             async (action, token) =>
             {
                 ValidateAction(action);
+                await RecheckWatchdogPredecessorsAsync(plan, action, token);
                 MessageText message = await ExecuteActionAsync(action, token);
                 if (_persistOwnManifest)
                 {
@@ -172,6 +174,9 @@ internal sealed partial class BrokerEngine
 
     private void ValidateAction(RemediationAction action)
     {
+        if (action.ConfigurationKind is SteamAlertWatchdog.ScriptHostKind or SteamAlertUpdateHandoff.ScriptHostKind &&
+            action.Type != RemediationActionType.StopHostProcess)
+            throw SteamAlertScriptHostStopper.Denied("Watchdog.InvalidBinding");
         if (string.IsNullOrWhiteSpace(action.Target) || action.Target.Length > 32_768 ||
             action.DisplayName is null || action.DisplayName.Length > 500)
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.01"), sourceText => new InvalidDataException(sourceText));
@@ -207,6 +212,7 @@ internal sealed partial class BrokerEngine
                 {
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.03"), sourceText => new UnauthorizedAccessException(sourceText));
                 }
+                ValidateWatchdogPersistenceAction(action);
                 break;
             case RemediationActionType.RemoveScheduledTask:
                 string taskName = action.TaskName ?? action.Target;
@@ -236,6 +242,10 @@ internal sealed partial class BrokerEngine
                 if (action.Target != "Windows Security") throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidateAction.09"), sourceText => new InvalidDataException(sourceText));
                 break;
             case RemediationActionType.StopHostProcess:
+                if (IsScriptHostAction(action)) ValidateScriptHostAction(action);
+                else if (IsUpdateHandoffHostAction(action)) ValidateUpdateHandoffHostAction(action);
+                else ValidateBoundAction(action);
+                break;
             case RemediationActionType.DisableService:
             case RemediationActionType.RemoveRelatedDefenderExclusion:
             case RemediationActionType.DisableRelatedFirewallRule:
@@ -267,7 +277,10 @@ internal sealed partial class BrokerEngine
         RemediationActionType.AddProgramFirewallBlock => await AddFirewallRuleAsync(action, cancellationToken),
         RemediationActionType.BlockKnownDomains => await BlockDomainsAsync(action, cancellationToken),
         RemediationActionType.RestoreSecurityControls => await RestoreSecurityControlsAsync(cancellationToken),
-        RemediationActionType.StopHostProcess => await StopHostAsync(action, cancellationToken),
+        RemediationActionType.StopHostProcess => IsScriptHostAction(action)
+            ? await StopScriptHostAsync(action, cancellationToken)
+            : IsUpdateHandoffHostAction(action) ? await StopUpdateHandoffHostAsync(action, cancellationToken)
+            : await StopHostAsync(action, cancellationToken),
         RemediationActionType.DisableService => await DisableServiceAsync(action, cancellationToken),
         RemediationActionType.RemoveRelatedDefenderExclusion => await ChangeRelatedExclusionAsync(action, false, cancellationToken),
         RemediationActionType.DisableRelatedFirewallRule => await ChangeRelatedFirewallAsync(action, false, cancellationToken),
@@ -324,6 +337,8 @@ internal sealed partial class BrokerEngine
         if (!currentHash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.03"), sourceText => new InvalidOperationException(sourceText));
         string? contentProof = await VerifyQuarantineContentEvidenceAsync(action, lease, cancellationToken);
+        await using SteamAlertHandoffLease? handoffProof = action.ContentEvidenceRuleId == SteamAlertUpdateHandoff.RuleId
+            ? await OpenHandoffProofLeaseAsync(source, action.ExpectedSha256!, cancellationToken, lease) : null;
 
         string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
         MachineStateSecurity.PreparePayloadDirectory(itemRoot);

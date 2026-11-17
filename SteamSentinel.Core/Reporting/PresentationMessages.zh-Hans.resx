@@ -2960,10 +2960,6 @@ DER SHA-256：{3}
     <value>已处理 {0:N0} 项 · {1}</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
-  <data name="Ui.xaml.PopulateFindings.01" xml:space="preserve">
-    <value>{0:N0} 项风险或提示</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
   <data name="Ui.xaml.PopulateFindings.02" xml:space="preserve">
     <value>未检查内容（{0} 类）</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
@@ -2996,16 +2992,8 @@ DER SHA-256：{3}
     <value>扫描内容包含已知威胁</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
-  <data name="Ui.xaml.UpdateSummary.03" xml:space="preserve">
-    <value>请核对内容位置与外层隔离目标，文件检出不等于本机已感染</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
   <data name="Ui.xaml.UpdateSummary.04" xml:space="preserve">
     <value>发现可疑项</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.05" xml:space="preserve">
-    <value>需要人工复核，未自动判定为病毒</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.06" xml:space="preserve">
@@ -3044,10 +3032,6 @@ DER SHA-256：{3}
     <value>本次检查已完成，未发现需处理的风险</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
-  <data name="Ui.xaml.UpdateSummary.15" xml:space="preserve">
-    <value>已完成本次所选范围内的检查，结论不代表电脑绝对安全。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
   <data name="Ui.xaml.UpdateSummary.16" xml:space="preserve">
     <value>已完成部分检查，未发现需处理的风险</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
@@ -3058,14 +3042,6 @@ DER SHA-256：{3}
   </data>
   <data name="Ui.xaml.UpdateSummary.18" xml:space="preserve">
     <value>仍有未检查内容，请查看“未检查内容”中的原因，并按提示补查或调整检查选项。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.19" xml:space="preserve">
-    <value>。结论仅适用于本次所选范围。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.20" xml:space="preserve">
-    <value>；仍有未检查内容，请查看“未检查内容”并按提示补查。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.21" xml:space="preserve">
@@ -3086,14 +3062,6 @@ DER SHA-256：{3}
   </data>
   <data name="Ui.xaml.UpdateSummary.25" xml:space="preserve">
     <value>已结束</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.26" xml:space="preserve">
-    <value>结果仅适用于本次所选范围，请核对结果后再决定是否处置。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
-  </data>
-  <data name="Ui.xaml.UpdateSummary.27" xml:space="preserve">
-    <value>请在“风险与提示”查看发现，在“未检查内容”查看原因与补查方式。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.28" xml:space="preserve">
@@ -3673,18 +3641,6 @@ DER SHA-256：{3}
     <value>先核对处理预览；执行时会请求 Windows 管理员授权。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
   </data>
-  <data name="Ui.TrustProxy.UpdateRemediationEligibility.08" xml:space="preserve">
-    <value>当前没有可选择处理的项目。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
-  </data>
-  <data name="Ui.TrustProxy.UpdateRemediationEligibility.09" xml:space="preserve">
-    <value>请查看每项未处理原因。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
-  </data>
-  <data name="Ui.TrustProxy.UpdateRemediationEligibility.10" xml:space="preserve">
-    <value>普通说明不需要处理。</value>
-    <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
-  </data>
   <data name="Ui.TrustProxy.UpdateRemediationEligibility.11" xml:space="preserve">
     <value>正在执行其他操作，请等待结束。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.TrustProxy.cs</comment>
@@ -4198,10 +4154,6 @@ DER SHA-256：{3}
     <value>分类</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
-  <data name="Ui.Xaml.MainWindow.040" xml:space="preserve">
-    <value>分数</value>
-    <comment>Display only: MainWindow.xaml</comment>
-  </data>
   <data name="Ui.Xaml.MainWindow.041" xml:space="preserve">
     <value>发现</value>
     <comment>Display only: MainWindow.xaml</comment>
@@ -4427,7 +4379,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.097" xml:space="preserve">
-    <value>全选可处置项</value>
+    <value>全选重点项</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.098" xml:space="preserve">
@@ -11942,4 +11894,60 @@ DER SHA-256：{3}
   <data name="SteamConfig.PreviewIntent" xml:space="preserve"><value>拟执行的修改：{0} 执行前仍会独立复验内容与目标身份。</value></data>
   <data name="SteamConfig.OriginalValue" xml:space="preserve"><value>原值：{0}</value></data>
   <data name="SteamConfig.RepairedValue" xml:space="preserve"><value>预期修后值：{0}</value></data>
+  <data name="FindingPriority.Counts" xml:space="preserve"><value>重点关注 {0:N0} 项 · 参考信息 {1:N0} 项</value></data>
+  <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>参考信息 · 文件格式提示（{0:N0} 项）</value></data>
+  <data name="FindingPriority.FormatHint" xml:space="preserve"><value>文件格式提示</value></data>
+  <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>仅发现文件格式提示</value></data>
+  <data name="FindingPriority.Empty" xml:space="preserve"><value>暂无重点关注项目</value></data>
+  <data name="FindingPriority.Incomplete" xml:space="preserve"><value>部分内容未完成检查</value></data>
+  <data name="FindingPriority.Score" xml:space="preserve"><value>规则评分：{0}</value></data>
+  <data name="FindingPriority.NoSelectablePriority" xml:space="preserve"><value>暂无可选择的重点项目</value></data>
+  <data name="SteamAlert.Watchdog.InvalidHost" xml:space="preserve"><value>脚本宿主身份或命令与已核验的恶意脚本不匹配，请重新扫描。</value></data>
+  <data name="SteamAlert.Watchdog.StopHost" xml:space="preserve"><value>结束已核验的恶意脚本实例（PID {0}）：{1}</value></data>
+  <data name="SteamAlert.Watchdog.HostIdentity" xml:space="preserve"><value>绑定进程：PID {0}；创建时间 {1}。精确命令：{2}。保留系统解释器文件。</value></data>
+  <data name="SteamAlert.Watchdog.ClosureChanged" xml:space="preserve"><value>活动更新链已变化或未能完整核验，已停止继续清理。请重新扫描并核对完整的脚本、自启动及主程序清单。</value></data>
+  <data name="SteamAlert.Watchdog.PlanScope" xml:space="preserve"><value>预览包括已核验的守护脚本、更新副本、绑定的解释器实例与自启动项。实例变化或重新出现会阻断相关后续清理，请重新扫描后继续。</value></data>
+  <data name="SteamAlert.Watchdog.HostTitle" xml:space="preserve"><value>运行已确认恶意 SteamAlert 脚本的解释器</value></data>
+  <data name="SteamAlert.Watchdog.HostDescription" xml:space="preserve"><value>仅允许结束绑定到此脚本、命令行和创建时间的进程；系统解释器本身不隔离。</value></data>
+  <data name="SteamAlert.Watchdog.HostEvidence" xml:space="preserve"><value>PID {0}；已核验脚本 {1}；观察到的父 PID {2}。</value></data>
+  <data name="SteamAlert.Watchdog.HostReadIncomplete" xml:space="preserve"><value>已确认感染范围内有 {0} 个解释器实例无法检查，此链尚未完整核验。</value></data>
+  <data name="SteamAlert.Watchdog.HostLimit" xml:space="preserve"><value>解释器检查已达到数量上限，需要继续核验更新链。</value></data>
+  <data name="SteamAlert.Watchdog.ScriptUnconfirmed" xml:space="preserve"><value>此潜在更新组件身份未能确认，请在清理前复核：{0}</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG.label" xml:space="preserve"><value>SteamAlert PowerShell 守护脚本</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG.evidence" xml:space="preserve"><value>精确命中已核验脚本，周期运行更新器与启动器以恢复 SteamAlert 驻留程序。</value></data>
+  <data name="Rule.STEAMALERT-UPDATER.label" xml:space="preserve"><value>SteamAlert 下载更新脚本</value></data>
+  <data name="Rule.STEAMALERT-UPDATER.evidence" xml:space="preserve"><value>精确命中已核验更新脚本，会下载、校验并替换恶意驻留程序，包括主程序文件缺失的情况。</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER.label" xml:space="preserve"><value>SteamAlert 驻留程序启动脚本</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER.evidence" xml:space="preserve"><value>精确命中已核验启动脚本，在守护脚本控制下重新启动 SteamAlert 驻留程序。</value></data>
+  <data name="Rule.STEAMALERT-RESIDENT-20261117.label" xml:space="preserve"><value>带守护脚本安装逻辑的 SteamAlert 驻留程序</value></data>
+  <data name="Rule.STEAMALERT-RESIDENT-20261117.evidence" xml:space="preserve"><value>精确命中已核验可执行文件，内嵌恶意 Core，安装更新脚本和 Run 自启动项，并启动守护进程。</value></data>
+  <data name="Watchdog.InvalidBinding" xml:space="preserve"><value>更新器进程绑定无效，复核未完成。</value></data>
+  <data name="Watchdog.ReadIncomplete" xml:space="preserve"><value>未能完整读取绑定的更新器实例：{0}</value></data>
+  <data name="Watchdog.ReadLimit" xml:space="preserve"><value>绑定更新器复核达到上限，结果尚未完整。</value></data>
+  <data name="Watchdog.ScriptChanged" xml:space="preserve"><value>脚本身份已变化，不能确认更新链已清除。</value></data>
+  <data name="Watchdog.ImageChanged" xml:space="preserve"><value>程序身份已变化，不能确认更新链已清除。</value></data>
+  <data name="Watchdog.ScriptStillRunning" xml:space="preserve"><value>此绑定脚本的解释器仍在运行或已重新启动，PID：{0}</value></data>
+  <data name="Watchdog.ImageStillRunning" xml:space="preserve"><value>绑定的主程序仍在运行或已重新启动，PID：{0}</value></data>
+  <data name="Watchdog.NoBoundInstance" xml:space="preserve"><value>本次检查未发现此精确目标的活动实例，请在重新登录后再次扫描。</value></data>
+  <data name="Watchdog.ReappearedDuringRun" xml:space="preserve"><value>清理期间目标曾重新出现；即使后续检查暂未发现，也保留此次记录：{0}</value></data>
+  <data name="Watchdog.Stopped" xml:space="preserve"><value>已结束独立核验的脚本解释器实例，PID {0}。</value></data>
+  <data name="Watchdog.ProcessChanged" xml:space="preserve"><value>进程身份或命令已变化，未结束该进程，请重新扫描。</value></data>
+  <data name="Watchdog.PredecessorActive" xml:space="preserve"><value>检测到未包含在本次批准停止列表中的运行实例，或无法确认运行状态；已中止后续操作，请重新扫描。</value></data>
+  <data name="Watchdog.HandoffProofInvalid" xml:space="preserve"><value>临时更新脚本或其绑定的程序副本已变化，或无法核验身份，请重新扫描。</value></data>
+  <data name="SteamAlert.Handoff.Limit" xml:space="preserve"><value>临时更新器检查达到限定数量或读取预算，本次未完整核验更新链。</value></data>
+  <data name="SteamAlert.Handoff.Incomplete" xml:space="preserve"><value>无法安全读取临时更新脚本、程序副本或解释器实例，本次未完整核验更新链。</value></data>
+  <data name="SteamAlert.Handoff.Unconfirmed" xml:space="preserve"><value>无法确认这项临时更新器候选的身份，请在清理前复核：{0}</value></data>
+  <data name="SteamAlert.Handoff.Title" xml:space="preserve"><value>已确证的 SteamAlert 临时更新脚本</value></data>
+  <data name="SteamAlert.Handoff.Description" xml:space="preserve"><value>完整脚本符合已审查的替换与重启模板，并绑定到已确证的恶意程序字节。清理包含此脚本及其关联的更新副本。</value></data>
+  <data name="SteamAlert.Handoff.Evidence" xml:space="preserve"><value>绑定的替换目标：{0}；脚本等待退出的进程：{1}。</value></data>
+  <data name="SteamAlert.Handoff.HostTitle" xml:space="preserve"><value>正在执行已确证 SteamAlert 更新脚本的命令解释器</value></data>
+  <data name="SteamAlert.Handoff.CandidateTitle" xml:space="preserve"><value>临时更新脚本需要身份复核</value></data>
+  <data name="Rule.STEAMALERT-CORE-20261117.label" xml:space="preserve"><value>SteamAlert 假红信内嵌载荷（2026-11-17 样本）</value></data>
+  <data name="Rule.STEAMALERT-CORE-20261117.evidence" xml:space="preserve"><value>从已审查的新宿主提取 SteamAlertCore.dll，完整资源字节的 SHA-256 已独立核验。</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG-NOBOM.label" xml:space="preserve"><value>SteamAlert 内嵌守护脚本</value></data>
+  <data name="Rule.STEAMALERT-WATCHDOG-NOBOM.evidence" xml:space="preserve"><value>精确匹配无 BOM 的内嵌守护脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。</value></data>
+  <data name="Rule.STEAMALERT-UPDATER-NOBOM.label" xml:space="preserve"><value>SteamAlert 内嵌更新脚本</value></data>
+  <data name="Rule.STEAMALERT-UPDATER-NOBOM.evidence" xml:space="preserve"><value>精确匹配无 BOM 的内嵌更新脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER-NOBOM.label" xml:space="preserve"><value>SteamAlert 内嵌启动脚本</value></data>
+  <data name="Rule.STEAMALERT-LAUNCHER-NOBOM.evidence" xml:space="preserve"><value>精确匹配无 BOM 的内嵌启动脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。</value></data>
 </root>

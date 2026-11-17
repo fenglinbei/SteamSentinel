@@ -27,6 +27,10 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
     {
         // Discovery only. A directory name never authorizes quarantining its contents.
         AddCandidate(SteamAlertInstallation.ResidentDirectory, report);
+        foreach (string path in DiscoverUpdaterScripts(report)) AddCandidate(path, report);
+        foreach (string path in DiscoverHandoffCandidates(_handoffDirectory, report)) AddCandidate(path, report);
+        foreach (string path in SteamAlertInstallation.ProbePaths(SteamAlertInstallation.ResidentRule,
+            layout, _residentDirectory, _updaterDirectory)) AddCandidate(path, report);
         foreach (string template in rules.KnownPathTemplates)
         {
             string path = Environment.ExpandEnvironmentVariables(template);

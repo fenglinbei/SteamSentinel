@@ -13,9 +13,10 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
     private readonly FileScopeAssessment? _scope;
 
     public FindingItemViewModel(Finding finding, RuleSet? rules = null, SteamLayout? layout = null,
-        RemediationMode mode = RemediationMode.Conservative)
+        RemediationMode mode = RemediationMode.Conservative, bool isReference = false)
     {
         Finding = finding;
+        IsReference = isReference;
         UserSelectedRisk = mode == RemediationMode.Aggressive && RemediationModePolicy.ProjectFinding(finding, mode).UserSelectedRisk;
         _scope = rules is not null && layout is not null ? FindingHandlingPresentation.AssessFileScope(finding, rules, layout, mode) : null;
         // Mode and scope are fixed for this row; changing mode rebuilds the view models.
@@ -25,6 +26,7 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
     }
 
     public Finding Finding { get; }
+    public bool IsReference { get; }
     public bool IsSelected
     {
         get => _isSelected;
@@ -47,7 +49,7 @@ public sealed class FindingItemViewModel : INotifyPropertyChanged
     public string Severity => ReportExporter.SeverityLabel(Finding.Severity);
     public string Category => ReportExporter.CategoryLabel(Finding.Category);
     public int Score => Finding.Score;
-    public string Title => Finding.TitleText.Display;
+    public string Title => IsReference ? DisplayText.Get("FindingPriority.FormatHint") : Finding.TitleText.Display;
     public string Target => Finding.Target;
     public string TargetDisplay => Finding.TargetText.Display;
     public string Evidence => Finding.EvidenceDisplay;

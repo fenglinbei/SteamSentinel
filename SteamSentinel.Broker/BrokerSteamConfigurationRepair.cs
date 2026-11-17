@@ -142,16 +142,25 @@ internal sealed partial class BrokerEngine
 
     private static QuarantineRecord CreateConfigurationFileRecord(RemediationAction action, SecureFileLease source,
         BrokerDirectoryLease parent, BrokerFileMetadata metadata, string destination) => new()
-    {
-        ActionId = action.ActionId, Type = action.Type, OriginalTarget = source.FinalPath,
-        QuarantinedPath = destination, Sha256 = action.ExpectedSha256, RepairedSha256 = action.RepairedSha256,
-        OriginalFileIdentity = FileScopeSafety.ReadIdentity(source.Handle), OriginalParentIdentity = parent.ParentIdentity,
-        OriginalSecurityDescriptor = metadata.SecurityDescriptor, OriginalAttributes = metadata.Attributes,
-        OriginalCreationTimeUtc = metadata.CreationTimeUtc, OriginalLastWriteTimeUtc = metadata.LastWriteTimeUtc,
-        ConfigurationKind = action.ConfigurationKind, ConfigurationSnapshot = action.ConfigurationSnapshot,
-        RelatedFilePath = action.RelatedFilePath, RelatedFileSha256 = action.RelatedFileSha256,
-        VerifiedContentRuleId = SteamConfigurationRepair.RuleId
-    };
+        {
+            ActionId = action.ActionId,
+            Type = action.Type,
+            OriginalTarget = source.FinalPath,
+            QuarantinedPath = destination,
+            Sha256 = action.ExpectedSha256,
+            RepairedSha256 = action.RepairedSha256,
+            OriginalFileIdentity = FileScopeSafety.ReadIdentity(source.Handle),
+            OriginalParentIdentity = parent.ParentIdentity,
+            OriginalSecurityDescriptor = metadata.SecurityDescriptor,
+            OriginalAttributes = metadata.Attributes,
+            OriginalCreationTimeUtc = metadata.CreationTimeUtc,
+            OriginalLastWriteTimeUtc = metadata.LastWriteTimeUtc,
+            ConfigurationKind = action.ConfigurationKind,
+            ConfigurationSnapshot = action.ConfigurationSnapshot,
+            RelatedFilePath = action.RelatedFilePath,
+            RelatedFileSha256 = action.RelatedFileSha256,
+            VerifiedContentRuleId = SteamConfigurationRepair.RuleId
+        };
 
     internal static async Task<QuarantineRecord> QuarantineSteamMarkerAsync(RemediationAction action, SteamLayout layout,
         string destination, Func<QuarantineRecord, CancellationToken, Task> persist, Action<string> protect, CancellationToken token)
@@ -197,11 +206,20 @@ internal sealed partial class BrokerEngine
         RequireRegistryImage(key, action.RegistryValueName!, snapshot.OriginalValue!, snapshot.RegistryValueKind!.Value);
         QuarantineRecord record = new()
         {
-            ActionId = action.ActionId, Type = action.Type, OriginalTarget = action.Target,
-            RegistryHive = action.RegistryHive, RegistryView = action.RegistryView, RegistryKey = action.RegistryKey, RegistryValueName = action.RegistryValueName,
-            RegistryValueData = snapshot.OriginalValue, RegistryValueKind = snapshot.RegistryValueKind,
-            ConfigurationKind = action.ConfigurationKind, ConfigurationSnapshot = action.ConfigurationSnapshot,
-            RelatedFilePath = action.RelatedFilePath, RelatedFileSha256 = action.RelatedFileSha256, VerifiedContentRuleId = SteamConfigurationRepair.RuleId
+            ActionId = action.ActionId,
+            Type = action.Type,
+            OriginalTarget = action.Target,
+            RegistryHive = action.RegistryHive,
+            RegistryView = action.RegistryView,
+            RegistryKey = action.RegistryKey,
+            RegistryValueName = action.RegistryValueName,
+            RegistryValueData = snapshot.OriginalValue,
+            RegistryValueKind = snapshot.RegistryValueKind,
+            ConfigurationKind = action.ConfigurationKind,
+            ConfigurationSnapshot = action.ConfigurationSnapshot,
+            RelatedFilePath = action.RelatedFilePath,
+            RelatedFileSha256 = action.RelatedFileSha256,
+            VerifiedContentRuleId = SteamConfigurationRepair.RuleId
         };
         await persist(record, token);
         token.ThrowIfCancellationRequested();
