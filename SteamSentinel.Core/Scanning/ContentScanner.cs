@@ -109,7 +109,7 @@ public sealed partial class ContentScanner : IDisposable
             return;
         }
         if (!ContentDiscovery.IsLocalSafePath(fullRoot))
-        { AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.02", (fullRoot)), fullRoot, workshopId); return; }
+        { AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.02", (fullRoot)), fullRoot, workshopId, reasonCode: ReasonCodes.UnsafePath); return; }
         ArchiveBudget archiveBudget = GetArchiveBudget(report);
         if (File.Exists(fullRoot))
         {
@@ -531,7 +531,8 @@ public sealed partial class ContentScanner : IDisposable
         MessageText message,
         string target,
         string? workshopId,
-        string ruleId = "SCAN-PARTIAL")
+        string ruleId = "SCAN-PARTIAL",
+        string? reasonCode = null)
     {
         report.Coverage = ScanCoverage.Partial;
         // Keep append O(1) for large libraries. Presentation/export deduplicates notes.
@@ -539,7 +540,7 @@ public sealed partial class ContentScanner : IDisposable
         report.Findings.Add(new Finding
         {
             RuleId = ruleId,
-            ReasonCode = ReasonCodes.ForRule(ruleId),
+            ReasonCode = reasonCode ?? ReasonCodes.ForRule(ruleId),
             Category = FindingCategory.Coverage,
             Severity = FindingSeverity.Information,
             Score = 0,

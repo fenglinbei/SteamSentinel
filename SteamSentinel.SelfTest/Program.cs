@@ -67,6 +67,7 @@ internal static partial class Program
             await TestV0114CoverageAsync(root);
             await TestV0114RelationAsync(root);
             await TestV0114BrokerAsync(root);
+            await TestFirewallVerificationBudgetAsync(root);
             await TestV0114UiAsync(root);
             await TestV0116Async(root);
             await TestV0117UiAsync(root);
@@ -825,6 +826,23 @@ internal static partial class Program
                 return await RunV030ResourcesAsync(Path.GetFullPath(args[1]));
             case "--language-settings-tests" when args.Length == 2:
                 return await RunV030LanguageSettingsAsync(Path.GetFullPath(args[1]));
+            case "--remediation-result-details-tests" when args.Length == 2:
+                return RunRemediationFailureDetailsTests(args[1]);
+            case "--firewall-verification-tests" when args.Length == 2:
+                string firewallRoot = Path.GetFullPath(args[1]);
+                Directory.CreateDirectory(firewallRoot);
+                try { await TestFirewallVerificationBudgetAsync(firewallRoot); }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(firewallRoot, "firewall-verification-results.json"), new
+                {
+                    passed = _passed,
+                    failed = Failures.Count,
+                    skipped = _skipped,
+                    failures = Failures,
+                    version = ProductInfo.Version,
+                    buildIdentity = ProductInfo.BuildIdentity
+                });
+                return Failures.Count == 0 ? 0 : 1;
             case "--backend-message-tests" when args.Length == 2:
                 return await RunV030BackendMessagesAsync(Path.GetFullPath(args[1]));
             case "--language-startup-probe" when args.Length >= 4:

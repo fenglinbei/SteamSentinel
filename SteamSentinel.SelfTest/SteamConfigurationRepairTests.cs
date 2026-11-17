@@ -60,19 +60,25 @@ internal static partial class Program
         byte[] realShortcut = await File.ReadAllBytesAsync(realShortcutPath);
         Check("Steam系统生成的含IDList快捷方式可精确修复", (realShortcut[20] & 1) != 0 &&
             SteamConfigurationRepair.TryRepairShortcut(realShortcut, layout, out byte[] realRepaired, out _) && realRepaired.Length == realShortcut.Length);
-        int infoPosition = 78 + BitConverter.ToUInt16(realShortcut, 76);
-        if ((BitConverter.ToUInt32(realShortcut, 20) & 2) != 0 && (BitConverter.ToUInt32(realShortcut, infoPosition + 8) & 2) != 0)
+        // Windows does not emit a network LinkInfo block on every machine. Keep the
+        // real IDList check above, but always exercise these two conflicting aliases.
+        string remoteMachine = Environment.MachineName.Equals("SS-REMOTE-A", StringComparison.OrdinalIgnoreCase) ? "SS-REMOTE-B" : "SS-REMOTE-A";
+        byte[] remote = SteamConfigNetworkShortcutFixture(executable, "-silent -cef-enable-debugging -language english", @"\\" + remoteMachine + @"\ADMIN$");
+        byte[] differentShare = SteamConfigNetworkShortcutFixture(executable, "-silent -cef-enable-debugging -language english", @"\\" + Environment.MachineName + @"\ADMIN$");
+        foreach (byte[] networkShortcut in new[] { remote, differentShare })
         {
-            int networkPosition = infoPosition + checked((int)BitConverter.ToUInt32(realShortcut, infoPosition + 20));
-            int networkNamePosition = networkPosition + checked((int)BitConverter.ToUInt32(realShortcut, networkPosition + 8));
-            byte[] remote = realShortcut.ToArray(); remote[networkNamePosition + 2] = remote[networkNamePosition + 2] == 'Z' ? (byte)'Q' : (byte)'Z';
-            Check("Steam快捷方式拒绝远程共享回退", !SteamConfigurationRepair.TryRepairShortcut(remote, layout, out _, out _));
-            int shareStart = networkNamePosition + 2;
-            while (shareStart < realShortcut.Length && realShortcut[shareStart] != '\\' && realShortcut[shareStart] != 0) shareStart++;
-            shareStart++;
-            byte[] differentShare = realShortcut.ToArray(); differentShare[shareStart] = differentShare[shareStart] == 'Z' ? (byte)'Q' : (byte)'Z';
-            Check("Steam快捷方式拒绝本机其他共享冲突", !SteamConfigurationRepair.TryRepairShortcut(differentShare, layout, out _, out _));
+            // Prove the same complete layout is repairable without its conflicting
+            // network alias. A malformed fixture must fail setup, not earn a pass.
+            byte[] localOnly = networkShortcut.ToArray();
+            localOnly[76 + 8] = 1;
+            BitConverter.GetBytes(0u).CopyTo(localOnly, 76 + 20);
+            if (!SteamConfigurationRepair.TryRepairShortcut(localOnly, layout, out byte[] localRepaired, out string localTarget) ||
+                !localTarget.Equals(executable, StringComparison.OrdinalIgnoreCase) || localRepaired.Length != localOnly.Length ||
+                SteamConfigurationRepair.HasDebugShortcutArguments(localRepaired))
+                throw new InvalidDataException("The deterministic network shortcut fixture must have a valid repairable local target.");
         }
+        Check("Steam快捷方式拒绝远程共享回退", !SteamConfigurationRepair.TryRepairShortcut(remote, layout, out _, out _));
+        Check("Steam快捷方式拒绝本机其他共享冲突", !SteamConfigurationRepair.TryRepairShortcut(differentShare, layout, out _, out _));
         string otherExecutable = Path.Combine(directory, "other.exe"); await File.WriteAllTextAsync(otherExecutable, "inert alternate target fixture");
         byte[] unverified = SteamConfigShortcutFixture(otherExecutable, "-silent -cef-enable-debugging");
         string reviewPath = Path.Combine(directory, "unverified-target.lnk"); await File.WriteAllBytesAsync(reviewPath, unverified);
@@ -184,6 +190,36 @@ internal static partial class Program
         writer.Write(unicodeSuffix + 2); writer.Write(36); writer.Write(1u); writer.Write(36); writer.Write(ansiOffset); writer.Write(0); writer.Write(suffixOffset); writer.Write(unicodeOffset); writer.Write(unicodeSuffix);
         writer.Write(17); writer.Write(3); writer.Write(0); writer.Write(16); writer.Write((byte)0);
         writer.Write(ansi); writer.Write((byte)0); writer.Write(unicode); writer.Write((ushort)0);
+        writer.Write(checked((ushort)arguments.Length)); writer.Write(Encoding.Unicode.GetBytes(arguments)); writer.Write(0);
+        return output.ToArray();
+    }
+
+    private static byte[] SteamConfigNetworkShortcutFixture(string target, string arguments, string networkName)
+    {
+        // ADMIN$ is a different local location from this unique temporary Steam root.
+        // The parser only queries local share metadata; it never connects to either UNC.
+        string localBase = Path.GetDirectoryName(target) ?? throw new InvalidDataException("A local fixture directory is required.");
+        string suffix = Path.GetFileName(target);
+        byte[] localAnsi = Encoding.ASCII.GetBytes(localBase + '\0'), localUnicode = Encoding.Unicode.GetBytes(localBase + '\0');
+        byte[] suffixAnsi = Encoding.ASCII.GetBytes(suffix + '\0'), suffixUnicode = Encoding.Unicode.GetBytes(suffix + '\0');
+        byte[] networkAnsi = Encoding.ASCII.GetBytes(networkName + '\0'), networkUnicode = Encoding.Unicode.GetBytes(networkName + '\0');
+        int localAnsiOffset = 53, suffixAnsiOffset = localAnsiOffset + localAnsi.Length;
+        int localUnicodeOffset = suffixAnsiOffset + suffixAnsi.Length, suffixUnicodeOffset = localUnicodeOffset + localUnicode.Length;
+        int networkOffset = suffixUnicodeOffset + suffixUnicode.Length;
+        int networkUnicodeOffset = 24 + networkAnsi.Length, networkSize = networkUnicodeOffset + networkUnicode.Length;
+        using MemoryStream output = new(); using BinaryWriter writer = new(output, Encoding.UTF8, true);
+        writer.Write(76); writer.Write(new Guid("00021401-0000-0000-c000-000000000046").ToByteArray());
+        writer.Write(2u | 32u | 128u); writer.Write(new byte[52]);
+        writer.Write(networkOffset + networkSize); writer.Write(36); writer.Write(3u);
+        writer.Write(36); writer.Write(localAnsiOffset); writer.Write(networkOffset); writer.Write(suffixAnsiOffset);
+        writer.Write(localUnicodeOffset); writer.Write(suffixUnicodeOffset);
+        writer.Write(17); writer.Write(3); writer.Write(0); writer.Write(16); writer.Write((byte)0);
+        writer.Write(localAnsi); writer.Write(suffixAnsi); writer.Write(localUnicode); writer.Write(suffixUnicode);
+        // CommonNetworkRelativeLink: bounded ANSI/Unicode names, no mapped device
+        // and no asserted network-provider type. All offsets are block-relative.
+        writer.Write(networkSize); writer.Write(0u); writer.Write(24); writer.Write(0); writer.Write(0);
+        writer.Write(networkUnicodeOffset);
+        writer.Write(networkAnsi); writer.Write(networkUnicode);
         writer.Write(checked((ushort)arguments.Length)); writer.Write(Encoding.Unicode.GetBytes(arguments)); writer.Write(0);
         return output.ToArray();
     }

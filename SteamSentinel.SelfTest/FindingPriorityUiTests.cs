@@ -45,7 +45,7 @@ internal static partial class Program
             skipped = _skipped,
             version = ProductInfo.Version,
             buildIdentity = ProductInfo.BuildIdentity,
-            safety = "Hidden inert UI fixtures; no scanning, file execution, Broker execution, or remediation."
+            safety = "Hidden UI reports plus static reads of locally generated harmless fixtures; no sample, file, Broker execution or remediation."
         }, new JsonSerializerOptions { WriteIndented = true }));
         foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
         Console.WriteLine($"Finding priority UI: passed {_passed}; failed {Failures.Count}");
@@ -55,6 +55,7 @@ internal static partial class Program
     // Run with the existing isolated STA/Application, using only synthetic reports.
     private static void TestFindingPriorityUi(string? output = null)
     {
+        TestExplicitRootCoverageUi(output);
         foreach (var culture in new[] { DisplayText.Chinese, DisplayText.English })
         {
             using IDisposable language = DisplayText.UseCulture(culture);

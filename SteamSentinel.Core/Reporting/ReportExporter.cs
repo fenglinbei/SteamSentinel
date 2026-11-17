@@ -253,28 +253,30 @@ public static class ReportExporter
         _ => DisplayText.Get("Report.CategoryLabel.01")
     };
 
-    public static string ActionLabel(RemediationActionType value) => value switch
+    public static string ActionLabel(RemediationActionType value) => ActionLabelText(value).Display;
+
+    internal static MessageText ActionLabelText(RemediationActionType value) => value switch
     {
-        RemediationActionType.StopProcess => DisplayText.Get("Report.ActionLabel.StopProcess.01"),
-        RemediationActionType.StopHostProcess => DisplayText.Get("Report.ActionLabel.StopHostProcess.01"),
-        RemediationActionType.DisableService => DisplayText.Get("Report.ActionLabel.DisableService.01"),
-        RemediationActionType.RemoveRelatedDefenderExclusion => DisplayText.Get("Report.ActionLabel.RemoveRelatedDefenderExclusion.01"),
-        RemediationActionType.DisableRelatedFirewallRule => DisplayText.Get("Report.ActionLabel.DisableRelatedFirewallRule.01"),
-        RemediationActionType.RemoveBoundCertificate => DisplayText.Get("Report.ActionLabel.RemoveBoundCertificate.01"),
-        RemediationActionType.RestoreBoundProxyConfiguration => DisplayText.Get("Report.ActionLabel.RestoreBoundProxyConfiguration.01"),
-        RemediationActionType.RemoveRegistryValue => DisplayText.Get("Report.ActionLabel.RemoveRegistryValue.01"),
-        RemediationActionType.RemoveScheduledTask => DisplayText.Get("Report.ActionLabel.RemoveScheduledTask.01"),
-        RemediationActionType.RemoveDefenderExclusion => DisplayText.Get("Report.ActionLabel.RemoveDefenderExclusion.01"),
-        RemediationActionType.QuarantineFile => DisplayText.Get("Report.ActionLabel.QuarantineFile.01"),
-        RemediationActionType.RepairSteamConfiguration => DisplayText.Get("Report.ActionLabel.RepairSteamConfiguration"),
-        RemediationActionType.QuarantineDirectory => DisplayText.Get("Report.ActionLabel.QuarantineDirectory.01"),
-        RemediationActionType.RepairSteamScript => DisplayText.Get("SteamScript.ActionName"),
-        RemediationActionType.AddProgramFirewallBlock => DisplayText.Get("Report.ActionLabel.AddProgramFirewallBlock.01"),
-        RemediationActionType.BlockKnownDomains => DisplayText.Get("Report.ActionLabel.BlockKnownDomains.01"),
-        RemediationActionType.RestoreSecurityControls => DisplayText.Get("Report.ActionLabel.RestoreSecurityControls.01"),
-        RemediationActionType.RollbackIncident => DisplayText.Get("Report.ActionLabel.RollbackIncident.01"),
-        RemediationActionType.DeleteIncident => DisplayText.Get("Report.ActionLabel.DeleteIncident.01"),
-        _ => DisplayText.Get("Report.ActionLabel.01")
+        RemediationActionType.StopProcess => MessageText.Create("Report.ActionLabel.StopProcess.01"),
+        RemediationActionType.StopHostProcess => MessageText.Create("Report.ActionLabel.StopHostProcess.01"),
+        RemediationActionType.DisableService => MessageText.Create("Report.ActionLabel.DisableService.01"),
+        RemediationActionType.RemoveRelatedDefenderExclusion => MessageText.Create("Report.ActionLabel.RemoveRelatedDefenderExclusion.01"),
+        RemediationActionType.DisableRelatedFirewallRule => MessageText.Create("Report.ActionLabel.DisableRelatedFirewallRule.01"),
+        RemediationActionType.RemoveBoundCertificate => MessageText.Create("Report.ActionLabel.RemoveBoundCertificate.01"),
+        RemediationActionType.RestoreBoundProxyConfiguration => MessageText.Create("Report.ActionLabel.RestoreBoundProxyConfiguration.01"),
+        RemediationActionType.RemoveRegistryValue => MessageText.Create("Report.ActionLabel.RemoveRegistryValue.01"),
+        RemediationActionType.RemoveScheduledTask => MessageText.Create("Report.ActionLabel.RemoveScheduledTask.01"),
+        RemediationActionType.RemoveDefenderExclusion => MessageText.Create("Report.ActionLabel.RemoveDefenderExclusion.01"),
+        RemediationActionType.QuarantineFile => MessageText.Create("Report.ActionLabel.QuarantineFile.01"),
+        RemediationActionType.RepairSteamConfiguration => MessageText.Create("Report.ActionLabel.RepairSteamConfiguration"),
+        RemediationActionType.QuarantineDirectory => MessageText.Create("Report.ActionLabel.QuarantineDirectory.01"),
+        RemediationActionType.RepairSteamScript => MessageText.Create("SteamScript.ActionName"),
+        RemediationActionType.AddProgramFirewallBlock => MessageText.Create("Report.ActionLabel.AddProgramFirewallBlock.01"),
+        RemediationActionType.BlockKnownDomains => MessageText.Create("Report.ActionLabel.BlockKnownDomains.01"),
+        RemediationActionType.RestoreSecurityControls => MessageText.Create("Report.ActionLabel.RestoreSecurityControls.01"),
+        RemediationActionType.RollbackIncident => MessageText.Create("Report.ActionLabel.RollbackIncident.01"),
+        RemediationActionType.DeleteIncident => MessageText.Create("Report.ActionLabel.DeleteIncident.01"),
+        _ => MessageText.Create("Report.ActionLabel.01")
     };
 
     public static string SeverityLabel(FindingSeverity value) => value switch

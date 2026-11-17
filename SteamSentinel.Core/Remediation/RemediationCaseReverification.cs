@@ -27,6 +27,7 @@ public sealed class RemediationCaseReverification(
         limits ??= new();
         if (limits.MaximumActions is < 1 or > 256 || limits.MaximumEpisodes is < 1 or > RemediationCaseStore.MaximumEpisodes ||
             limits.ProbeTimeout <= TimeSpan.Zero || limits.ProbeTimeout > TimeSpan.FromSeconds(10) ||
+            limits.FirewallProbeTimeout <= TimeSpan.Zero || limits.FirewallProbeTimeout > RemediationVerification.FirewallProbeTimeout ||
             limits.SessionTimeout <= TimeSpan.Zero || limits.SessionTimeout > TimeSpan.FromSeconds(15) ||
             limits.MaximumDuration <= TimeSpan.Zero || limits.MaximumDuration > TimeSpan.FromMinutes(10))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseReverification.RecheckAsync.01"), sourceText => new ArgumentOutOfRangeException(nameof(limits), sourceText));
@@ -123,7 +124,8 @@ public sealed class RemediationCaseReverification(
                     }
                     RemediationVerificationObservation observation;
                     using CancellationTokenSource perTarget = CancellationTokenSource.CreateLinkedTokenSource(bounded);
-                    perTarget.CancelAfter(limits.ProbeTimeout);
+                    perTarget.CancelAfter(item.Action.Type == RemediationActionType.AddProgramFirewallBlock
+                        ? limits.FirewallProbeTimeout : limits.ProbeTimeout);
                     try
                     {
                         perTarget.Token.ThrowIfCancellationRequested();

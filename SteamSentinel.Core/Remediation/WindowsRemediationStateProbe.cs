@@ -122,7 +122,10 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
             case RemediationActionType.AddProgramFirewallBlock:
                 if (incidentId is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.10"));
                 string ruleName = $"SteamSentinel-{incidentId:N}-{action.ActionId:N}";
-                return await ScriptStateAsync("$r=@(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop|Where-Object {$_.DisplayName -ceq " + Literal(ruleName) + "});" +
+                // The fixed name contains no wildcard characters. A provider-side prefix lookup
+                // avoids enumerating the whole store and returns an empty set for a missing rule.
+                // Still require the exact name so a prefix collision cannot verify this action.
+                return await ScriptStateAsync("$n=" + Literal(ruleName) + ";$r=@(Get-NetFirewallRule -PolicyStore ActiveStore -DisplayName ($n+'*') -ErrorAction Stop|Where-Object {$_.DisplayName -ceq $n});" +
                     "if($r.Count -eq 0){'ResidualDetected';exit};if($r.Count -ne 1){'Unknown';exit};$r=$r[0];" +
                     "$a=@($r|Get-NetFirewallApplicationFilter -ErrorAction Stop);$p=@($r|Get-NetFirewallPortFilter -ErrorAction Stop);" +
                     "$d=@($r|Get-NetFirewallAddressFilter -ErrorAction Stop);$s=@($r|Get-NetFirewallServiceFilter -ErrorAction Stop);" +

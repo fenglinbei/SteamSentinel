@@ -2704,6 +2704,11 @@ Execute only after these prerequisite actions succeed: </value>
     <value>Execution outcome of this run is unconfirmed</value>
     <comment>Display-only key. Never use rendered text for program decisions.</comment>
   </data>
+  <data name="Result.TargetSummary" xml:space="preserve"><value>Target: {0}
+Status: {1}
+Reason: {2}</value></data>
+  <data name="Result.MissingAction" xml:space="preserve"><value>No action result was received for {0} (action ID: {1}). Its execution outcome is unconfirmed.</value></data>
+  <data name="Result.TargetDetailsLimit" xml:space="preserve"><value>This view is limited to {0} actions. Export the complete case bundle to inspect all recorded actions.</value></data>
   <data name="Result.Action" xml:space="preserve">
     <value>Action: {0}
 Target: {1}
@@ -11898,6 +11903,8 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
   <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>Reference · File format notices ({0:N0})</value></data>
   <data name="FindingPriority.FormatHint" xml:space="preserve"><value>File format notice</value></data>
   <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>Only file format notices found</value></data>
+  <data name="Coverage.ExplicitRootsUnchecked.Title" xml:space="preserve"><value>No content checks ran on the selected paths</value></data>
+  <data name="Coverage.ExplicitRootsUnchecked.Detail" xml:space="preserve"><value>No files were read from the selected paths, so their risk cannot be assessed. Review the reasons under Unchecked, adjust the scope and retry.</value></data>
   <data name="FindingPriority.Empty" xml:space="preserve"><value>No priority findings</value></data>
   <data name="FindingPriority.Incomplete" xml:space="preserve"><value>Some checks are incomplete</value></data>
   <data name="FindingPriority.Score" xml:space="preserve"><value>Rule score: {0}</value></data>

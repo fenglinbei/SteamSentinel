@@ -475,8 +475,8 @@ try {
     # snapshot as the full suite. These utilities use inert fixtures, never samples.
     $focusedTests = @{}
     foreach ($focused in @(
-        @{ Name = 'watchdog'; Argument = '--steamalert-watchdog-tests'; File = 'watchdog-results.json'; Minimum = 297; Destination = $watchdogTestPath },
-        @{ Name = 'finding-priority'; Argument = '--finding-priority-ui'; File = 'finding-priority-ui-results.json'; Minimum = 106; Destination = $findingPriorityTestPath }
+        @{ Name = 'watchdog'; Argument = '--steamalert-watchdog-tests'; File = 'watchdog-results.json'; Minimum = 314; Destination = $watchdogTestPath },
+        @{ Name = 'finding-priority'; Argument = '--finding-priority-ui'; File = 'finding-priority-ui-results.json'; Minimum = 141; Destination = $findingPriorityTestPath }
     )) {
         $focusedRoot = Join-Path $workRoot $focused.Name
         & $selfTestExecutable $focused.Argument $focusedRoot

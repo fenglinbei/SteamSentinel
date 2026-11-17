@@ -449,10 +449,12 @@ public partial class MainWindow : Window
         ExportButton.IsEnabled = true;
         UpdateRemediationEligibility();
         if (PriorityFindings.Count > 0) FindingsGrid.SelectedIndex = 0;
+        else if (groups.Count > 0 && ExplicitContentRootsUnchecked(report)) ResultTabs.SelectedItem = CoverageTab;
     }
 
     private void UpdateSummary(ScanReport report)
     {
+        bool explicitContentUnchecked = ExplicitContentRootsUnchecked(report);
         bool confirmed = report.Findings.Any(finding => finding.IsKnownMalware);
         IReadOnlySet<string> referenceIds = ReferenceEquals(report, _findingHandlingReport)
             ? ReferenceFindings.Select(item => item.Finding.Id).ToHashSet(StringComparer.Ordinal)
@@ -474,7 +476,7 @@ public partial class MainWindow : Window
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.04");
             HeaderDetailText.Text = string.Empty;
         }
-        else if (report.Coverage == ScanCoverage.Skipped)
+        else if (report.Coverage == ScanCoverage.Skipped && !explicitContentUnchecked)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.06");
             HeaderDetailText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.07");
@@ -490,6 +492,11 @@ public partial class MainWindow : Window
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.10");
             HeaderDetailText.Text = handling.PendingConfirmation > 0 ? handling.Summary
                 : DisplayText.Format("Ui.xaml.UpdateSummary.11", (handling.Actionable));
+        }
+        else if (explicitContentUnchecked)
+        {
+            HeaderStatusText.Text = DisplayText.Get("Coverage.ExplicitRootsUnchecked.Title");
+            HeaderDetailText.Text = DisplayText.Get("Coverage.ExplicitRootsUnchecked.Detail");
         }
         else if (report.TrustProxyDiagnostics is { } diagnostic && (diagnostic.CompletedAtUtc is null ||
             !diagnostic.Checks.Any(check => check.Required) || IncompleteDiagnosticChecks(diagnostic) > 0))
@@ -519,7 +526,7 @@ public partial class MainWindow : Window
 
         if (report.Coverage == ScanCoverage.Partial &&
             (confirmed || suspicious || handling.AttentionCount > 0 || handling.Actionable > 0))
-            HeaderDetailText.Text = DisplayText.Get("FindingPriority.Incomplete");
+            HeaderDetailText.Text = DisplayText.Get(explicitContentUnchecked ? "Coverage.ExplicitRootsUnchecked.Detail" : "FindingPriority.Incomplete");
         string scanName = report.Mode == ScanMode.Quick ? DisplayText.Get("Ui.xaml.UpdateSummary.21") : DisplayText.Get("Ui.xaml.UpdateSummary.22");
         ProgressStageText.Text = report.Coverage == ScanCoverage.Skipped ? DisplayText.Get("Ui.xaml.UpdateSummary.23") :
             scanName + (report.Coverage == ScanCoverage.Complete ? DisplayText.Get("Ui.xaml.UpdateSummary.24") : DisplayText.Get("Ui.xaml.UpdateSummary.25"));

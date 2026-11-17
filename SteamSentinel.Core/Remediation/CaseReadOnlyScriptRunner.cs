@@ -29,8 +29,11 @@ public static class CaseReadOnlyScriptRunner
         foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned", "-EncodedCommand",
             Convert.ToBase64String(Encoding.Unicode.GetBytes("$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';" + fixedScript)) }) info.ArgumentList.Add(argument);
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(4));
+        // Reverification supplies the shorter per-action deadline for ordinary probes.
+        // This process-level ceiling must also allow the full program-firewall observation.
+        timeout.CancelAfter(RemediationVerification.FirewallProbeTimeout);
         using Process process = new() { StartInfo = info };
+        timeout.Token.ThrowIfCancellationRequested();
         process.Start();
         async Task<string> ReadBoundedAsync(StreamReader reader)
         {

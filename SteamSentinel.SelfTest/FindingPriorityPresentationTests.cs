@@ -77,6 +77,7 @@ internal static partial class Program
             FindingPriorityPresentation.ReferenceFindingIds(stronger).Count == 0);
         Check("结果优先级集成：分类没有改变原始报告及测试文件", JsonSerializer.Serialize(report, JsonFile.Options) == json &&
             (await File.ReadAllBytesAsync(path)).AsSpan().SequenceEqual(archiveBytes));
+        await TestExplicitRootCoverageScannerAsync(root);
     }
 
     private static async Task WriteFindingPriorityScanDiagnosticsAsync(string directory, string name, ScanReport report)

@@ -2704,6 +2704,11 @@ DER SHA-256：{3}
     <value>本轮执行结果未确认</value>
     <comment>Display-only key. Never use rendered text for program decisions.</comment>
   </data>
+  <data name="Result.TargetSummary" xml:space="preserve"><value>目标：{0}
+状态：{1}
+原因：{2}</value></data>
+  <data name="Result.MissingAction" xml:space="preserve"><value>未收到“{0}”的动作结果（动作 ID：{1}），无法确认是否已执行。</value></data>
+  <data name="Result.TargetDetailsLimit" xml:space="preserve"><value>此视图最多显示 {0} 个动作；请导出完整记录包查看全部动作记录。</value></data>
   <data name="Result.Action" xml:space="preserve">
     <value>动作：{0}
 目标：{1}
@@ -11898,6 +11903,8 @@ DER SHA-256：{3}
   <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>参考信息 · 文件格式提示（{0:N0} 项）</value></data>
   <data name="FindingPriority.FormatHint" xml:space="preserve"><value>文件格式提示</value></data>
   <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>仅发现文件格式提示</value></data>
+  <data name="Coverage.ExplicitRootsUnchecked.Title" xml:space="preserve"><value>所选路径未执行内容检查</value></data>
+  <data name="Coverage.ExplicitRootsUnchecked.Detail" xml:space="preserve"><value>所选路径未读取任何文件，无法判断其中的风险。请按“未检查内容”中的原因调整范围后重试。</value></data>
   <data name="FindingPriority.Empty" xml:space="preserve"><value>暂无重点关注项目</value></data>
   <data name="FindingPriority.Incomplete" xml:space="preserve"><value>部分内容未完成检查</value></data>
   <data name="FindingPriority.Score" xml:space="preserve"><value>规则评分：{0}</value></data>

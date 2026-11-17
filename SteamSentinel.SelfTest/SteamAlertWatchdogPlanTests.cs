@@ -12,6 +12,7 @@ internal static partial class Program
 {
     private static async Task TestSteamAlertWatchdogPlanAsync(string root)
     {
+        TestRemediationFailureDetails();
         string script = Path.Combine(root, "plan-only", "sa_watch.ps1");
         string updater = Path.Combine(root, "plan-only", "sa_updater.ps1");
         string payload = Path.Combine(root, "plan-only", "Application Frame Host.exe");

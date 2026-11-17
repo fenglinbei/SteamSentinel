@@ -231,18 +231,37 @@
                     <TabItem x:Name="BatchResultsTab" Header="{ui:Text Ui.Xaml.MainWindow.049}">
                         <Grid Margin="8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                            <StackPanel>
-                                <TextBlock x:Name="BatchSummaryText" Text="{ui:Text Ui.Xaml.MainWindow.050}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,0,4"/>
-                                <TextBlock x:Name="BatchFollowUpText" Text="{ui:Text Ui.Xaml.MainWindow.051}" TextTrimming="CharacterEllipsis" MaxHeight="18" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,0,6"/>
-                            </StackPanel>
-                            <DataGrid x:Name="BatchResultsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                            <DockPanel>
+                                <Button x:Name="BatchActionDetailsButton" DockPanel.Dock="Right" Content="{ui:Text Ui.Xaml.MainWindow.083}"
+                                        Click="BatchActionDetails_Click" IsEnabled="False" VerticalAlignment="Top" Margin="8,0,0,0"/>
+                                <StackPanel>
+                                    <TextBlock x:Name="BatchSummaryText" Text="{ui:Text Ui.Xaml.MainWindow.050}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,0,4"/>
+                                    <TextBlock x:Name="BatchFollowUpText" Text="{ui:Text Ui.Xaml.MainWindow.051}" TextTrimming="CharacterEllipsis" MaxHeight="18" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,0,6"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <DataGrid x:Name="BatchResultsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                                      SelectionChanged="BatchResults_SelectionChanged">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.052}" Binding="{Binding Status}" Width="95" ElementStyle="{StaticResource GridCellText}"/>
                                     <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.053}" Binding="{Binding Target}" Width="*" MinWidth="160">
-                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}"/></DataGridTextColumn.ElementStyle>
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                                <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+                                                <Setter Property="LineHeight" Value="16"/>
+                                                <Setter Property="MaxHeight" Value="32"/>
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
                                     <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.054}" Binding="{Binding Reason}" Width="*" MinWidth="180">
-                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}"/></DataGridTextColumn.ElementStyle>
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource GridCellText}">
+                                                <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+                                                <Setter Property="LineHeight" Value="16"/>
+                                                <Setter Property="MaxHeight" Value="32"/>
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
                                 </DataGrid.Columns>
                             </DataGrid>

@@ -345,6 +345,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
     public static void RefreshOutcomes(RemediationBatchSession session)
     {
         Dictionary<Guid, RemediationActionResult> results = session.Results.SelectMany(r => r.Actions).GroupBy(a => a.ActionId).ToDictionary(g => g.Key, g => g.Last());
+        RemediationResultPresentation.TargetPresentationIndex? presentation = null;
         foreach (RemediationTargetOutcome target in session.Targets.Where(t => t.ActionIds.Count > 0))
         {
             var executed = target.ActionIds.Where(results.ContainsKey).Select(id => results[id]).ToArray();
@@ -353,7 +354,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             if (unknown || executed.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown))
                 target.SetState(RemediationTargetState.ReviewRequired, ReasonCodes.ExecutionOutcomeUnknown);
             else if (executed.Any(a => !a.Success))
-                target.SetState(RemediationTargetState.Failed, ReasonCodes.ActionFailed, MessageText.Join("\n", executed.Where(a => !a.Success).Select(a => a.MessageText)));
+                target.SetState(RemediationTargetState.Failed, ReasonCodes.ActionFailed,
+                    RemediationResultPresentation.TargetFailureSummary(
+                        presentation ??= RemediationResultPresentation.CreateTargetIndex(session, results), target));
             else if (target.MissingActions.Count > 0)
                 target.SetState(RemediationTargetState.PartiallyIncluded, ReasonCodes.ActionsNotIncluded, target.ReasonDetailsText);
             else if (executed.Length < target.ActionIds.Count)

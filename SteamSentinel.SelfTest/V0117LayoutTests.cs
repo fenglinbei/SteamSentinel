@@ -153,9 +153,13 @@ internal static partial class Program
                 ScrollViewer batchScroll = UiLayoutHarness.Descendants<ScrollViewer>(batch).First();
                 for (int pass = 0; pass < 2; pass++) { batchScroll.ScrollToBottom(); layout.Refresh(); }
                 TextBlock? lastReason = batch.Columns[2].GetCellContent(batch.SelectedItem) as TextBlock;
-                Check($"UI {size} 超长处置原因可用像素滚动阅读到最后一行", VirtualizingPanel.GetScrollUnit(batch) == ScrollUnit.Pixel &&
+                TextDetailsWindow? rowDetails = window.CreateBatchActionDetailsWindow();
+                Check($"UI {size} 超长处置原因使用两行摘要且完整记录保留末尾说明", VirtualizingPanel.GetScrollUnit(batch) == ScrollUnit.Pixel &&
                     batchScroll.VerticalOffset >= batchScroll.ScrollableHeight - 2 &&
-                    lastReason?.Text.EndsWith(UiLayoutFixtures.LongReasonEnd, StringComparison.Ordinal) == true);
+                    lastReason is { MaxHeight: 32, TextTrimming: TextTrimming.CharacterEllipsis } && lastReason.ActualHeight <= 32 &&
+                    (lastReason.ToolTip as string)?.EndsWith(UiLayoutFixtures.LongReasonEnd, StringComparison.Ordinal) == true &&
+                    (rowDetails?.FindName("DetailsTextBox") as TextBox)?.Text.Contains(UiLayoutFixtures.LongReasonEnd, StringComparison.Ordinal) == true);
+                rowDetails?.Close();
                 if (output is not null) layout.Save("layout-results-bottom-" + size, output);
                 results.SelectedIndex = 0;
                 typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [true]);
@@ -281,6 +285,7 @@ internal static partial class Program
         TestV030RemediationAvailabilityUi(output);
         TestV032ScopeUi(output);
         TestSteamScriptRepairUi(output);
+        TestRemediationFailureDetailsUi(output);
         TestV020ContainerUi(output);
         TestV0119PasswordUi(output);
     }

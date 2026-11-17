@@ -13,7 +13,11 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
 {
     public const int MaximumMessageCharacters = 512;
     public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(4);
+    public static readonly TimeSpan FirewallProbeTimeout = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan SecondPassBudget = TimeSpan.FromSeconds(20);
+
+    public static TimeSpan GetProbeTimeout(RemediationActionType type) =>
+        type == RemediationActionType.AddProgramFirewallBlock ? FirewallProbeTimeout : ProbeTimeout;
 
     public async Task ObserveAsync(RemediationAction action, RemediationActionResult result, int pass,
         CancellationToken cancellationToken = default)
@@ -26,7 +30,7 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
             return;
         }
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(ProbeTimeout);
+        timeout.CancelAfter(GetProbeTimeout(action.Type));
         RemediationVerificationObservation observation;
         try
         {

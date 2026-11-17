@@ -164,9 +164,33 @@ public partial class MainWindow
     private void UpdateBatchResults()
     {
         if (_caseBatch is null) return;
+        string? selectedKey = (BatchResultsGrid.SelectedItem as RemediationTargetOutcome)?.Key;
         BatchSummaryText.Text = _caseBatch.Summary + SteamScriptRepairSummary(_caseBatch);
         BatchResultsGrid.ItemsSource = null; BatchResultsGrid.ItemsSource = _caseBatch.Targets;
+        BatchResultsGrid.SelectedItem = _caseBatch.Targets.FirstOrDefault(target => target.Key == selectedKey)
+            ?? _caseBatch.Targets.FirstOrDefault();
+        UpdateBatchActionDetailsAvailability();
         BatchResultsTab.Header = DisplayText.Format("Remediation.UpdateBatchResults.01", (_caseBatch.Targets.Count));
+    }
+
+    private void BatchResults_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateBatchActionDetailsAvailability();
+
+    private void UpdateBatchActionDetailsAvailability()
+    {
+        if (BatchActionDetailsButton is not null)
+            BatchActionDetailsButton.IsEnabled = _caseBatch is not null && BatchResultsGrid.SelectedItem is RemediationTargetOutcome;
+    }
+
+    internal TextDetailsWindow? CreateBatchActionDetailsWindow() =>
+        _caseBatch is not null && BatchResultsGrid.SelectedItem is RemediationTargetOutcome target
+            ? new(DisplayText.Get("Ui.Xaml.MainWindow.083"), RemediationResultPresentation.DescribeTarget(_caseBatch, target))
+            : null;
+
+    private void BatchActionDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (CreateBatchActionDetailsWindow() is not { } details) return;
+        details.Owner = this;
+        details.ShowDialog();
     }
 
     internal static string SteamScriptRepairSummary(RemediationBatchSession batch)
