@@ -14,6 +14,8 @@ internal static partial class Program
     // Thread.Sleep; this suite never creates a firewall rule or executes a remediation.
     private static async Task TestFirewallVerificationBudgetAsync(string root)
     {
+        string traceRoot = Path.Combine(root, "firewall-fixture-traces-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(traceRoot);
         RemediationAction firewall = new()
         {
             Type = RemediationActionType.AddProgramFirewallBlock,
@@ -49,7 +51,6 @@ internal static partial class Program
             return new() { Status = RemediationVerificationStatus.Verified };
         })).ObserveAsync(cleanup, ordinary, 1);
         long slowCaseRunnerElapsedMs = 0;
-        Task<CaseVerificationEpisode> caseProbe = SlowCaseAsync();
 
         using (CancellationTokenSource cancelled = new(TimeSpan.FromMilliseconds(100)))
         {
@@ -75,16 +76,26 @@ internal static partial class Program
         string[] fixtures = ["exact", "prefix-neighbor", "missing", "prefix-only", "case-only", "duplicate", "disabled",
             "allow", "inbound", "limited-profile", "program", "protocol", "port", "address", "service", "interface",
             "interface-type", "profile-disabled", "profile-missing", "profile-error", "provider-error"];
-        using SemaphoreSlim fixtureGate = new(2);
+        // Serialize real process starts; the independent deadline mocks above remain
+        // concurrent. The first predicate still runs without a warm-up or retry.
+        using SemaphoreSlim fixtureGate = new(1);
         var fixtureResults = await Task.WhenAll(fixtures.Select(async fixture =>
         {
             await fixtureGate.WaitAsync();
             try
             {
+                Stopwatch fixtureClock = Stopwatch.StartNew();
+                string tracePath = Path.Combine(traceRoot, fixture + "-" + Guid.NewGuid().ToString("N") + ".log");
+                string? runnerOutput = null;
                 string fixtureScript = FirewallObjectFixture(fixture, $"SteamSentinel-{incident:N}-{firewall.ActionId:N}", firewall.Target);
-                WindowsRemediationStateProbe probe = new((value, token) =>
-                    CaseReadOnlyScriptRunner.RunAsync(fixtureScript + value, token), incident);
-                return (Fixture: fixture, Observation: await probe.ObserveAsync(firewall, default));
+                WindowsRemediationStateProbe probe = new(async (value, token) =>
+                {
+                    runnerOutput = await CaseReadOnlyScriptRunner.RunAsync(TraceStage(tracePath, "entry") + "try{" +
+                        fixtureScript + value + "}finally{" + TraceStage(tracePath, "end") + "}", token);
+                    return runnerOutput;
+                }, incident);
+                RemediationVerificationObservation observation = await probe.ObserveAsync(firewall, default);
+                return (Fixture: fixture, Observation: observation, ElapsedMs: fixtureClock.ElapsedMilliseconds, TracePath: tracePath, Output: runnerOutput);
             }
             finally { fixtureGate.Release(); }
         }));
@@ -93,9 +104,22 @@ internal static partial class Program
             RemediationVerificationStatus expected = fixture.Fixture is "exact" or "prefix-neighbor"
                 ? RemediationVerificationStatus.Verified : fixture.Fixture is "duplicate" or "profile-error" or "provider-error"
                     ? RemediationVerificationStatus.Unknown : RemediationVerificationStatus.ResidualDetected;
+            if (fixture.Observation.Status == RemediationVerificationStatus.Unknown || fixture.Observation.Status != expected)
+                Console.WriteLine("FW_PREDICATE " + JsonSerializer.Serialize(new
+                {
+                    fixture.Fixture,
+                    fixture.ElapsedMs,
+                    status = fixture.Observation.Status.ToString(),
+                    expected = expected.ToString(),
+                    fixture.Observation.Message,
+                    returnedNull = fixture.Output is null,
+                    fixture.Output,
+                    trace = ReadFixtureTrace(fixture.TracePath)
+                }));
             Check("防火墙真实只读谓词对象回归 " + fixture.Fixture, fixture.Observation.Status == expected);
         }
 
+        Task<CaseVerificationEpisode> caseProbe = SlowCaseAsync();
         RemediationRunResult slowResult = await slow;
         Check("防火墙大于4秒的两轮观察通过并放行依赖隔离", slowResult.Actions.Count == 2 && slowResult.Actions.All(a => a.Success) &&
             slowResult.Actions[0].Verifications.Count == 2 && slowResult.Actions[0].Verifications.All(v => v.Status == RemediationVerificationStatus.Verified));
@@ -107,6 +131,17 @@ internal static partial class Program
         CaseVerificationEpisode episode = await caseProbe;
         Check("防火墙跨会话复验与真实脚本runner均允许超过4秒", episode.Targets.Single().Status == RemediationVerificationStatus.Verified &&
             episode.State == CaseReverificationState.SelectedTargetsVerified && slowCaseRunnerElapsedMs >= 4500);
+
+        static string TraceStage(string path, string stage) =>
+            "[IO.File]::AppendAllText([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" +
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(path)) + "')),('" + stage +
+            " '+[DateTime]::UtcNow.ToString('O')+[Environment]::NewLine));";
+
+        static string ReadFixtureTrace(string path)
+        {
+            try { return File.Exists(path) ? File.ReadAllText(path) : "not-created"; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "trace-read-error:" + ex.GetType().Name; }
+        }
 
         async Task<RemediationRunResult> TimeoutSequenceAsync()
         {
@@ -203,12 +238,16 @@ internal static partial class Program
             async Task<string?> RunCaseFixtureScriptAsync(CancellationToken token)
             {
                 Stopwatch runnerClock = Stopwatch.StartNew();
+                string tracePath = Path.Combine(traceRoot, "slow-case-" + Guid.NewGuid().ToString("N") + ".log");
                 string? output = null;
                 string? exception = null;
                 try
                 {
                     output = await CaseReadOnlyScriptRunner.RunAsync(
-                        "try{[System.Threading.Thread]::Sleep(4500);'Verified'}catch{'FixtureError:'+($_.Exception.GetType().FullName)+':'+$_.Exception.Message}", token);
+                        TraceStage(tracePath, "entry") + "try{" + TraceStage(tracePath, "beforeSleep") +
+                        "[System.Threading.Thread]::Sleep(4500);" + TraceStage(tracePath, "afterSleep") +
+                        "'Verified'}catch{'FixtureError:'+($_.Exception.GetType().FullName)+':'+$_.Exception.Message}finally{" +
+                        TraceStage(tracePath, "end") + "}", token);
                     return output;
                 }
                 catch (Exception ex)
@@ -225,7 +264,8 @@ internal static partial class Program
                         returnedNull = output is null,
                         output,
                         exception,
-                        callerCancelled = token.IsCancellationRequested
+                        callerCancelled = token.IsCancellationRequested,
+                        trace = ReadFixtureTrace(tracePath)
                     }));
                 }
             }
