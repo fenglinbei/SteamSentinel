@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using SteamSentinel.Broker;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
@@ -140,6 +141,7 @@ internal static partial class Program
 
         async Task<CaseVerificationEpisode> SlowCaseAsync()
         {
+            Stopwatch caseClock = Stopwatch.StartNew();
             const string sid = "S-1-5-21-123-456-789-1001";
             DateTimeOffset epoch = DateTimeOffset.UtcNow.AddHours(-3);
             CaseSessionObservation Session(bool current) => new()
@@ -183,9 +185,48 @@ internal static partial class Program
                 RequireContentFollowUp = false,
                 RequireRelatedFollowUp = false
             };
-            WindowsRemediationStateProbe probe = new((_, token) =>
-                CaseReadOnlyScriptRunner.RunAsync("Start-Sleep -Milliseconds 4500;'Verified'", token), result.IncidentId);
-            return await new RemediationCaseReverification(probe, new Phase3CaseSessions(Session(true))).RecheckAsync(record);
+            WindowsRemediationStateProbe probe = new((_, token) => RunCaseFixtureScriptAsync(token), result.IncidentId);
+            CaseVerificationEpisode observed = await new RemediationCaseReverification(probe, new Phase3CaseSessions(Session(true))).RecheckAsync(record);
+            Console.WriteLine("FW_CASE_EPISODE " + JsonSerializer.Serialize(new
+            {
+                elapsedMs = caseClock.ElapsedMilliseconds,
+                state = observed.State.ToString(),
+                transition = observed.Transition.ToString(),
+                observed.SelectedActionCount,
+                targets = observed.Targets.Select(target => new { status = target.Status.ToString(), target.ExecutionSucceeded, target.Message }),
+                requiredChecks = observed.Checks.Where(check => check.Required)
+                    .Select(check => new { check.Name, status = check.Status.ToString(), check.Detail })
+            }));
+            return observed;
+
+            async Task<string?> RunCaseFixtureScriptAsync(CancellationToken token)
+            {
+                Stopwatch runnerClock = Stopwatch.StartNew();
+                string? output = null;
+                string? exception = null;
+                try
+                {
+                    output = await CaseReadOnlyScriptRunner.RunAsync(
+                        "try{Start-Sleep -Milliseconds 4500;'Verified'}catch{'FixtureError:'+($_.Exception.GetType().FullName)+':'+$_.Exception.Message}", token);
+                    return output;
+                }
+                catch (Exception ex)
+                {
+                    exception = ex.GetType().FullName;
+                    throw;
+                }
+                finally
+                {
+                    Console.WriteLine("FW_CASE_RUNNER " + JsonSerializer.Serialize(new
+                    {
+                        elapsedMs = runnerClock.ElapsedMilliseconds,
+                        returnedNull = output is null,
+                        output,
+                        exception,
+                        callerCancelled = token.IsCancellationRequested
+                    }));
+                }
+            }
         }
     }
 
