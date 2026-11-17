@@ -11,7 +11,7 @@ namespace SteamSentinel.SelfTest;
 internal static partial class Program
 {
     // Inert actions and object fixtures only. PowerShell runs shadowed read commands or
-    // Start-Sleep; this suite never creates a firewall rule or executes a remediation.
+    // Thread.Sleep; this suite never creates a firewall rule or executes a remediation.
     private static async Task TestFirewallVerificationBudgetAsync(string root)
     {
         RemediationAction firewall = new()
@@ -48,6 +48,7 @@ internal static partial class Program
             await Task.Delay(TimeSpan.FromMilliseconds(4500), token);
             return new() { Status = RemediationVerificationStatus.Verified };
         })).ObserveAsync(cleanup, ordinary, 1);
+        long slowCaseRunnerElapsedMs = 0;
         Task<CaseVerificationEpisode> caseProbe = SlowCaseAsync();
 
         using (CancellationTokenSource cancelled = new(TimeSpan.FromMilliseconds(100)))
@@ -105,7 +106,7 @@ internal static partial class Program
         Check("防火墙专属预算不延长普通动作", ordinary.VerificationStatus == RemediationVerificationStatus.Unknown);
         CaseVerificationEpisode episode = await caseProbe;
         Check("防火墙跨会话复验与真实脚本runner均允许超过4秒", episode.Targets.Single().Status == RemediationVerificationStatus.Verified &&
-            episode.State == CaseReverificationState.SelectedTargetsVerified);
+            episode.State == CaseReverificationState.SelectedTargetsVerified && slowCaseRunnerElapsedMs >= 4500);
 
         async Task<RemediationRunResult> TimeoutSequenceAsync()
         {
@@ -207,7 +208,7 @@ internal static partial class Program
                 try
                 {
                     output = await CaseReadOnlyScriptRunner.RunAsync(
-                        "try{Start-Sleep -Milliseconds 4500;'Verified'}catch{'FixtureError:'+($_.Exception.GetType().FullName)+':'+$_.Exception.Message}", token);
+                        "try{[System.Threading.Thread]::Sleep(4500);'Verified'}catch{'FixtureError:'+($_.Exception.GetType().FullName)+':'+$_.Exception.Message}", token);
                     return output;
                 }
                 catch (Exception ex)
@@ -217,9 +218,10 @@ internal static partial class Program
                 }
                 finally
                 {
+                    slowCaseRunnerElapsedMs = runnerClock.ElapsedMilliseconds;
                     Console.WriteLine("FW_CASE_RUNNER " + JsonSerializer.Serialize(new
                     {
-                        elapsedMs = runnerClock.ElapsedMilliseconds,
+                        elapsedMs = slowCaseRunnerElapsedMs,
                         returnedNull = output is null,
                         output,
                         exception,
