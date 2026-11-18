@@ -14,7 +14,8 @@ internal sealed class BrokerDirectoryLease : IDisposable
 
     private BrokerDirectoryLease() { }
 
-    internal static BrokerDirectoryLease OpenParent(string target, string? expectedIdentity = null)
+    internal static BrokerDirectoryLease OpenParent(string target, string? expectedIdentity = null,
+        BrokerFileValidationStage stage = BrokerFileValidationStage.Execute)
     {
         if (!Path.IsPathFullyQualified(target) || target.StartsWith(@"\\", StringComparison.Ordinal) ||
             target.Length < 3 || target[1] != ':' || target.IndexOf(':', 2) >= 0)
@@ -26,23 +27,24 @@ internal sealed class BrokerDirectoryLease : IDisposable
         try
         {
             string current = root;
-            lease.OpenDirectory(current);
+            lease.OpenDirectory(current, stage);
             foreach (string segment in parent[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
             {
                 current = Path.Combine(current, segment);
-                lease.OpenDirectory(current);
+                lease.OpenDirectory(current, stage);
             }
             lease.ParentIdentity = FileScopeSafety.ReadIdentity(lease._handles[^1]);
             if (expectedIdentity is not null &&
                 (!FileScopeSafety.IsValidIdentity(expectedIdentity) ||
                  !lease.ParentIdentity.Equals(expectedIdentity, StringComparison.OrdinalIgnoreCase)))
-                throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+                throw BrokerScopeText.Denied(BrokerScopeText.IdentityDifference(stage, "ParentIdentity",
+                    expectedIdentity, lease.ParentIdentity));
             return lease;
         }
         catch { lease.Dispose(); throw; }
     }
 
-    private void OpenDirectory(string path)
+    private void OpenDirectory(string path, BrokerFileValidationStage stage)
     {
         // Metadata-only opens do not participate in normal file sharing checks on Windows.
         // FILE_LIST_DIRECTORY makes the omitted FILE_SHARE_DELETE pin the ancestor itself.
@@ -52,7 +54,8 @@ internal sealed class BrokerDirectoryLease : IDisposable
         {
             int error = Marshal.GetLastWin32Error();
             handle.Dispose();
-            throw BrokerScopeText.Native(error, BrokerScopeText.IdentityChanged);
+            throw BrokerScopeText.Native(error, BrokerScopeText.IdentityDifference(stage, "ParentOpen",
+                path, error.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         }
         try
         {
@@ -61,12 +64,14 @@ internal sealed class BrokerDirectoryLease : IDisposable
                 throw BrokerScopeText.Denied(BrokerScopeText.ProtectedPath);
             char[] buffer = new char[32768];
             uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
-            if (length == 0 || length >= buffer.Length) throw BrokerScopeText.Io(BrokerScopeText.IdentityChanged);
+            if (length == 0 || length >= buffer.Length)
+                throw BrokerScopeText.Io(BrokerScopeText.IdentityDifference(stage, "ParentPathRead", path,
+                    Marshal.GetLastWin32Error().ToString(System.Globalization.CultureInfo.InvariantCulture)));
             string final = new(buffer, 0, (int)length);
             if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
             if (!Path.TrimEndingDirectorySeparator(Path.GetFullPath(final)).Equals(
                     Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), StringComparison.OrdinalIgnoreCase))
-                throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+                throw BrokerScopeText.Denied(BrokerScopeText.IdentityDifference(stage, "AncestorPath", path, final));
             _handles.Add(handle);
         }
         catch { handle.Dispose(); throw; }

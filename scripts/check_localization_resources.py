@@ -44,6 +44,32 @@ references.update(re.findall(r'MessageText\.Create\("([^"\r\n]+)"\s*[,)]', all_s
 references.update(re.findall(r'\{ui:Text ([\w.]+)\}', xaml_source))
 rule_source = (ROOT / "SteamSentinel.Core" / "Rules" / "default-rules.json").read_text(encoding="utf-8-sig")
 references.update(re.findall(r'"MessageId"\s*:\s*"([^"\r\n]+)"', rule_source))
+# Scope diagnostics combine a stage and a field. Only directory checks span
+# preparation, execution and restore; do not exempt the whole diagnostic prefix.
+# Literal stage/field calls are discovered so a new call still requires a key.
+scope_variable_stages = {
+    "ParentIdentity": ("Prepare", "Execute", "Restore"),
+    "ParentOpen": ("Prepare", "Execute", "Restore"),
+    "ParentPathRead": ("Prepare", "Execute", "Restore"),
+    "AncestorPath": ("Prepare", "Execute", "Restore"),
+    "FileIdentity": ("Prepare", "Execute"),
+    "SecurityHandleIdentity": ("Prepare", "Execute"),
+}
+for stage, field in re.findall(
+        r'BrokerScopeText\.IdentityDifference\(\s*(BrokerFileValidationStage\.\w+|\w+)\s*,\s*"([^"\r\n]+)"', all_source):
+    if stage.startswith("BrokerFileValidationStage."):
+        stages = (stage.split(".")[-1],)
+    elif stage == "stage" and field in scope_variable_stages:
+        stages = scope_variable_stages[field]
+    else:
+        errors.append(f"Unmapped dynamic scope diagnostic: {stage}/{field}")
+        continue
+    references.update(f"Scope.Diagnostic.{value}.{field}" for value in stages)
+for stage in re.findall(r'BrokerScopeText\.MetadataDifference\(\s*(BrokerFileValidationStage\.\w+|\w+)\s*,', all_source):
+    if stage.startswith("BrokerFileValidationStage."):
+        references.add(f"Scope.Diagnostic.{stage.split('.')[-1]}.Metadata")
+    else:
+        errors.append(f"Unmapped dynamic metadata diagnostic stage: {stage}")
 for key in references - catalogs["PresentationMessages"].keys():
     errors.append(f"Missing display resource: {key}")
 for key in set(re.findall(r'MessageText\.Status\("([^"\r\n]+)"\s*[,)]', all_source)) - catalogs["StatusMessages"].keys():
@@ -53,14 +79,16 @@ dynamic_prefixes = ("Amsi.Verdict.", "Execution.", "Run.", "Session.", "Backend.
                     "Resource.Assessment.", "Resource.Performance.", "Resource.Reason.")
 # Retained for rendering reports saved before duplicate path checks and the
 # whole-report startup recovery read budget were replaced, and for the Steam
-# configuration observations saved before the 0.3.5 typed repair workflow.
+# configuration observations saved before the 0.3.5 typed repair workflow. The
+# occupancy label occurs inside results saved before its wrappers were flattened.
 legacy_keys = {"Backend.Core.ContentScanner.Containers.ScanContainerFileAsync.04",
                "Ui.Cases.RefreshCaseRecordsAsync.01", "Ui.Cases.RecordRecoveredResultAsync.01",
                "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.01",
                "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.02",
                "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.04",
                "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.05",
-               "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.07"}
+               "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.07",
+               "Backend.Core.FileOccupancy.Describe.01"}
 unused = [key for key in catalogs["PresentationMessages"] if not key.startswith(dynamic_prefixes)
           and key not in legacy_keys and '"' + key + '"' not in all_source and key not in references]
 if unused:

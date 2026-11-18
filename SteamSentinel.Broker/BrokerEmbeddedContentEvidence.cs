@@ -30,7 +30,8 @@ internal sealed partial class BrokerEngine
     {
         foreach (RemediationAction action in plan.Actions.Where(a => a.ContentEvidenceRuleId is not null && a.Type == RemediationActionType.QuarantineFile))
         {
-            using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity);
+            using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity,
+                BrokerFileValidationStage.Prepare);
             await using SecureFileLease source = SecureFileLease.Open(action.Target);
             _ = await VerifyQuarantineContentEvidenceAsync(action, source, token);
         }

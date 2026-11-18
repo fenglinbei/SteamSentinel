@@ -109,8 +109,10 @@ internal sealed partial class BrokerEngine
                 throw BrokerScopeText.Denied(BrokerScopeText.HardLinks);
             if (verified.Metadata is not null)
             {
-                if (BrokerFileMetadata.CaptureLocked(source.Handle) != verified.Metadata)
-                    throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+                BrokerFileMetadata actualMetadata = BrokerFileMetadata.CaptureLocked(source.Handle);
+                if (actualMetadata != verified.Metadata)
+                    throw BrokerScopeText.Denied(BrokerScopeText.MetadataDifference(BrokerFileValidationStage.FinalQuarantine,
+                        verified.Metadata, actualMetadata));
             }
             else BrokerFileMetadata.EnsureOnlyDefaultStream(source.Handle);
         }
@@ -125,7 +127,8 @@ internal sealed partial class BrokerEngine
         if (record.QuarantinedPath is null) throw BrokerScopeText.Invalid(BrokerScopeText.RestoreMetadataInvalid);
         if (File.Exists(record.OriginalTarget) || Directory.Exists(record.OriginalTarget))
             throw BrokerScopeText.Io(BrokerScopeText.IdentityChanged);
-        using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(record.OriginalTarget, record.OriginalParentIdentity);
+        using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(record.OriginalTarget, record.OriginalParentIdentity,
+            BrokerFileValidationStage.Restore);
         BrokerFileMetadata metadata = BrokerFileMetadata.FromRecord(record);
         await using SecureFileLease payload = SecureFileLease.Open(record.QuarantinedPath);
         if (FileScopeSafety.ReadLinkCount(payload.Handle) != 1 ||

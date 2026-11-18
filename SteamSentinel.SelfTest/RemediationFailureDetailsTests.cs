@@ -97,6 +97,23 @@ internal static partial class Program
         return batch;
     }
 
+    private static RemediationBatchSession CreateRemediationIdentityFailureFixture()
+    {
+        RemediationBatchSession batch = CreateRemediationFailureDetailsFixture();
+        string executable = batch.Targets.Single(target => target.Key == "executable").Target;
+        foreach (RemediationActionResult result in batch.Results.Single().Actions)
+        {
+            if (result.Type == RemediationActionType.AddProgramFirewallBlock)
+                result.Verifications[0] = new() { Pass = 1, Status = RemediationVerificationStatus.Verified, Message = "INERT_FIRST_PASS_CLEAR" };
+            if (result.Type != RemediationActionType.QuarantineFile || result.Target == executable) continue;
+            result.ExecutionStatus = RemediationExecutionStatus.Failed;
+            result.VerificationStatus = RemediationVerificationStatus.ResidualDetected;
+            result.MessageText = MessageText.Create("Backend.Exception", nameof(UnauthorizedAccessException), MessageText.Create("Scope.IdentityChanged"));
+        }
+        RemediationBatchPlanner.RefreshOutcomes(batch);
+        return batch;
+    }
+
     private static void TestRemediationFailureDetails()
     {
         RemediationBatchSession batch = CreateRemediationFailureDetailsFixture();
@@ -104,7 +121,7 @@ internal static partial class Program
         RemediationActionResult firewall = batch.Results.Single().Actions.Single(action => action.Type == RemediationActionType.AddProgramFirewallBlock);
         string timeout = firewall.Verifications[0].Message;
         Check("Remediation details keep six target rows distinct from seven underlying actions",
-            batch.Targets.Count == 6 && batch.Results.Single().Actions.Count == 7 && batch.CompletedCount == 1 && batch.FailedCount == 5 &&
+            batch.Targets.Count == 6 && batch.Results.Single().Actions.Count == 7 && batch.CompletedCount == 1 && batch.FailedCount == 0 && batch.UnfinishedCount == 5 &&
             batch.Targets.Single(item => item.State == RemediationTargetState.Completed).Target == "hosts");
         Check("Remediation details keep the first failed pass when the firewall second pass is clear",
             firewall.Success && firewall.VerificationStatus == RemediationVerificationStatus.Verified &&
@@ -123,8 +140,8 @@ internal static partial class Program
         RemediationBatchPlanner.RefreshOutcomes(timedOutTwice);
         Check("Remediation details reproduce the field result with two firewall timeouts, five skipped quarantines, and completed hosts",
             fieldFirewall.Success && fieldFirewall.Verifications.All(pass => pass.Status == RemediationVerificationStatus.Unknown) &&
-            timedOutTwice.CompletedCount == 1 && timedOutTwice.FailedCount == 5 &&
-            timedOutTwice.Targets.Where(item => item.State == RemediationTargetState.Failed).All(item => item.ReasonDetails!.Contains(timeout, StringComparison.Ordinal)) &&
+            timedOutTwice.CompletedCount == 1 && timedOutTwice.FailedCount == 0 && timedOutTwice.UnfinishedCount == 5 &&
+            timedOutTwice.Targets.Where(item => item.State == RemediationTargetState.SkippedDependency).Count(item => item.ReasonDetails!.Contains(timeout, StringComparison.Ordinal)) == 5 &&
             timedOutTwice.Results.Single().Actions.Count(action => action.ExecutionStatus == RemediationExecutionStatus.SkippedDependency) == 5);
         IReadOnlyList<RemediationActionResult> selected = RemediationResultPresentation.TargetActions(batch, target);
         Check("Remediation details follow plan order and omit the independent successful hosts action",
@@ -214,7 +231,7 @@ internal static partial class Program
         RemediationBatchPlanner.RefreshOutcomes(batch);
         Check("Remediation details place a direct firewall execution failure before the later skipped quarantine",
             target.ReasonDetails!.Contains(firewall.Message, StringComparison.Ordinal) &&
-            !target.ReasonDetails.Contains("Backend.Broker.DependencyBlocked", StringComparison.Ordinal) && batch.CompletedCount == 1 && batch.FailedCount == 5);
+            !target.ReasonDetails.Contains("Backend.Broker.DependencyBlocked", StringComparison.Ordinal) && batch.CompletedCount == 1 && batch.FailedCount == 1 && batch.UnfinishedCount == 4);
         firewall.Message = "INERT_LONG_ROOT_CAUSE:" + new string('x', 12_000) + ":INERT_FULL_DETAIL_END";
         RemediationBatchPlanner.RefreshOutcomes(batch);
         Check("Remediation details bound each stored summary while complete selected records remain copyable",
@@ -236,7 +253,66 @@ internal static partial class Program
         Check("Remediation details disclose the bounded view instead of silently hiding oversized legacy action sets",
             RemediationResultPresentation.DescribeTarget(oldAggregate, manyTarget).Contains(
                 DisplayText.Format("Result.TargetDetailsLimit", RemediationResultPresentation.MaximumTargetDetailActions), StringComparison.Ordinal));
+        TestRemediationDependencyAttribution();
         TestRemediationFailureDetailsLargeBatch();
+    }
+
+    private static void TestRemediationDependencyAttribution()
+    {
+        RemediationBatchSession batch = CreateRemediationIdentityFailureFixture();
+        RemediationTargetOutcome executable = batch.Targets.Single(target => target.Key == "executable");
+        RemediationAction firstScript = batch.Plans.Single().Actions.First(action => action.Type == RemediationActionType.QuarantineFile && action.Target != executable.Target);
+        RemediationActionResult skipped = batch.Results.Single().Actions.Single(action => action.Type == RemediationActionType.QuarantineFile && action.Target == executable.Target);
+        string plansBefore = JsonSerializer.Serialize(batch.Plans, JsonFile.Options);
+        string resultsBefore = JsonSerializer.Serialize(batch.Results, JsonFile.Options);
+        Check("Remediation attribution separates four failed scripts from the skipped executable",
+            batch.FailedCount == 4 && batch.UnfinishedCount == 1 && batch.CompletedCount == 1 &&
+            executable.State == RemediationTargetState.SkippedDependency && executable.ReasonCode == ReasonCodes.DependencyBlocked &&
+            batch.Targets.Where(target => target.Key is not ("executable" or "hosts")).All(target => target.State == RemediationTargetState.Failed));
+        foreach (var culture in new[] { DisplayText.Chinese, DisplayText.English })
+        {
+            using IDisposable language = DisplayText.UseCulture(culture);
+            string skip = DisplayText.Format("Result.DependencySkip", ReportExporter.ActionLabel(skipped.Type));
+            string cause = DisplayText.Format("Result.PrerequisiteCause", ReportExporter.ActionLabel(firstScript.Type), firstScript.Target,
+                batch.Results.Single().Actions.Single(action => action.ActionId == firstScript.ActionId).MessageText.Display);
+            Check($"Remediation attribution {culture.Name} names the skipped action and the failing prerequisite file",
+                executable.ReasonDetailsText.Display.StartsWith(skip, StringComparison.Ordinal) &&
+                executable.ReasonDetailsText.Display.Contains(cause, StringComparison.Ordinal) &&
+                !executable.ReasonDetailsText.Display.Contains(executable.Target, StringComparison.Ordinal) &&
+                executable.Status == StatusPresentation.Target(RemediationTargetState.SkippedDependency, culture));
+        }
+        RemediationBatchSession restored = JsonSerializer.Deserialize<RemediationBatchSession>(JsonSerializer.Serialize(batch, JsonFile.Options), JsonFile.Options)!;
+        // Prior versions persisted every unsuccessful target as Failed. Rebuild the display
+        // from the original typed action results without rewriting their execution evidence.
+        restored.Targets.Single(target => target.Key == "executable").SetState(RemediationTargetState.Failed, ReasonCodes.ActionFailed);
+        RemediationBatchPlanner.RefreshOutcomes(restored);
+        Check("Remediation attribution refreshes old failed target summaries without modifying saved action evidence",
+            restored.Targets.Single(target => target.Key == "executable").State == RemediationTargetState.SkippedDependency &&
+            JsonSerializer.Serialize(restored.Plans, JsonFile.Options) == plansBefore &&
+            JsonSerializer.Serialize(restored.Results, JsonFile.Options) == resultsBefore);
+        RemediationBatchSession withoutPlan = new()
+        {
+            Results = [new() { Actions = [skipped] }],
+            Targets = [new() { Target = skipped.Target, ActionIds = [skipped.ActionId] }]
+        };
+        RemediationBatchPlanner.RefreshOutcomes(withoutPlan);
+        Check("Remediation attribution keeps a legacy skip without a plan and does not invent a prerequisite path",
+            withoutPlan.Targets.Single().State == RemediationTargetState.SkippedDependency &&
+            withoutPlan.Targets.Single().ReasonDetails!.Contains(skipped.Message, StringComparison.Ordinal) &&
+            !withoutPlan.Targets.Single().ReasonDetails!.Contains(firstScript.Target, StringComparison.Ordinal));
+        RemediationActionResult untyped = JsonSerializer.Deserialize<RemediationActionResult>(
+            "{\"ActionId\":\"" + skipped.ActionId + "\",\"Type\":\"QuarantineFile\",\"Target\":\"C:\\\\Lab\\\\legacy.exe\",\"Success\":false,\"Message\":\"INERT_OLD_UNTYPED_RESULT\"}", JsonFile.Options)!;
+        withoutPlan.Results.Single().Actions.Clear(); withoutPlan.Results.Single().Actions.Add(untyped);
+        RemediationBatchPlanner.RefreshOutcomes(withoutPlan);
+        Check("Remediation attribution never infers a skipped execution from legacy free text",
+            withoutPlan.Targets.Single().State == RemediationTargetState.Failed &&
+            withoutPlan.Targets.Single().ReasonDetails!.Contains(untyped.Message, StringComparison.Ordinal));
+        skipped.ExecutionStatus = RemediationExecutionStatus.Failed;
+        skipped.Message = "INERT_EXECUTABLE_OWN_FAILURE";
+        RemediationBatchPlanner.RefreshOutcomes(batch);
+        Check("Remediation attribution prefers an executable's own failure over a failed prerequisite",
+            executable.State == RemediationTargetState.Failed && executable.ReasonDetails!.Contains(skipped.Message, StringComparison.Ordinal) &&
+            !executable.ReasonDetails.Contains(firstScript.Target, StringComparison.Ordinal));
     }
 
     private static void TestRemediationFailureDetailsLargeBatch()
@@ -302,10 +378,11 @@ internal static partial class Program
         elapsed.Stop();
         long allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
         Console.WriteLine($"Remediation detail large batch: targets={session.Targets.Count}; elapsedMs={elapsed.ElapsedMilliseconds}; allocatedBytes={allocated}");
-        Check("Remediation details refresh 5000 failed targets within bounded time and allocation",
+        Check("Remediation details refresh 5000 skipped targets within bounded time and allocation",
             elapsed.Elapsed < TimeSpan.FromSeconds(5) && allocated < 256L * 1024 * 1024);
         Check("Remediation details keep all large-batch causes and summaries without changing plans or action evidence",
-            session.Targets.Count == 5000 && session.FailedCount == 5000 &&
+            session.Targets.Count == 5000 && session.FailedCount == 0 && session.UnfinishedCount == 5000 &&
+            session.Targets.All(target => target.State == RemediationTargetState.SkippedDependency) &&
             session.Targets.All(target => target.ReasonDetails is { Length: > 0 } details &&
                 details.Length <= RemediationResultPresentation.MaximumTargetSummaryCharacters &&
                 details.Contains(expectedCauses[target.ActionIds.Single()], StringComparison.Ordinal)) &&

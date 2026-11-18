@@ -116,6 +116,36 @@ internal static partial class Program
                         if (output is not null) detailLayout.Save($"remediation-details-record-{culture.Name}-{width}x{height}", output);
                     }
                     details.Close();
+                    RemediationBatchSession identityFailures = CreateRemediationIdentityFailureFixture();
+                    typeof(MainWindow).GetField("_caseBatch", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, identityFailures);
+                    typeof(MainWindow).GetMethod("UpdateBatchResults", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+                    RemediationTargetOutcome skippedExecutable = identityFailures.Targets.Single(item => item.Key == "executable");
+                    grid.SelectedItem = skippedExecutable;
+                    grid.ScrollIntoView(skippedExecutable);
+                    layout.Refresh();
+                    TextBlock? skippedStatus = grid.Columns[0].GetCellContent(skippedExecutable) as TextBlock;
+                    RemediationTargetOutcome failedScript = identityFailures.Targets.First(item => item.State == RemediationTargetState.Failed);
+                    Check(label + " distinguishes failed scripts from the executable skipped because of a prerequisite",
+                        skippedExecutable.State == RemediationTargetState.SkippedDependency &&
+                        skippedStatus?.Text == skippedExecutable.Status && layout.IsFullyVisible(skippedStatus) &&
+                        failedScript.Status != skippedExecutable.Status && identityFailures.FailedCount == 4 &&
+                        skippedExecutable.Reason.Contains(DisplayText.Format("Result.DependencySkip", ReportExporter.ActionLabel(RemediationActionType.QuarantineFile)), StringComparison.Ordinal) &&
+                        skippedExecutable.Reason.Contains("SteamAlertUpdater", StringComparison.Ordinal) &&
+                        skippedExecutable.Reason.Contains(".ps1", StringComparison.Ordinal));
+                    TextDetailsWindow skippedDetails = window.CreateBatchActionDetailsWindow()
+                        ?? throw new InvalidOperationException("Skipped target details window was not created.");
+                    using (UiLayoutHarness detailLayout = new(skippedDetails, detailWidth, detailHeight))
+                    {
+                        string text = ((TextBox)skippedDetails.FindName("DetailsTextBox")).Text;
+                        Check(label + " keeps the executable skip and original script failure records in complete details",
+                            text.Contains(skippedExecutable.Status, StringComparison.Ordinal) &&
+                            text.Contains(DisplayText.Get("Scope.IdentityChanged"), StringComparison.Ordinal) &&
+                            text.Contains(RemediationResultPresentation.ExecutionLabel(RemediationExecutionStatus.Failed), StringComparison.Ordinal) &&
+                            text.Contains(RemediationResultPresentation.ExecutionLabel(RemediationExecutionStatus.SkippedDependency), StringComparison.Ordinal));
+                        if (output is not null) detailLayout.Save($"remediation-identity-details-{culture.Name}-{width}x{height}", output);
+                    }
+                    skippedDetails.Close();
+                    if (output is not null) layout.Save($"remediation-identity-list-{culture.Name}-{width}x{height}", output);
                     grid.SelectedItem = null;
                     Check(label + " disables details when no target is selected", !open.IsEnabled && window.CreateBatchActionDetailsWindow() is null);
                 }

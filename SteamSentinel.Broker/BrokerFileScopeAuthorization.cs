@@ -41,19 +41,25 @@ internal sealed class BrokerFileScopeAuthorization
                 !FileScopeSafety.IsValidIdentity(action.ExpectedParentIdentity) || !Validation.IsHexSha256(action.ExpectedSha256))
                 throw BrokerScopeText.Invalid(BrokerScopeText.InvalidIdentity);
             RequireSafePath(action.Target);
-            using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity);
+            using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity,
+                BrokerFileValidationStage.Prepare);
             await using SecureFileLease lease = SecureFileLease.Open(action.Target);
-            string identity = RequireIdentity(lease, action.ExpectedFileIdentity!);
+            string identity = RequireIdentity(lease, action.ExpectedFileIdentity!, BrokerFileValidationStage.Prepare);
             string hash = await lease.ComputeSha256Async(token);
             if (!hash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                throw BrokerScopeText.Invalid(BrokerScopeText.IdentityChanged);
+                throw BrokerScopeText.Invalid(BrokerScopeText.IdentityDifference(BrokerFileValidationStage.Prepare,
+                    "ContentSha256", action.ExpectedSha256!, hash));
             _ = await BrokerEngine.VerifyQuarantineContentEvidenceAsync(action, lease, token);
             bool sensitive = FileScopeSafety.EvaluatePath(lease.FinalPath).Sensitive;
             bool requiresExplicit = action.UserSelectedRisk || sensitive || !FileRemediationScope.IsAllowed(lease.FinalPath, hash, rules, layout);
             BrokerFileMetadata? metadata = null;
             if (action.Type == RemediationActionType.QuarantineFile)
             {
-                try { metadata = BrokerFileMetadata.Capture(lease.Handle, lease.FinalPath); }
+                try
+                {
+                    metadata = BrokerFileMetadata.Capture(lease.Handle, lease.FinalPath,
+                    stage: BrokerFileValidationStage.Prepare);
+                }
                 catch (System.ComponentModel.Win32Exception ex) when (!requiresExplicit && ex.NativeErrorCode is 5 or 1300 or 1314)
                 {
                     // Some machines remove SeSecurityPrivilege from administrators. Existing automatic
@@ -104,12 +110,20 @@ internal sealed class BrokerFileScopeAuthorization
             !_targets.TryGetValue(action.ActionId, out VerifiedBrokerFileTarget? target))
             throw BrokerScopeText.Denied(BrokerScopeText.NotAuthorized);
         if (!parent.ParentIdentity.Equals(target.ParentIdentity, StringComparison.OrdinalIgnoreCase))
-            throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+            throw BrokerScopeText.Denied(BrokerScopeText.IdentityDifference(BrokerFileValidationStage.Execute,
+                "ParentIdentity", target.ParentIdentity, parent.ParentIdentity));
         _ = RequireIdentity(lease, target.FileIdentity);
-        if (!(await lease.ComputeSha256Async(token)).Equals(target.Sha256, StringComparison.OrdinalIgnoreCase))
-            throw BrokerScopeText.Invalid(BrokerScopeText.IdentityChanged);
-        if (target.Metadata is not null && BrokerFileMetadata.Capture(lease.Handle, lease.FinalPath, lease.HasSecurityAccess) != target.Metadata)
-            throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+        string actualHash = await lease.ComputeSha256Async(token);
+        if (!actualHash.Equals(target.Sha256, StringComparison.OrdinalIgnoreCase))
+            throw BrokerScopeText.Invalid(BrokerScopeText.IdentityDifference(BrokerFileValidationStage.Execute,
+                "ContentSha256", target.Sha256, actualHash));
+        if (target.Metadata is not null)
+        {
+            BrokerFileMetadata actualMetadata = BrokerFileMetadata.Capture(lease.Handle, lease.FinalPath, lease.HasSecurityAccess);
+            if (actualMetadata != target.Metadata)
+                throw BrokerScopeText.Denied(BrokerScopeText.MetadataDifference(BrokerFileValidationStage.Execute,
+                    target.Metadata, actualMetadata));
+        }
         return target;
     }
 
@@ -120,7 +134,8 @@ internal sealed class BrokerFileScopeAuthorization
             throw MessageExceptions.Create(safety.Message, text => new UnauthorizedAccessException(text));
     }
 
-    private static string RequireIdentity(SecureFileLease lease, string expected)
+    private static string RequireIdentity(SecureFileLease lease, string expected,
+        BrokerFileValidationStage stage = BrokerFileValidationStage.Execute)
     {
         RequireSafePath(lease.FinalPath);
         FileScopeSafety.ValidateHandlePath(lease.Handle, lease.FinalPath);
@@ -128,7 +143,7 @@ internal sealed class BrokerFileScopeAuthorization
             throw BrokerScopeText.Denied(BrokerScopeText.HardLinks);
         string actual = FileScopeSafety.ReadIdentity(lease.Handle);
         if (!actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
-            throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+            throw BrokerScopeText.Denied(BrokerScopeText.IdentityDifference(stage, "FileIdentity", expected, actual));
         return actual;
     }
 

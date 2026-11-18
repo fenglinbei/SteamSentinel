@@ -210,4 +210,6 @@
   <data name="remediation.outcome_unknown" xml:space="preserve">
     <value>This operation has ended, but its outcome could not be confirmed. Scan again to check the current state; the original record is retained.</value>
   </data>
+  <data name="Target.SkippedDependency" xml:space="preserve"><value>Skipped</value></data>
+  <data name="remediation.dependency_blocked" xml:space="preserve"><value>An action for this target was skipped because a prerequisite failed or could not be verified.</value></data>
 </root>

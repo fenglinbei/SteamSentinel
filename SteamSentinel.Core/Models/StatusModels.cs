@@ -8,7 +8,7 @@ public enum ScanExecutionState { Unknown = 0, NotStarted = 1, Running = 2, Compl
 public enum RemediationTargetState
 {
     Unknown = 0, NotIncluded = 1, PartiallyIncluded = 2, Ready = 3,
-    NotExecuted = 4, Failed = 5, ReviewRequired = 6, Completed = 7
+    NotExecuted = 4, Failed = 5, ReviewRequired = 6, Completed = 7, SkippedDependency = 8
 }
 
 /// <summary>Stable machine reasons. Never infer these from localized or OS error text.</summary>
@@ -39,6 +39,7 @@ public static class ReasonCodes
     public const string EvidenceUnavailable = "remediation.evidence_unavailable";
     public const string TargetUnavailable = "remediation.target_unavailable";
     public const string ActionFailed = "remediation.action_failed";
+    public const string DependencyBlocked = "remediation.dependency_blocked";
     public const string WaitingBatches = "remediation.waiting_batches";
     public const string VerificationIncomplete = "remediation.verification_incomplete";
     public const string ActionsVerified = "remediation.actions_verified";

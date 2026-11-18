@@ -111,9 +111,9 @@ public sealed partial class RelatedArtifactScanner
         if (HasInstalledFamilyEvidence(report))
         {
             incomplete += unreadable;
-            if (hosts.Count > MaximumScriptHosts) Note(report, MessageText.Create("SteamAlert.Watchdog.HostLimit"));
+            if (hosts.Count > MaximumScriptHosts) NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Watchdog.HostLimit"));
         }
-        if (incomplete > 0) Note(report, MessageText.Create("SteamAlert.Watchdog.HostReadIncomplete", incomplete));
+        if (incomplete > 0) NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Watchdog.HostReadIncomplete", incomplete));
     }
 
     private bool HasInstalledFamilyEvidence(ScanReport report) => _installedFamilyScope ||

@@ -125,7 +125,7 @@ internal sealed partial class BrokerEngine
                     ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
                 {
                     actionResult.Occupancy = FileOccupancy.Inspect(action.Target, action.Type == RemediationActionType.QuarantineDirectory);
-                    actionResult.MessageText += " " + FileOccupancy.DescribeText(actionResult.Occupancy);
+                    actionResult.MessageText = FileOccupancy.AppendTo(actionResult.MessageText, actionResult.Occupancy);
                 }
             }, cancellationToken);
 

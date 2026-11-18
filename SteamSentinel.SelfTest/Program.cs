@@ -143,6 +143,7 @@ internal static partial class Program
             await TestSteamConfigurationRepairAsync(root);
             await TestSteamAlertEmbeddedEvidenceAsync(root);
             await TestV032BrokerScopeAsync(root);
+            await TestBrokerScopeDiagnosticsAsync(root);
             await TestBoundBrokerPlanAsync();
             await TestSecureFileLeaseAsync(root);
             await TestReportExportAsync(root, rules);
@@ -786,6 +787,8 @@ internal static partial class Program
                 return RunV032ScopeUi(args[1]);
             case "--scope-authorization-tests" when args.Length is 2 or 4:
                 return await RunV032ScopeAuthorizationAsync(Path.GetFullPath(args[1]), args.Length == 4 ? args[2] : null, args.Length == 4 ? args[3] : null);
+            case "--scope-diagnostic-tests" when args.Length == 2:
+                return await RunBrokerScopeDiagnosticsAsync(Path.GetFullPath(args[1]));
             case "--report-budget-tests" when args.Length == 2:
                 return await RunV031ReportBudgetTestsAsync(Path.GetFullPath(args[1]));
             case "--case-persistence-tests" when args.Length == 2:

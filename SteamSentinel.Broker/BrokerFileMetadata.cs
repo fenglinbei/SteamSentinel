@@ -17,12 +17,13 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
         FileAttributes.System | FileAttributes.Archive | FileAttributes.Normal | FileAttributes.NotContentIndexed |
         FileAttributes.Temporary;
 
-    internal static BrokerFileMetadata Capture(SafeFileHandle handle, string path, bool hasSecurityAccess = false)
+    internal static BrokerFileMetadata Capture(SafeFileHandle handle, string path, bool hasSecurityAccess = false,
+        BrokerFileValidationStage stage = BrokerFileValidationStage.Execute)
     {
         if (hasSecurityAccess) return CaptureLocked(handle);
         EnsureOnlyDefaultStream(handle);
         using BrokerRestorePrivilege securityPrivilege = BrokerRestorePrivilege.EnableSecurity();
-        using SafeFileHandle securityHandle = OpenSecurityHandle(path, handle);
+        using SafeFileHandle securityHandle = OpenSecurityHandle(path, handle, stage);
         return CaptureLocked(securityHandle);
     }
 
@@ -74,8 +75,10 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
     {
         FileScopeSafety.ValidateHandlePath(handle, boundPath);
         string destinationIdentity = FileScopeSafety.ReadIdentity(handle);
-        if (!FileScopeSafety.CaptureIdentity(boundPath).Equals(destinationIdentity, StringComparison.Ordinal))
-            throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+        string pathIdentity = FileScopeSafety.CaptureIdentity(boundPath);
+        if (!pathIdentity.Equals(destinationIdentity, StringComparison.Ordinal))
+            throw BrokerScopeText.Denied(BrokerScopeText.IdentityDifference(BrokerFileValidationStage.Restore,
+                "FileIdentity", destinationIdentity, pathIdentity));
         FileBasicInformation basic = new()
         {
             CreationTime = CreationTimeUtc.UtcDateTime.ToFileTimeUtc(),
@@ -107,8 +110,10 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
             RestoreAutoInheritedAcl(handle, descriptor.SystemAcl, discretionary: false,
                 descriptor.ControlFlags.HasFlag(ControlFlags.SystemAclProtected));
         FileScopeSafety.ValidateHandlePath(handle, boundPath);
-        if (!FileScopeSafety.CaptureIdentity(boundPath).Equals(destinationIdentity, StringComparison.Ordinal))
-            throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+        pathIdentity = FileScopeSafety.CaptureIdentity(boundPath);
+        if (!pathIdentity.Equals(destinationIdentity, StringComparison.Ordinal))
+            throw BrokerScopeText.Denied(BrokerScopeText.IdentityDifference(BrokerFileValidationStage.Restore,
+                "FileIdentity", destinationIdentity, pathIdentity));
         string actualSecurity = ReadSecurityDescriptor(handle);
         bool readActual = GetFileInformationByHandle(handle, out ByHandleInformation actual);
         if (!actualSecurity.Equals(SecurityDescriptor, StringComparison.Ordinal) ||
@@ -189,7 +194,7 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
         finally { if (descriptor != IntPtr.Zero) _ = LocalFree(descriptor); }
     }
 
-    private static SafeFileHandle OpenSecurityHandle(string path, SafeFileHandle original)
+    private static SafeFileHandle OpenSecurityHandle(string path, SafeFileHandle original, BrokerFileValidationStage stage)
     {
         SafeFileHandle handle = CreateFile(path.Length >= 248 ? @"\\?\" + path : path,
             0x00020000 | 0x01000000 | 0x80, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
@@ -201,8 +206,11 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
         try
         {
             FileScopeSafety.ValidateHandlePath(handle, path);
-            if (!FileScopeSafety.ReadIdentity(handle).Equals(FileScopeSafety.ReadIdentity(original), StringComparison.Ordinal))
-                throw BrokerScopeText.Denied(BrokerScopeText.IdentityChanged);
+            string expectedIdentity = FileScopeSafety.ReadIdentity(original);
+            string actualIdentity = FileScopeSafety.ReadIdentity(handle);
+            if (!actualIdentity.Equals(expectedIdentity, StringComparison.Ordinal))
+                throw BrokerScopeText.Denied(BrokerScopeText.IdentityDifference(stage, "SecurityHandleIdentity",
+                    expectedIdentity, actualIdentity));
             return handle;
         }
         catch { handle.Dispose(); throw; }

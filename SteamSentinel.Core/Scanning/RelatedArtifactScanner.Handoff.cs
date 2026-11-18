@@ -194,7 +194,7 @@ public sealed partial class RelatedArtifactScanner
         {
             if (!before.IsReadable)
             {
-                if (before.Status != ScriptHostReadStatus.Exited && _installedFamilyScope) Note(report, MessageText.Create("SteamAlert.Handoff.Incomplete"));
+                if (before.Status != ScriptHostReadStatus.Exited && _installedFamilyScope) NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Incomplete"));
                 continue;
             }
             if (!SteamAlertUpdateHandoff.IsTrustedImagePath(before.ImagePath)) continue;
@@ -202,7 +202,7 @@ public sealed partial class RelatedArtifactScanner
             {
                 if (_installedFamilyScope && _handoffProofs.Keys.Any(script =>
                     before.CommandLine!.Contains(script, StringComparison.OrdinalIgnoreCase)))
-                    Note(report, MessageText.Create("SteamAlert.Handoff.Incomplete"));
+                    NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Incomplete"));
                 continue;
             }
             if (_blockedPaths.Contains(path)) continue;
@@ -218,27 +218,27 @@ public sealed partial class RelatedArtifactScanner
                 await using FileStream activeScript = RelatedArtifactReader.Open(path);
                 if (activeScript.Length > SteamAlertUpdateHandoff.MaximumScriptBytes ||
                     activeScript.Length > _verificationByteLimit - _relatedBytesHashed)
-                { Note(report, MessageText.Create("SteamAlert.Handoff.Limit")); continue; }
+                { NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Limit")); continue; }
                 string currentScriptHash = await Hashing.Sha256StreamAsync(activeScript, token,
                     bytes => { _relatedBytesHashed += bytes; report.Metrics.BytesHashed += bytes; }, SteamAlertUpdateHandoff.MaximumScriptBytes);
                 if (!currentScriptHash.Equals(proof.ScriptSha256, StringComparison.OrdinalIgnoreCase))
-                { Note(report, MessageText.Create("SteamAlert.Handoff.Incomplete")); continue; }
+                { NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Incomplete")); continue; }
                 await using FileStream image = RelatedArtifactReader.Open(before.ImagePath!);
                 if (image.Length > 16L * 1024 * 1024 || image.Length > _verificationByteLimit - _relatedBytesHashed)
-                { Note(report, MessageText.Create("SteamAlert.Handoff.Limit")); continue; }
+                { NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Limit")); continue; }
                 string imageHash = await Hashing.Sha256StreamAsync(image, token,
                     bytes => { _relatedBytesHashed += bytes; report.Metrics.BytesHashed += bytes; }, 16L * 1024 * 1024);
                 PowerShellScriptHostSnapshot after = PowerShellScriptHost.ReadRaw(before.ProcessId);
                 Finding? host = CreateHandoffHostFinding(before, after, imageHash, proof);
-                if (host is null) { Note(report, MessageText.Create("SteamAlert.Handoff.Incomplete")); continue; }
-                if (!RegisterHandoffProof(proof, null, report)) continue;
+                if (host is null) { NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Incomplete")); continue; }
+                if (!RegisterHandoffProof(proof, null, report)) { _liveAssociationChecksComplete = false; continue; }
                 _observedHandoffHosts.Add(path);
                 AddCurrent(host, report);
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or Win32Exception)
-            { Note(report, MessageText.Create("SteamAlert.Handoff.Incomplete")); }
+            { NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Incomplete")); }
         }
-        if (hosts.Count > 256 && _installedFamilyScope) Note(report, MessageText.Create("SteamAlert.Handoff.Limit"));
+        if (hosts.Count > 256 && _installedFamilyScope) NoteLiveAssociationGap(report, MessageText.Create("SteamAlert.Handoff.Limit"));
     }
 
     internal static Finding? CreateHandoffHostFinding(PowerShellScriptHostSnapshot before, PowerShellScriptHostSnapshot after,

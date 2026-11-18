@@ -13,6 +13,7 @@ internal static partial class Program
 {
     private static async Task TestV0116Async(string root)
     {
+        await TestScannedFileContainmentAsync(root);
         string directory = Path.Combine(root, "v0116"); Directory.CreateDirectory(directory);
         string file = Path.Combine(directory, "inert.bin"); await File.WriteAllBytesAsync(file, new byte[1024 * 1024]);
         string hash = await Hashing.Sha256FileAsync(file);

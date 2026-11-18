@@ -108,6 +108,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
         foreach (string path in paths)
         {
             string? hash = await HashAsync(path, report, token);
+            if (hash is null && _closureOnly && _proofs.ContainsKey(path)) _liveAssociationChecksComplete = false;
             if (hash is not null && !_known.ContainsKey(hash) && !MatchesProof(path, hash) &&
                 SteamAlertInstallation.IsInstalledResidentPath(path, _residentDirectory))
                 RegisterVerifiedFileFinding(path, hash, null);
@@ -127,7 +128,9 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                     using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
                     using RegistryKey? key = baseKey.OpenSubKey(keyPath);
                     if (key is null) continue;
-                    foreach (string name in key.GetValueNames().Take(1024))
+                    string[] names = key.GetValueNames();
+                    if (names.Length > 1024) { _liveAssociationChecksComplete = false; report.Coverage = ScanCoverage.Partial; }
+                    foreach (string name in names.Take(1024))
                     {
                         token.ThrowIfCancellationRequested();
                         string command = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames)?.ToString() ?? "";
@@ -160,7 +163,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
                     }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-                { report.AddCoverageNote(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectRunAsync.03") + MessageExceptions.Describe(ex)); report.Coverage = ScanCoverage.Partial; }
+                { _liveAssociationChecksComplete = false; Note(report, MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectRunAsync.03") + MessageExceptions.Describe(ex)); }
             }
     }
 
@@ -168,13 +171,21 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
     {
         string root = RelatedTaskSnapshotReader.TaskRoot;
         MessageTextCollection notes = [];
-        if (!Directory.Exists(root)) return;
+        try { _ = File.GetAttributes(root); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return; }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            _liveAssociationChecksComplete = false;
+            Note(report, MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.04", root, MessageExceptions.Describe(ex)));
+            return;
+        }
         long xmlBytes = 0;
-        foreach (string path in ContentDiscovery.Files(root, notes, 4096, 8, token))
+        List<DiscoveryReadNote> reads = [];
+        foreach (string path in ContentDiscovery.Files(root, notes, 4096, 8, token, reads))
         {
             try
             {
-                if (xmlBytes >= 64L * 1024 * 1024) { notes.AddText(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.01")); break; }
+                if (xmlBytes >= 64L * 1024 * 1024) { _liveAssociationChecksComplete = false; notes.AddText(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.01")); break; }
                 string task = "\\" + Path.GetRelativePath(root, path);
                 RelatedTaskSnapshot snapshot = await RelatedTaskSnapshotReader.ReadUnderRootAsync(task, root, token,
                     count => xmlBytes += count, (int)Math.Min(RelatedTaskSnapshotReader.MaximumBytes, 64L * 1024 * 1024 - xmlBytes));
@@ -207,6 +218,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or XmlException or Win32Exception)
             { notes.AddText(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectTasksAsync.04", (path), (MessageExceptions.Describe(ex)))); }
         }
+        if (reads.Any(read => read.Status == DiagnosticReadStatus.LimitReached)) _liveAssociationChecksComplete = false;
         foreach (MessageText note in notes.Texts) { report.AddCoverageNote(note); report.Coverage = ScanCoverage.Partial; }
     }
 
@@ -216,7 +228,9 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
         {
             using RegistryKey? root = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services");
             if (root is null) return;
-            foreach (string name in root.GetSubKeyNames().Take(4096))
+            string[] names = root.GetSubKeyNames();
+            if (names.Length > 4096) { _liveAssociationChecksComplete = false; report.Coverage = ScanCoverage.Partial; }
+            foreach (string name in names.Take(4096))
             {
                 token.ThrowIfCancellationRequested();
                 using RegistryKey? service = root.OpenSubKey(name);
@@ -249,7 +263,7 @@ public sealed partial class RelatedArtifactScanner(RuleSet rules)
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        { report.AddCoverageNote(MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectServicesAsync.03") + MessageExceptions.Describe(ex)); report.Coverage = ScanCoverage.Partial; }
+        { _liveAssociationChecksComplete = false; Note(report, MessageText.Create("Backend.Core.RelatedArtifactScanner.CollectServicesAsync.03") + MessageExceptions.Describe(ex)); }
     }
 
     private static void CollectHistory(ScanReport report)

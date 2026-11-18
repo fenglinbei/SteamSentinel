@@ -11957,4 +11957,31 @@ DER SHA-256：{3}
   <data name="Rule.STEAMALERT-UPDATER-NOBOM.evidence" xml:space="preserve"><value>精确匹配无 BOM 的内嵌更新脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。</value></data>
   <data name="Rule.STEAMALERT-LAUNCHER-NOBOM.label" xml:space="preserve"><value>SteamAlert 内嵌启动脚本</value></data>
   <data name="Rule.STEAMALERT-LAUNCHER-NOBOM.evidence" xml:space="preserve"><value>精确匹配无 BOM 的内嵌启动脚本；添加 UTF-8 BOM 后与已核验的落地脚本逐字节相同。</value></data>
+  <data name="Scope.Diagnostic.Prepare.ParentIdentity" xml:space="preserve"><value>文件安全校验失败（确认前校验）：父目录身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Prepare.ParentOpen" xml:space="preserve"><value>文件安全校验失败（确认前校验）：无法锁定祖先目录 {0}；Win32 错误码 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Prepare.ParentPathRead" xml:space="preserve"><value>文件安全校验失败（确认前校验）：无法读取祖先目录 {0} 的最终路径；Win32 状态 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Prepare.AncestorPath" xml:space="preserve"><value>文件安全校验失败（确认前校验）：祖先目录的最终路径不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Prepare.FileIdentity" xml:space="preserve"><value>文件安全校验失败（确认前校验）：文件身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Prepare.ContentSha256" xml:space="preserve"><value>文件安全校验失败（确认前校验）：文件内容 SHA-256 不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Prepare.SecurityHandleIdentity" xml:space="preserve"><value>文件安全校验失败（确认前校验）：安全信息句柄指向的文件身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.ParentIdentity" xml:space="preserve"><value>文件安全校验失败（执行前复验）：父目录身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.ParentOpen" xml:space="preserve"><value>文件安全校验失败（执行前复验）：无法锁定祖先目录 {0}；Win32 错误码 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.ParentPathRead" xml:space="preserve"><value>文件安全校验失败（执行前复验）：无法读取祖先目录 {0} 的最终路径；Win32 状态 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.AncestorPath" xml:space="preserve"><value>文件安全校验失败（执行前复验）：祖先目录的最终路径不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.FileIdentity" xml:space="preserve"><value>文件安全校验失败（执行前复验）：文件身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.ContentSha256" xml:space="preserve"><value>文件安全校验失败（执行前复验）：文件内容 SHA-256 不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.SecurityHandleIdentity" xml:space="preserve"><value>文件安全校验失败（执行前复验）：安全信息句柄指向的文件身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Execute.Metadata" xml:space="preserve"><value>文件安全校验失败（执行前复验）：文件元数据不一致（预期 → 实际；= 表示未变）。安全描述 SHA-256：{0}；文件属性：{1}；创建时间 UTC：{2}；修改时间 UTC：{3}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.FinalQuarantine.Metadata" xml:space="preserve"><value>文件安全校验失败（删除标记后复验）：文件元数据不一致（预期 → 实际；= 表示未变）。安全描述 SHA-256：{0}；文件属性：{1}；创建时间 UTC：{2}；修改时间 UTC：{3}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Restore.ParentIdentity" xml:space="preserve"><value>文件安全校验失败（回滚恢复校验）：父目录身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Restore.ParentOpen" xml:space="preserve"><value>文件安全校验失败（回滚恢复校验）：无法锁定祖先目录 {0}；Win32 错误码 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Restore.ParentPathRead" xml:space="preserve"><value>文件安全校验失败（回滚恢复校验）：无法读取祖先目录 {0} 的最终路径；Win32 状态 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Restore.AncestorPath" xml:space="preserve"><value>文件安全校验失败（回滚恢复校验）：祖先目录的最终路径不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Scope.Diagnostic.Restore.FileIdentity" xml:space="preserve"><value>文件安全校验失败（回滚恢复校验）：文件身份不一致。预期 {0}；实际 {1}。请重新扫描并查看处置预览。</value></data>
+  <data name="Result.DependencySkip" xml:space="preserve"><value>{0}已跳过，未执行。</value></data>
+  <data name="Result.PrerequisiteCause" xml:space="preserve"><value>前置动作：{0}
+前置目标：{1}
+原因：{2}</value></data>
+  <data name="Backend.Core.FileOccupancy.WithProcesses" xml:space="preserve"><value>{0} 占用：{1}</value></data>
+  <data name="Backend.Core.FileOccupancy.Append" xml:space="preserve"><value>{0} {1}</value></data>
 </root>

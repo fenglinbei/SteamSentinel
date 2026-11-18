@@ -147,9 +147,39 @@ public static class RemediationResultPresentation
     internal static MessageText TargetFailureSummary(TargetPresentationIndex index, RemediationTargetOutcome target)
     {
         IReadOnlyList<RemediationActionResult> actions = TargetActions(index, target);
+        HashSet<Guid> direct = target.ActionIds.ToHashSet();
+        RemediationActionResult? directFailure = actions.FirstOrDefault(action => direct.Contains(action.ActionId) &&
+            !action.Success && action.ExecutionStatus != RemediationExecutionStatus.SkippedDependency);
+        if (directFailure is not null) return Cause(directFailure, directFailure.MessageText);
+        RemediationActionResult? skippedTargetAction = actions.FirstOrDefault(action => direct.Contains(action.ActionId) &&
+            !action.Success && action.ExecutionStatus == RemediationExecutionStatus.SkippedDependency);
+        if (skippedTargetAction is not null)
+        {
+            // A skipped action did not attempt this target. Attribute any blocker to its
+            // own recorded target, never to the executable whose quarantine was skipped.
+            // Without a saved plan, preserve the typed skip and original explanation.
+            IReadOnlyList<RemediationActionResult> prerequisites = TargetActions(index,
+                new() { ActionIds = [skippedTargetAction.ActionId] })
+                .Where(action => action.ActionId != skippedTargetAction.ActionId).ToArray();
+            (RemediationActionResult Action, MessageText Detail)? blocker = FindFailureCause(prerequisites);
+            MessageText summary = MessageText.Create("Result.DependencySkip", ReportExporter.ActionLabelText(skippedTargetAction.Type));
+            MessageText reason = blocker is { } cause
+                ? MessageText.Create("Result.PrerequisiteCause", ReportExporter.ActionLabelText(cause.Action.Type),
+                    cause.Action.Target, cause.Detail)
+                : skippedTargetAction.MessageText;
+            // One join node keeps existing nested exception/verification descriptors
+            // within the display depth limit, so persisted summaries remain bilingual.
+            return MessageText.Join("\n", [summary, reason]).RedactSecrets().Limit(MaximumTargetSummaryCharacters);
+        }
+        (RemediationActionResult Action, MessageText Detail)? fallback = FindFailureCause(actions);
+        return fallback is { } found ? Cause(found.Action, found.Detail) : string.Empty;
+    }
+
+    private static (RemediationActionResult Action, MessageText Detail)? FindFailureCause(IReadOnlyList<RemediationActionResult> actions)
+    {
         RemediationActionResult? failed = actions.FirstOrDefault(action => !action.Success &&
             action.ExecutionStatus != RemediationExecutionStatus.SkippedDependency);
-        if (failed is not null) return Cause(failed, failed.MessageText);
+        if (failed is not null) return (failed, failed.MessageText);
         foreach (RemediationActionResult action in actions.Where(action => action.ExecutionStatus != RemediationExecutionStatus.SkippedDependency))
         {
             // A later clear pass must not hide the first observation that blocked an
@@ -158,14 +188,14 @@ public static class RemediationResultPresentation
             RemediationVerificationObservation? firstUnclear = action.Verifications
                 .FirstOrDefault(item => item.Pass == 1 && !IsClear(item.Status));
             if (firstUnclear is not null)
-                return Cause(action, MessageText.Create("Result.VerificationPass", firstUnclear.Pass,
+                return (action, MessageText.Create("Result.VerificationPass", firstUnclear.Pass,
                     RemediationVerification.LabelText(firstUnclear.Status), firstUnclear.MessageText));
         }
         RemediationActionResult? unclear = actions.FirstOrDefault(action =>
             action.ExecutionStatus != RemediationExecutionStatus.SkippedDependency && !IsClear(action.VerificationStatus));
-        if (unclear is not null) return Cause(unclear, unclear.VerificationSummaryText);
+        if (unclear is not null) return (unclear, unclear.VerificationSummaryText);
         RemediationActionResult? skipped = actions.FirstOrDefault(action => !action.Success);
-        return skipped is null ? string.Empty : Cause(skipped, skipped.MessageText);
+        return skipped is null ? null : (skipped, skipped.MessageText);
     }
 
     private static MessageText Cause(RemediationActionResult action, MessageText text) =>

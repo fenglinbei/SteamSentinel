@@ -15,6 +15,8 @@ namespace SteamSentinel.Core.Scanning;
 public sealed record RelatedArtifactExpansion(IReadOnlyList<Finding> Findings, IReadOnlyList<string> CandidatePaths, IReadOnlyList<string> Notes)
 {
     public long VerificationBytesRead { get; init; }
+    public bool LiveAssociationChecksComplete { get; init; }
+    public IReadOnlyList<string> ObservedProgramImages { get; init; } = [];
     public IReadOnlyList<string> ScopeNotes { get; init; } = [];
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<int, DisplayMessage>? NoteMessages { get => SteamSentinel.Core.Models.DisplayMessageMap.Bound(Notes, field); init => field = value; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<int, DisplayMessage>? ScopeNoteMessages { get => SteamSentinel.Core.Models.DisplayMessageMap.Bound(ScopeNotes, field); init => field = value; }
@@ -29,6 +31,8 @@ public sealed partial class RelatedArtifactScanner
     private readonly HashSet<string> _blockedPaths = new(StringComparer.OrdinalIgnoreCase);
     private Finding[] _previous = [];
     private bool _closureOnly;
+    private bool _liveAssociationChecksComplete = true;
+    private readonly HashSet<string> _observedProgramImages = new(StringComparer.OrdinalIgnoreCase);
     private string _residentDirectory = SteamAlertInstallation.ResidentDirectory;
     private string _updaterDirectory = SteamAlertInstallation.UpdaterDirectory;
     private bool _installedFamilyScope;
@@ -330,6 +334,8 @@ public sealed partial class RelatedArtifactScanner
         return new(report.Findings.DistinctBy(f => f.Id).ToArray(), candidates.ToArray(), report.CoverageNotes.Distinct().ToArray())
         {
             VerificationBytesRead = _relatedBytesHashed,
+            LiveAssociationChecksComplete = _proofs.Count > 0 && _liveAssociationChecksComplete,
+            ObservedProgramImages = _observedProgramImages.ToArray(),
             ScopeNotes = report.ScopeNotes.ToArray(),
             ScopeNoteMessages = report.ScopeNoteMessages,
             NoteMessages = DisplayMessageMap.FromTexts(report.CoverageTexts.DistinctBy(text => text.OriginalText))
@@ -540,23 +546,40 @@ public sealed partial class RelatedArtifactScanner
         MessageText processScope = MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.01");
         if (!report.ScopeNotes.Contains(processScope)) report.AddScopeNote(processScope);
         Process[] processes = Process.GetProcesses();
+        HashSet<string> targetProcessNames = _proofs.Keys.Where(path => path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            .Select(path => Path.GetFileNameWithoutExtension(path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<int> selectedProcessIds = _previous.Where(f => f.ProcessId.HasValue &&
+            (_proofs.ContainsKey(f.Target) || f.RelatedFilePath is { } path && _proofs.ContainsKey(path)))
+            .Select(f => f.ProcessId!.Value).ToHashSet();
         int inaccessible = 0, modules = 0;
         try
         {
-            if (processes.Length > 4096) Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.02"));
-            foreach (Process process in processes.Take(4096))
+            if (processes.Length > 4096)
             {
+                _liveAssociationChecksComplete = false;
+                Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.02"));
+            }
+            for (int index = 0; index < Math.Min(processes.Length, 4096); index++)
+            {
+                Process process = processes[index];
                 token.ThrowIfCancellationRequested();
+                bool imageHint = selectedProcessIds.Contains(process.Id);
                 bool relevant = _previous.Any(f => f.ProcessId == process.Id);
                 try
                 {
                     if (process.Id <= 4 || process.Id == Environment.ProcessId) continue;
                     string name = process.ProcessName;
-                    relevant |= rules.KnownProcessNames.Contains(name + ".exe", StringComparer.OrdinalIgnoreCase) ||
+                    imageHint |= targetProcessNames.Contains(name);
+                    relevant |= imageHint || rules.KnownProcessNames.Contains(name + ".exe", StringComparer.OrdinalIgnoreCase) ||
                         name.Equals("steam", StringComparison.OrdinalIgnoreCase) || name.Equals("steamwebhelper", StringComparison.OrdinalIgnoreCase) ||
                         report.CandidateRoots.Any(p => Path.GetFileNameWithoutExtension(p).Equals(name, StringComparison.OrdinalIgnoreCase));
                     string? host = process.MainModule?.FileName;
-                    if (host is null || !ContentDiscovery.IsLocalSafePath(host)) continue;
+                    if (host is null || !ContentDiscovery.IsLocalSafePath(host))
+                    {
+                        if (imageHint) _liveAssociationChecksComplete = false;
+                        continue;
+                    }
+                    if (_closureOnly && _proofs.ContainsKey(Path.GetFullPath(host))) _observedProgramImages.Add(host);
                     relevant |= _proofs.ContainsKey(Path.GetFullPath(host)) || layout is not null &&
                         (layout.SteamRoots.Any(root => ContentDiscovery.IsWithin(host, root)) ||
                         layout.Games.Any(g => ContentDiscovery.IsWithin(host, g.Directory)) || ContentDiscovery.IsWorkshopContentPath(host) ||
@@ -567,7 +590,15 @@ public sealed partial class RelatedArtifactScanner
                     foreach (ProcessModule module in process.Modules)
                     {
                         token.ThrowIfCancellationRequested();
-                        if (++modules > 16384) { Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.03")); return; }
+                        if (++modules > 16384)
+                        {
+                            Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.03"));
+                            // An outbound program rule applies to an image, not to every DLL in the machine.
+                            // A matching or unreadable remaining image preserves containment even at the module cap.
+                            if (RemainingProgramImagePossible(processes.Skip(index).Take(4096 - index), targetProcessNames, selectedProcessIds, token))
+                                _liveAssociationChecksComplete = false;
+                            return;
+                        }
                         string path = module.FileName;
                         if (RelatedArtifactReader.IsProtected(path) || _closureOnly &&
                             !_proofs.ContainsKey(Path.GetFullPath(path)) && !_observations.ContainsKey(Path.GetFullPath(path))) continue;
@@ -582,7 +613,10 @@ public sealed partial class RelatedArtifactScanner
                     }
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException or UnauthorizedAccessException or NotSupportedException)
-                { if (relevant) inaccessible++; }
+                {
+                    if (relevant) inaccessible++;
+                    if (imageHint) _liveAssociationChecksComplete = false;
+                }
             }
         }
         finally
@@ -590,6 +624,25 @@ public sealed partial class RelatedArtifactScanner
             foreach (Process process in processes) process.Dispose();
             if (inaccessible > 0) Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.08", (inaccessible)));
         }
+    }
+
+    private void NoteLiveAssociationGap(ScanReport report, MessageText detail)
+    {
+        _liveAssociationChecksComplete = false;
+        Note(report, detail);
+    }
+
+    internal static bool RemainingProgramImagePossible(IEnumerable<Process> remaining, IReadOnlySet<string> targetNames,
+        IReadOnlySet<int> associatedPids, CancellationToken token)
+    {
+        foreach (Process process in remaining)
+        {
+            token.ThrowIfCancellationRequested();
+            try { if (associatedPids.Contains(process.Id) || targetNames.Contains(process.ProcessName)) return true; }
+            catch (InvalidOperationException) { } // The process exited.
+            catch (Exception ex) when (ex is Win32Exception or UnauthorizedAccessException or NotSupportedException) { return true; }
+        }
+        return false;
     }
 
     internal Finding? CreateProcessAssociation(string host, string hostHash, string path, string hash,

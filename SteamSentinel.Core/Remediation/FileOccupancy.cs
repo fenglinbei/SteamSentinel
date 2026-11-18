@@ -95,9 +95,16 @@ public static class FileOccupancy
     }
 
     public static string Describe(FileOccupancyResult result) => DescribeText(result).OriginalText;
-    public static MessageText DescribeText(FileOccupancyResult result) => (
-        result.DiagnosticText + (result.Processes.Count == 0 ? (MessageText)"" : MessageText.Create("Backend.Core.FileOccupancy.Describe.01") + string.Join("，", result.Processes.Take(MaximumProcesses)
-            .Select(process => $"PID {process.ProcessId} {RemediationVerification.Limit(process.ProcessName, 80)}")))).Limit(900);
+    public static MessageText DescribeText(FileOccupancyResult result) => result.Processes.Count == 0
+        ? result.DiagnosticText.Limit(900)
+        : MessageText.Create("Backend.Core.FileOccupancy.WithProcesses", result.DiagnosticText,
+            string.Join("，", result.Processes.Take(MaximumProcesses)
+                .Select(process => $"PID {process.ProcessId} {RemediationVerification.Limit(process.ProcessName, 80)}"))).Limit(900);
+
+    // One wrapper leaves room for the exception and the run's error descriptor.
+    // Chaining an extra space and empty suffix can otherwise discard localization.
+    public static MessageText AppendTo(MessageText message, FileOccupancyResult result) =>
+        MessageText.Create("Backend.Core.FileOccupancy.Append", message, DescribeText(result));
 
     private static FileOccupancyResult Unknown(MessageText message, bool partial = false) =>
         new() { Status = FileOccupancyStatus.Unknown, DiagnosticText = message, Truncated = partial };

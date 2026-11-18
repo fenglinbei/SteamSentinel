@@ -210,4 +210,6 @@
   <data name="remediation.outcome_unknown" xml:space="preserve">
     <value>本次处理已结束，但结果尚不能确认。请重新扫描以检查当前状态；原记录已保留。</value>
   </data>
+  <data name="Target.SkippedDependency" xml:space="preserve"><value>因前置跳过</value></data>
+  <data name="remediation.dependency_blocked" xml:space="preserve"><value>本目标有动作因前置失败或未通过复验而跳过。</value></data>
 </root>

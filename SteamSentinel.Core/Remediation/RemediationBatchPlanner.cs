@@ -53,6 +53,22 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         // the plan builder. They must not be converted into trusted malware by association scans.
         List<Finding> verified = selected.Where(f => f.UserSelectedRisk ||
             f.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration)).ToList();
+        HashSet<string> retainProgramContainment = new(StringComparer.OrdinalIgnoreCase);
+        void RememberLiveAssociations(IEnumerable<Finding> findings)
+        {
+            foreach (Finding finding in findings.Where(f => f.Category is FindingCategory.Process or FindingCategory.Persistence))
+            {
+                RememberPath(finding.Target);
+                RememberPath(finding.RelatedFilePath);
+            }
+        }
+        void RememberPath(string? path)
+        {
+            if (path is null || !Path.IsPathFullyQualified(path)) return;
+            try { retainProgramContainment.Add(Path.GetFullPath(path)); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { }
+        }
+        RememberLiveAssociations(original.Findings.Take(MaximumSelectedFindings));
         MessageTextCollection notes = [];
         void Record(IEnumerable<Finding> findings, IEnumerable<MessageText> details, string reason)
         {
@@ -90,15 +106,23 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             {
                 RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(rules).ExpandLocalAsync(batches[index], original, timeout.Token,
                     RelatedArtifactScanner.MaximumVerificationBytes, requestExplicitFileTargets, _steamLayout, _residentDirectory);
+                bool candidateInspectionComplete = true;
                 if (inspectCandidates is not null && expansion.CandidatePaths.Count > 0)
                 {
                     ScanReport additional = await inspectCandidates(expansion.CandidatePaths, timeout.Token);
+                    candidateInspectionComplete = additional.Coverage == ScanCoverage.Complete;
+                    RememberLiveAssociations(additional.Findings);
                     ScanReport combined = ScanReportMerger.Merge(original, additional);
                     expansion = await new RelatedArtifactScanner(rules).ExpandLocalAsync(batches[index], combined, timeout.Token,
                         RelatedArtifactScanner.MaximumVerificationBytes, requestExplicitFileTargets, _steamLayout, _residentDirectory);
                     Record(batches[index], additional.CoverageTexts, ReasonCodes.EvidenceUnavailable);
                 }
                 verified.AddRange(expansion.Findings);
+                RememberLiveAssociations(expansion.Findings);
+                foreach (string path in expansion.ObservedProgramImages) RememberPath(path);
+                if (!expansion.LiveAssociationChecksComplete || !candidateInspectionComplete)
+                    foreach (Finding finding in expansion.Findings.Where(f => f.Category is FindingCategory.File or FindingCategory.Archive))
+                        RememberPath(finding.Target);
                 foreach (MessageText detail in expansion.ScopeTexts.Where(text =>
                     text.Message?.MessageId is "SteamAlert.Plan.ModSources" or "SteamAlert.Plan.ClientPatch" or "SteamAlert.Watchdog.PlanScope"))
                     if (!notes.Contains(detail.OriginalText)) notes.AddText(detail);
@@ -124,8 +148,17 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             token.ThrowIfCancellationRequested();
             try
             {
+                // Decide after live association discovery. A process or startup entry in the
+                // group still needs containment even if the user began with a folder scan.
+                bool scannedFilesOnly = original.Mode == ScanMode.Custom && original.Findings.Count <= MaximumSelectedFindings &&
+                    original.ContentScanSettings is { CustomRoots.Count: > 0 } settings &&
+                    group.All(f => f.Category is FindingCategory.File or FindingCategory.Archive &&
+                        !f.UserSelectedRisk && f.SuggestedActions.SequenceEqual([SuggestedActionKind.QuarantineFile]) &&
+                        !retainProgramContainment.Contains(Path.GetFullPath(f.Target)) &&
+                        settings.CustomRoots.Any(root => IsWithinCustomScanRoot(f.Target, root)));
                 RemediationPlan plan = await planBuilder.BuildAsync(Coalesce(group), false, token, allFindings: group,
-                    requestExplicitFileTargets: requestExplicitFileTargets, remediationMode: remediationMode);
+                    requestExplicitFileTargets: requestExplicitFileTargets, remediationMode: remediationMode,
+                    addAutomaticProgramBlock: !scannedFilesOnly);
                 needDomains |= plan.Actions.Any(a => a.Type == RemediationActionType.BlockKnownDomains);
                 List<RemediationAction> actions = plan.Actions.Where(a => a.Type != RemediationActionType.BlockKnownDomains).ToList();
                 if (actions.Count > 0) actionGroups.Add(actions);
@@ -182,6 +215,18 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
 
         bool CanPrepare(Finding finding) => finding.UserSelectedRisk && remediationMode == RemediationMode.Aggressive ||
             RemediationEvidencePolicy.CanRemediate(finding);
+    }
+
+    private static bool IsWithinCustomScanRoot(string target, string root)
+    {
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root)) return false;
+        try
+        {
+            string relative = Path.GetRelativePath(root, target);
+            return !Path.IsPathRooted(relative) && relative != ".." &&
+                !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
     }
 
     public static ScanOptions? CloneOptions(ScanOptions? options)
@@ -354,9 +399,13 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             if (unknown || executed.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown))
                 target.SetState(RemediationTargetState.ReviewRequired, ReasonCodes.ExecutionOutcomeUnknown);
             else if (executed.Any(a => !a.Success))
-                target.SetState(RemediationTargetState.Failed, ReasonCodes.ActionFailed,
+            {
+                bool failed = executed.Any(a => !a.Success && a.ExecutionStatus != RemediationExecutionStatus.SkippedDependency);
+                target.SetState(failed ? RemediationTargetState.Failed : RemediationTargetState.SkippedDependency,
+                    failed ? ReasonCodes.ActionFailed : ReasonCodes.DependencyBlocked,
                     RemediationResultPresentation.TargetFailureSummary(
                         presentation ??= RemediationResultPresentation.CreateTargetIndex(session, results), target));
+            }
             else if (target.MissingActions.Count > 0)
                 target.SetState(RemediationTargetState.PartiallyIncluded, ReasonCodes.ActionsNotIncluded, target.ReasonDetailsText);
             else if (executed.Length < target.ActionIds.Count)

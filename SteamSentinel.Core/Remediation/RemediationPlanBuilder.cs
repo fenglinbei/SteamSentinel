@@ -18,7 +18,8 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         CancellationToken cancellationToken = default,
         IEnumerable<Finding>? allFindings = null,
         bool requestExplicitFileTargets = false,
-        RemediationMode remediationMode = RemediationMode.Conservative)
+        RemediationMode remediationMode = RemediationMode.Conservative,
+        bool addAutomaticProgramBlock = true)
     {
         if (!RemediationModePolicy.IsValid(remediationMode)) throw new ArgumentOutOfRangeException(nameof(remediationMode));
         requestExplicitFileTargets |= remediationMode == RemediationMode.Aggressive;
@@ -160,7 +161,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                 if (plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.04"), sourceText => new InvalidDataException(sourceText));
             }
 
-            if (finding.IsKnownMalware && !finding.SuggestedActions.Contains(SuggestedActionKind.StopHostProcess) &&
+            if (addAutomaticProgramBlock && finding.IsKnownMalware && !finding.SuggestedActions.Contains(SuggestedActionKind.StopHostProcess) &&
                 finding.Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(finding.Target))
             {
                 string hash = await VerifyTargetIdentityAsync(finding, cancellationToken, requestExplicitFileTargets);
