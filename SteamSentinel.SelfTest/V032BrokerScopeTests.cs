@@ -114,6 +114,7 @@ internal static partial class Program
             rows.All(row => !row.Verification.Contains("known malware", StringComparison.OrdinalIgnoreCase)));
         await CaptureScopeConfirmationAsync(review, fixture);
         await ScopeExtendedAttributesAsync(fixture);
+        await ScopeDownloadZoneIdentifierPreparedAsync(fixture);
 
         using WindowsIdentity identity = WindowsIdentity.GetCurrent();
         bool elevated = new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
@@ -134,17 +135,19 @@ internal static partial class Program
             "0.3.2 Broker Program Files quarantine-restore", withSecurityMetadata: false);
         await ScopeMetadataInheritanceMatrixAsync(fixture);
         await ScopeLateStreamAsync(fixture);
+        await ScopeDownloadZoneIdentifierRoundtripAsync(fixture);
         await ScopeReadOnlyCancellationAsync(fixture);
         Check("0.3.2 Broker privilege state restored", ScopeTokenPrivilegeState() == originalPrivileges);
     }
 
-    private static async Task<RemediationAction> ScopeFileActionAsync(string path, RemediationActionType type) => new()
+    private static async Task<RemediationAction> ScopeFileActionAsync(string path, RemediationActionType type, bool userSelectedRisk = false) => new()
     {
         Type = type,
         Target = path,
         ExpectedSha256 = await Hashing.Sha256FileAsync(path),
         ExpectedFileIdentity = FileScopeSafety.CaptureIdentity(path),
-        ExpectedParentIdentity = FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, directory: true)
+        ExpectedParentIdentity = FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, directory: true),
+        UserSelectedRisk = userSelectedRisk
     };
 
     private static bool ScopeRejects(Action action)
@@ -412,12 +415,70 @@ internal static partial class Program
         bool refused = false;
         if (status == 0)
         {
-            RemediationPlan plan = new() { ExplicitFileTargetsRequested = true, Actions = [await ScopeFileActionAsync(file, RemediationActionType.QuarantineFile)] };
+            RemediationPlan plan = new() { Mode = RemediationMode.Aggressive, ExplicitFileTargetsRequested = true, Actions = [await ScopeFileActionAsync(file, RemediationActionType.QuarantineFile, userSelectedRisk: true)] };
             try { await new BrokerEngine(new FixtureTrustStore(null), new FixtureIncidentStateSecurity()).PrepareForConfirmationAsync(plan); }
             catch (UnauthorizedAccessException) { refused = true; }
         }
         Check("0.3.2 Broker extended attributes retain original before mutation", status == 0 && refused &&
             await File.ReadAllTextAsync(file) == "Inert extended-attribute fixture.");
+
+        if (status == 0)
+        {
+            RemediationPlan autoPlan = new() { ExplicitFileTargetsRequested = true, Actions = [await ScopeFileActionAsync(file, RemediationActionType.QuarantineFile)] };
+            BrokerFileScopeAuthorization? autoPrepared = await new BrokerEngine(new FixtureTrustStore(null), new FixtureIncidentStateSecurity()).PrepareForConfirmationAsync(autoPlan);
+            Check("0.3.2 Broker 自动范围携带 EA 降级为标准隔离", autoPrepared is not null && autoPrepared.Targets.Single().Metadata is null);
+        }
+
+        string unknownAdsFile = Path.Combine(fixture, "inert-unknown-ads.bin");
+        await File.WriteAllTextAsync(unknownAdsFile, "Inert unknown ADS fixture.");
+        await File.WriteAllTextAsync(unknownAdsFile + ":inert_unknown", "unknown-stream-data");
+        bool unknownAdsRefused = false;
+        try
+        {
+            RemediationPlan adsPlan = new() { ExplicitFileTargetsRequested = true, Actions = [await ScopeFileActionAsync(unknownAdsFile, RemediationActionType.QuarantineFile)] };
+            await new BrokerEngine(new FixtureTrustStore(null), new FixtureIncidentStateSecurity()).PrepareForConfirmationAsync(adsPlan);
+        }
+        catch (UnauthorizedAccessException) { unknownAdsRefused = true; }
+        Check("0.3.2 Broker 自动范围仍拒绝非 Zone.Identifier 未知 ADS", unknownAdsRefused);
+    }
+
+    private static async Task ScopeDownloadZoneIdentifierPreparedAsync(string fixture)
+    {
+        string file = Path.Combine(fixture, "inert-motw-prepare.bin");
+        await File.WriteAllTextAsync(file, "Inert downloaded fixture with Zone.Identifier.");
+        await File.WriteAllTextAsync(file + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n");
+        RemediationPlan plan = new() { ExplicitFileTargetsRequested = true, Actions = [await ScopeFileActionAsync(file, RemediationActionType.QuarantineFile)] };
+        bool preparedOk = false;
+        try
+        {
+            BrokerFileScopeAuthorization? prepared = await new BrokerEngine(new FixtureTrustStore(null), new FixtureIncidentStateSecurity()).PrepareForConfirmationAsync(plan);
+            preparedOk = prepared is not null && prepared.Targets.Count == 1;
+        }
+        catch (UnauthorizedAccessException) { preparedOk = false; }
+        Check("0.3.2 Broker 放行下载文件 Zone.Identifier MOTW 流预检", preparedOk && File.Exists(file));
+    }
+
+    private static async Task ScopeDownloadZoneIdentifierRoundtripAsync(string fixture)
+    {
+        string directory = Path.Combine(fixture, "motw-roundtrip-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        new DirectoryInfo(directory).SetAccessControl(MachineStateSecurity.BuildProtectedDirectorySecurity());
+        string file = Path.Combine(directory, "inert-motw-sample.bin");
+        string backup = Path.Combine(fixture, "inert-motw-sample.quarantined");
+        const string content = "Inert MOTW quarantine and restore fixture.";
+        await File.WriteAllTextAsync(file, content);
+        await File.WriteAllTextAsync(file + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n");
+        RemediationPlan plan = new() { ExplicitFileTargetsRequested = true, Actions = [await ScopeFileActionAsync(file, RemediationActionType.QuarantineFile)] };
+        BrokerEngine engine = new(new FixtureTrustStore(null), new FixtureIncidentStateSecurity());
+        BrokerFileScopeAuthorization prepared = (await engine.PrepareForConfirmationAsync(plan))!;
+        engine.ConfirmFileTargets(plan, prepared);
+        prepared.BeginExecution(plan);
+        QuarantineRecord record = await BrokerEngine.QuarantineExplicitFileAsync(plan.Actions.Single(), prepared, backup,
+            (_, _) => Task.CompletedTask, ScopeProtectPayload, CancellationToken.None);
+        bool quarantined = !File.Exists(file) && File.Exists(backup) && record.ExplicitFileAuthorization;
+        await BrokerEngine.RestoreExplicitFileAsync(record, CancellationToken.None);
+        Check("0.3.2 Broker 含 Zone.Identifier 的下载样本可完成隔离与回滚",
+            quarantined && !File.Exists(backup) && await File.ReadAllTextAsync(file) == content);
     }
 
     private static void ScopeProtectPayload(string path) => new FileInfo(path).SetAccessControl(MachineStateSecurity.BuildProtectedFileSecurity());

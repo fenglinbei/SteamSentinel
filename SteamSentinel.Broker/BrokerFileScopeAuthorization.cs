@@ -55,15 +55,18 @@ internal sealed class BrokerFileScopeAuthorization
             BrokerFileMetadata? metadata = null;
             if (action.Type == RemediationActionType.QuarantineFile)
             {
+                // 未知非 Zone.Identifier ADS 始终拒绝；扩展/敏感范围拒绝 EA，自动范围仅在下面降级 EA/ACL 读取失败。
+                BrokerFileMetadata.EnsureOnlyDefaultStream(lease.Handle, allowExtendedAttributes: !requiresExplicit);
                 try
                 {
                     metadata = BrokerFileMetadata.Capture(lease.Handle, lease.FinalPath,
                     stage: BrokerFileValidationStage.Prepare);
                 }
-                catch (System.ComponentModel.Win32Exception ex) when (!requiresExplicit && ex.NativeErrorCode is 5 or 1300 or 1314)
+                catch (Exception ex) when (!requiresExplicit && (ex is UnauthorizedAccessException ||
+                    ex is System.ComponentModel.Win32Exception { NativeErrorCode: 5 or 1300 or 1314 }))
                 {
-                    // Some machines remove SeSecurityPrivilege from administrators. Existing automatic
-                    // scope keeps its legacy restore behavior; expanded/sensitive scope never degrades.
+                    // 自动白名单范围内的已知恶意文件即使携带 EA/不可还原属性也允许降级为标准隔离，避免整批拒杀；
+                    // 扩展或敏感范围目标不降级。
                 }
             }
             targets.Add(action.ActionId, new(action.ActionId, action.Type, lease.FinalPath, hash, identity,

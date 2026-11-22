@@ -142,6 +142,8 @@ internal static partial class Program
         Check("Closure: changed CMD arguments block", Reject(() => BrokerEngine.RequireSteamAlertHandoffCoverage(cmdPlan, [proof], [cmdHost with { CommandLine = command + " /extra" }])));
         Check("Closure: unreadable CMD is not reported as clean", Reject(() => BrokerEngine.RequireSteamAlertHandoffCoverage(cmdPlan, [proof],
             [cmdHost with { Status = ScriptHostReadStatus.AccessDenied, CommandLine = null }])));
+        Check("Closure: protected system CMD account skips without false closure failure", !Reject(() => BrokerEngine.RequireSteamAlertHandoffCoverage(cmdPlan, [proof],
+            [cmdHost, cmdHost with { ProcessId = 24699, Status = ScriptHostReadStatus.AccessDenied, CommandLine = null, IsProtectedSystemProcess = true }])));
         Check("Closure: unrelated readable CMD is not associated", !Reject(() => BrokerEngine.RequireSteamAlertHandoffCoverage(cmdPlan, [proof],
             [cmdHost with { ProcessId = 24692, CommandLine = "cmd.exe /c echo benign" }])));
         Check("Closure: a CMD path prefix cannot impersonate the exact script", !Reject(() => BrokerEngine.RequireSteamAlertHandoffCoverage(cmdPlan, [proof],

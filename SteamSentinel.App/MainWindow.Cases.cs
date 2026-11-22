@@ -49,17 +49,61 @@ public partial class MainWindow
         {
             foreach (RemediationCaseSummary summary in summaries)
             {
-                // User-owned history is never proof that an execution ended. Reopen its
-                // protected channel on every startup, including previously recovered unknowns.
-                // Verify the complete stored stream but skip report graphs during recovery.
-                foreach (RemediationPlan plan in await _caseStore.GetRecoveryPlansAsync(summary.CaseId))
-                    _remediationClient.RestoreUnresolvedPlan(plan);
+                // 单条病例目录损坏或读取失败时不连坐锁死整个软件，仅记录日志并继续恢复其余病例
+                try
+                {
+                    foreach (RemediationPlan plan in await _caseStore.GetRecoveryPlansAsync(summary.CaseId))
+                        _remediationClient.RestoreUnresolvedPlan(plan);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    AppErrorLog.Write("RestoreCasePlans", ex);
+                }
             }
         }
         if (items.Length == 0) CaseDetailsText.Text = DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.03");
         if (_remediationClient.HasUnresolvedExecution)
             CaseDetailsText.Text = DisplayText.Get("Ui.Cases.RefreshCaseRecordsAsync.04");
         CaseRecheckButton.IsEnabled = !_busy && items.Length > 0;
+        CaseExportButton.IsEnabled = !_busy && items.Length > 0;
+        if (CaseClearCompletedButton is not null) CaseClearCompletedButton.IsEnabled = !_busy && items.Length > 0;
+        UpdateUnresolvedExecutionBanner();
+    }
+
+    internal void UpdateUnresolvedExecutionBanner()
+    {
+        if (UnresolvedExecutionBanner is null || CaseAcknowledgeUnknownButton is null) return;
+        bool hasUnresolved = _remediationClient.HasUnresolvedExecution;
+        UnresolvedExecutionBanner.Visibility = hasUnresolved ? Visibility.Visible : Visibility.Collapsed;
+        CaseAcknowledgeUnknownButton.IsEnabled = !_busy && hasUnresolved;
+    }
+
+    /// <summary>
+    /// 在下拉框切换案件时异步加载并展示选中记录详情，跳过内存假夹具及未完成提示覆盖。
+    /// </summary>
+    private async void CaseList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_busy || CaseListComboBox.SelectedItem is not CaseListItem selected) return;
+        if (e.RemovedItems.Count > 0 && e.RemovedItems[0] is CaseListItem previous &&
+            previous.Summary.CaseId == selected.Summary.CaseId)
+        {
+            return;
+        }
+        if (e.RemovedItems.Count == 0 && _remediationClient.HasUnresolvedExecution) return;
+        Guid caseId = selected.Summary.CaseId;
+        string caseDirectory = Path.Combine(_caseStore.RootDirectory, caseId.ToString("N"));
+        if (!Directory.Exists(caseDirectory)) return;
+        try
+        {
+            RemediationCaseRecord? record = await _caseStore.LoadAsync(caseId);
+            if (record is null || _busy) return;
+            if ((CaseListComboBox.SelectedItem as CaseListItem)?.Summary.CaseId != caseId) return;
+            DisplayCaseRecord(record);
+        }
+        catch (Exception ex)
+        {
+            AppErrorLog.Write("SelectCaseRecord", ex);
+        }
     }
 
     private async Task RefreshRemediationRecoveryAsync()
@@ -104,13 +148,16 @@ public partial class MainWindow
         DisplayCaseRecord(record);
     }
 
-    private async Task<RemediationRunResult> ExecuteRecordedPlanAsync(RemediationPlan plan)
+    private async Task<RemediationRunResult> ExecuteRecordedPlanAsync(RemediationPlan plan, bool approvedInUi = false)
     {
         RemediationCaseRecord record = _persistedCase ?? throw new InvalidOperationException(DisplayText.Get("Ui.Cases.ExecuteRecordedPlanAsync.01"));
-        return await ExecuteRecordedPlanAsync(plan, record).ConfigureAwait(false);
+        return await ExecuteRecordedPlanAsync(plan, record, approvedInUi).ConfigureAwait(false);
     }
 
-    private async Task<RemediationRunResult> ExecuteRecordedPlanAsync(RemediationPlan plan, RemediationCaseRecord record)
+    private async Task<RemediationRunResult> ExecuteRecordedPlanAsync(
+        RemediationPlan plan,
+        RemediationCaseRecord record,
+        bool approvedInUi = false)
     {
         try
         {
@@ -118,7 +165,7 @@ public partial class MainWindow
             {
                 if (!record.PendingPlanIds.Contains(pending.PlanId)) record.PendingPlanIds.Add(pending.PlanId);
                 await _caseStore.SaveAsync(record, token).ConfigureAwait(false);
-            }).ConfigureAwait(false);
+            }, approvedInUi: approvedInUi).ConfigureAwait(false);
             await _remediationClient.PersistResultAsync(result, async () =>
             {
                 record.ExecutionResults.RemoveAll(r => r.PlanId == result.PlanId);
@@ -291,6 +338,78 @@ public partial class MainWindow
             CaseDetailsText.Text = RemediationCasePresentation.Render(record) + DisplayText.Get("Ui.Cases.CaseExport_Click.03");
         }
         catch (Exception ex) { AppErrorLog.Write("CaseExport", ex); CaseDetailsText.Text = DisplayText.Get("Ui.Cases.CaseExport_Click.04") + SteamSentinel.Core.Reporting.MessageExceptions.Display(ex); }
+        finally { SetBusy(false); }
+    }
+
+    /// <summary>
+    /// 经用户确认后清理本地已完成且无未决计划的历史记录目录，保留隔离区文件。
+    /// </summary>
+    private async void CaseClearCompleted_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || CaseListComboBox.Items.Count == 0) return;
+        if (MessageBox.Show(this,
+                DisplayText.Get("Ui.Cases.ClearCompleted.ConfirmBody"),
+                DisplayText.Get("Ui.Cases.ClearCompleted.ConfirmTitle"),
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        SetBusy(true);
+        try
+        {
+            int removed = await Task.Run(() => _caseStore.ClearCompletedCasesAsync());
+            _persistedCase = null;
+            _loadedCase = null;
+            await RefreshCaseRecordsAsync();
+            CaseDetailsText.Text = removed > 0
+                ? DisplayText.Format("Ui.Cases.ClearCompleted.Result", removed)
+                : DisplayText.Get("Ui.Cases.ClearCompleted.None");
+        }
+        catch (Exception ex)
+        {
+            AppErrorLog.Write("ClearCompletedCases", ex);
+            CaseDetailsText.Text = DisplayText.Get("Ui.Cases.CaseRefresh_Click.01") + MessageExceptions.Display(ex);
+        }
+        finally { SetBusy(false); }
+    }
+
+    /// <summary>
+    /// 在用户明确确认管理员组件已退出的前提下，将未决计划归档为 ExecutionUnknown 并解锁后续操作。
+    /// </summary>
+    private async void CaseAcknowledgeUnknown_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || !_remediationClient.HasUnresolvedExecution) return;
+        if (MessageBox.Show(this,
+                DisplayText.Get("Ui.Cases.AcknowledgeUnknown.ConfirmBody"),
+                DisplayText.Get("Ui.Cases.AcknowledgeUnknown.ConfirmTitle"),
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        SetBusy(true);
+        try
+        {
+            await _remediationClient.AcknowledgeUnresolvedPlansAsUnknownAsync(async (plan, unknown) =>
+            {
+                IReadOnlyList<RemediationCaseSummary> summaries = await _caseStore.ListAsync();
+                foreach (RemediationCaseSummary summary in summaries)
+                {
+                    if (!await _caseStore.ContainsPlanAsync(summary.CaseId, plan.PlanId)) continue;
+                    RemediationCaseRecord? record = await _caseStore.LoadAsync(summary.CaseId);
+                    if (record is null || !CasePlans(record).Any(p => p.PlanId == plan.PlanId)) continue;
+                    if (RemediationCaseRecovery.ApplyFinishedResult(record, unknown))
+                        await _caseStore.SaveAsync(record);
+                }
+                ObserveFinishedRemediation(unknown);
+            });
+            await RefreshCaseRecordsAsync();
+            CaseDetailsText.Text = DisplayText.Get("Ui.Cases.AcknowledgeUnknown.Done");
+        }
+        catch (Exception ex)
+        {
+            AppErrorLog.Write("AcknowledgeUnknownExecution", ex);
+            CaseDetailsText.Text = DisplayText.Get("Ui.Cases.CaseRefresh_Click.01") + MessageExceptions.Display(ex);
+        }
         finally { SetBusy(false); }
     }
 

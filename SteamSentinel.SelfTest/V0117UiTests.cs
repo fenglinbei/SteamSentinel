@@ -36,6 +36,7 @@ internal static partial class Program
         DateTimeOffset now = DateTimeOffset.UtcNow, boot = now.AddHours(-1);
         QuarantineManifest incident = new()
         {
+            IncidentId = Guid.NewGuid(),
             CreatedAtUtc = now.AddDays(-1),
             MachineBootTimeUtc = now.AddDays(-2),
             Records = [new() { RolledBack = true }]
@@ -43,17 +44,16 @@ internal static partial class Program
         ScanReport Clean(ScanMode mode = ScanMode.Full, DateTimeOffset? start = null) => new()
         { Mode = mode, StatusSchemaVersion = 1, ExecutionState = ScanExecutionState.Completed, StartedAtUtc = start ?? now.AddMinutes(-10), CompletedAtUtc = now.AddMinutes(-2) };
         ScanReport clean = Clean();
-        Check("0.1.17 已回滚空事件仅接受本次完整系统与内容复扫", IncidentDeletionPolicy.RejectionReason(incident, clean, clean.ScanId, now, boot) is null);
-        ScanReport custom = Clean(ScanMode.Custom);
-        Check("0.1.17 无害自定义单文件不能解锁删除", IncidentDeletionPolicy.RejectionReason(incident, custom, custom.ScanId, now, boot) is not null);
-        Check("0.1.17 未证明系统阶段或旧扫描ID不能解锁删除", IncidentDeletionPolicy.RejectionReason(incident, clean, Guid.NewGuid(), now, boot) is not null);
-        ScanReport beforeBoot = Clean(start: boot.AddMinutes(-1));
-        Check("0.1.17 重启前报告不能解锁删除", IncidentDeletionPolicy.RejectionReason(incident, beforeBoot, beforeBoot.ScanId, now, boot) is not null);
-        clean.Findings.Add(new() { IsKnownMalware = true, Severity = FindingSeverity.High });
-        Check("0.1.17 High已知恶意项也阻止删除", IncidentDeletionPolicy.RejectionReason(incident, clean, clean.ScanId, now, boot) is not null);
-        clean.Findings.Clear();
+        Check("0.1.17 已回滚有效隔离事件允许永久删除", IncidentDeletionPolicy.RejectionReason(incident, clean, clean.ScanId, now, boot) is null);
+        Check("0.1.17 无须前置全盘复扫或重启即可直接永久删除有效隔离事件", IncidentDeletionPolicy.RejectionReason(incident, null, null, now, now) is null);
         incident.Records.Add(new() { RolledBack = false });
-        Check("0.1.17 活动隔离事件始终保留", IncidentDeletionPolicy.RejectionReason(incident, clean, clean.ScanId, now, boot) is not null);
+        Check("0.1.17 未回滚活动隔离事件与目录隔离记录允许直接永久删除", IncidentDeletionPolicy.RejectionReason(incident, clean, clean.ScanId, now, boot) is null);
+        Check("0.1.17 空记录或无效事件ID禁止进入永久删除",
+            IncidentDeletionPolicy.RejectionReason(new QuarantineManifest { IncidentId = Guid.NewGuid(), Records = [] }, clean, clean.ScanId, now, boot) is not null &&
+            IncidentDeletionPolicy.RejectionReason(new QuarantineManifest { IncidentId = Guid.Empty, Records = [new()] }, clean, clean.ScanId, now, boot) is not null);
+        Check("0.1.17 计划默认期限与客户端等待上限已放宽",
+            new RemediationPlan().ExpiresAtUtc >= DateTimeOffset.UtcNow.AddMinutes(55) &&
+            RemediationClient.MaximumWaitSeconds == 600);
 
         string directory = Path.Combine(root, "v0117-ui"); Directory.CreateDirectory(directory);
         string destination = Path.Combine(directory, "retained.md");

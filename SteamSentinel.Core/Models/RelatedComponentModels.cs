@@ -79,7 +79,7 @@ public sealed partial class RelatedScanRound
 public sealed class RelatedComponentLimits
 {
     public int MaximumRounds { get; init; } = 2;
-    public int MaximumSources { get; init; } = 512;
+    public int MaximumSources { get; init; } = 4096;
     public int MaximumProcesses { get; init; } = 2048;
     public int MaximumHosts { get; init; } = 32;
     public int MaximumModulesPerHost { get; init; } = 256;

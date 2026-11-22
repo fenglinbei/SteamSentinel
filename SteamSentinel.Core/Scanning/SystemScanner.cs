@@ -512,7 +512,7 @@ public sealed partial class SystemScanner
 
     private async Task ScanSecurityControlsAsync(ScanReport report, CancellationToken cancellationToken)
     {
-        const string script = "$m=Get-MpComputerStatus; $p=Get-MpPreference; $f=Get-NetFirewallProfile; [pscustomobject]@{AntivirusEnabled=$m.AntivirusEnabled;RealTimeProtectionEnabled=$m.RealTimeProtectionEnabled;BehaviorMonitorEnabled=$m.BehaviorMonitorEnabled;FirewallDisabled=@($f|?{-not $_.Enabled}|% Name);ExclusionPath=@($p.ExclusionPath)}|ConvertTo-Json -Compress";
+        const string script = "$m=$null;$p=$null;$f=@();$tp=@();$me=$false;$fe=$false;try{$m=Get-MpComputerStatus -ErrorAction Stop}catch{$me=$true};try{$p=Get-MpPreference -ErrorAction Stop}catch{};try{$f=@(Get-NetFirewallProfile -ErrorAction Stop)}catch{$fe=$true};try{$tp=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop|?{$_.displayName -and $_.displayName -notmatch 'Windows Defender|Microsoft Defender' -and ($null -eq $_.productState -or (([int]$_.productState -band 0x1000) -ne 0))}|%{$_.displayName})}catch{};[pscustomobject]@{AntivirusEnabled=if($m){[bool]$m.AntivirusEnabled}else{$false};RealTimeProtectionEnabled=if($m){[bool]$m.RealTimeProtectionEnabled}else{$false};BehaviorMonitorEnabled=if($m){[bool]$m.BehaviorMonitorEnabled}else{$false};DefenderUnavailable=$me;FirewallUnavailable=$fe;ThirdPartyAntivirus=@($tp);FirewallDisabled=@($f|?{-not $_.Enabled}|% Name);ExclusionPath=if($p -and $p.ExclusionPath){@($p.ExclusionPath)}else{@()}}|ConvertTo-Json -Compress";
         using JsonDocument? document = await PowerShellProbe.RunJsonAsync(script, TimeSpan.FromSeconds(15), cancellationToken);
         if (document is null)
         {
@@ -520,10 +520,41 @@ public sealed partial class SystemScanner
             return;
         }
 
-        JsonElement root = document.RootElement;
+        ProcessSecurityControlsJson(document.RootElement, report, _rules);
+    }
+
+    /// <summary>
+    /// 解析系统安全控制探测 JSON，在存在已启用第三方杀毒软件时避免对被动/停用的 Defender 误报 Partial 或高危告警。
+    /// </summary>
+    internal static void ProcessSecurityControlsJson(JsonElement root, ScanReport report, RuleSet rules)
+    {
         bool antivirus = root.TryGetProperty("AntivirusEnabled", out JsonElement av) && av.ValueKind == JsonValueKind.True;
         bool realtime = root.TryGetProperty("RealTimeProtectionEnabled", out JsonElement rt) && rt.ValueKind == JsonValueKind.True;
         bool behavior = root.TryGetProperty("BehaviorMonitorEnabled", out JsonElement bm) && bm.ValueKind == JsonValueKind.True;
+        bool defenderUnavailable = root.TryGetProperty("DefenderUnavailable", out JsonElement du) && du.ValueKind == JsonValueKind.True;
+        bool firewallUnavailable = root.TryGetProperty("FirewallUnavailable", out JsonElement fu) && fu.ValueKind == JsonValueKind.True;
+
+        List<string> thirdPartyAntivirus = [];
+        if (root.TryGetProperty("ThirdPartyAntivirus", out JsonElement tp))
+        {
+            if (tp.ValueKind == JsonValueKind.Array)
+            {
+                thirdPartyAntivirus.AddRange(tp.EnumerateArray()
+                    .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString())
+                    .Where(name => !string.IsNullOrWhiteSpace(name))!);
+            }
+            else if (tp.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(tp.GetString()))
+            {
+                thirdPartyAntivirus.Add(tp.GetString()!);
+            }
+        }
+        bool hasThirdPartyAntivirus = thirdPartyAntivirus.Count > 0;
+
+        if ((defenderUnavailable || firewallUnavailable) && !hasThirdPartyAntivirus)
+        {
+            AddCoverage(report, MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.01"), "Windows Security");
+        }
+
         List<string> disabledProfiles = [];
         if (root.TryGetProperty("FirewallDisabled", out JsonElement disabled))
         {
@@ -531,13 +562,14 @@ public sealed partial class SystemScanner
             {
                 disabledProfiles.AddRange(disabled.EnumerateArray().Select(item => item.ToString()));
             }
-            else if (disabled.ValueKind == JsonValueKind.String)
+            else if (disabled.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(disabled.GetString()))
             {
                 disabledProfiles.Add(disabled.GetString()!);
             }
         }
 
-        if (!antivirus || !realtime || !behavior || disabledProfiles.Count > 0)
+        bool defenderDisabled = !hasThirdPartyAntivirus && !defenderUnavailable && (!antivirus || !realtime || !behavior);
+        if (defenderDisabled || disabledProfiles.Count > 0)
         {
             report.Findings.Add(new Finding
             {
@@ -546,7 +578,7 @@ public sealed partial class SystemScanner
                 Severity = FindingSeverity.High,
                 Score = 80,
                 TitleText = MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.02"),
-                DescriptionText = $"Antivirus={antivirus}; RealTime={realtime}; Behavior={behavior}; FirewallDisabled={string.Join(',', disabledProfiles)}",
+                DescriptionText = $"Antivirus={antivirus}; RealTime={realtime}; Behavior={behavior}; ThirdParty={string.Join(',', thirdPartyAntivirus)}; FirewallDisabled={string.Join(',', disabledProfiles)}",
                 Target = "Windows Security",
                 EvidenceText = MessageText.Create("Backend.Core.SystemScanner.ScanSecurityControlsAsync.03"),
                 CanRemediate = true,
@@ -565,7 +597,7 @@ public sealed partial class SystemScanner
             foreach (string exclusion in values.Where(value => !string.IsNullOrWhiteSpace(value)))
             {
                 string expanded = Environment.ExpandEnvironmentVariables(exclusion);
-                bool known = _rules.KnownPathTemplates.Any(template =>
+                bool known = rules.KnownPathTemplates.Any(template =>
                     PathsEquivalent(expanded, Environment.ExpandEnvironmentVariables(template)) ||
                     expanded.StartsWith(
                         Path.TrimEndingDirectorySeparator(Environment.ExpandEnvironmentVariables(template)) + Path.DirectorySeparatorChar,

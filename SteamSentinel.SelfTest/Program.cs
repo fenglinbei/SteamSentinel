@@ -559,7 +559,7 @@ internal static partial class Program
             catch (InvalidDataException) { rejected = true; }
             Check("Broker 拒绝 UAC 前后被改写的计划", rejected);
 
-            await File.WriteAllBytesAsync(planPath, new byte[(1024 * 1024) + 1]);
+            await File.WriteAllBytesAsync(planPath, new byte[RemediationLimits.MaximumPlanBytes + 1]);
             string oversizedHash = await Hashing.Sha256FileExclusiveAsync(planPath);
             bool oversizedRejected = false;
             try { await BrokerRequestReader.ReadAsync(planPath, oversizedHash); }
@@ -763,6 +763,61 @@ internal static partial class Program
         });
 
         Check("系统与 Steam 只读扫描", report.CompletedAtUtc is not null && report.Metrics.ProcessesVisited > 0);
+
+        ScanReport thirdPartyAvReport = new();
+        using (System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse("""
+            {"AntivirusEnabled":false,"RealTimeProtectionEnabled":false,"BehaviorMonitorEnabled":false,"DefenderUnavailable":true,"FirewallUnavailable":true,"ThirdPartyAntivirus":["Huorong Security"],"FirewallDisabled":[],"ExclusionPath":[]}
+            """))
+        {
+            SystemScanner.ProcessSecurityControlsJson(doc.RootElement, thirdPartyAvReport, rules);
+        }
+        Check("已启用第三方杀软时停用或缺失Defender不触发Partial或安全控制失效告警",
+            thirdPartyAvReport.Coverage == ScanCoverage.Complete &&
+            thirdPartyAvReport.Findings.All(f => f.RuleId != "SECURITY-CONTROLS-DISABLED"));
+
+        ScanReport disabledDefenderReport = new();
+        using (System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse("""
+            {"AntivirusEnabled":false,"RealTimeProtectionEnabled":false,"BehaviorMonitorEnabled":false,"DefenderUnavailable":false,"FirewallUnavailable":false,"ThirdPartyAntivirus":[],"FirewallDisabled":[],"ExclusionPath":[]}
+            """))
+        {
+            SystemScanner.ProcessSecurityControlsJson(doc.RootElement, disabledDefenderReport, rules);
+        }
+        Check("无第三方杀软且Defender关闭时正常报告安全控制失效",
+            disabledDefenderReport.Findings.Any(f => f.RuleId == "SECURITY-CONTROLS-DISABLED"));
+
+        ScanReport missingDefenderDisabledFirewall = new();
+        using (System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse("""
+            {"AntivirusEnabled":false,"RealTimeProtectionEnabled":false,"BehaviorMonitorEnabled":false,"DefenderUnavailable":true,"FirewallUnavailable":false,"ThirdPartyAntivirus":[],"FirewallDisabled":["Public"],"ExclusionPath":[]}
+            """))
+        {
+            SystemScanner.ProcessSecurityControlsJson(doc.RootElement, missingDefenderDisabledFirewall, rules);
+        }
+        Check("无第三方杀软且Defender不可用并有防火墙关闭时仍标Partial与告警",
+            missingDefenderDisabledFirewall.Coverage == ScanCoverage.Partial &&
+            missingDefenderDisabledFirewall.Findings.Any(f => f.RuleId == "SECURITY-CONTROLS-DISABLED"));
+
+        string? knownExclusionTemplate = rules.KnownPathTemplates.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(knownExclusionTemplate))
+        {
+            ScanReport exclusionReport = new();
+            string payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                AntivirusEnabled = false,
+                RealTimeProtectionEnabled = false,
+                BehaviorMonitorEnabled = false,
+                DefenderUnavailable = true,
+                FirewallUnavailable = false,
+                ThirdPartyAntivirus = new[] { "Huorong Security" },
+                FirewallDisabled = Array.Empty<string>(),
+                ExclusionPath = new[] { knownExclusionTemplate }
+            });
+            using (System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(payload))
+            {
+                SystemScanner.ProcessSecurityControlsJson(doc.RootElement, exclusionReport, rules);
+            }
+            Check("第三方杀软环境下命中已知恶意路径排除项仍正常告警",
+                exclusionReport.Findings.Any(f => f.RuleId == "DEFENDER-KNOWN-EXCLUSION"));
+        }
     }
 
     private static void TestDisplayLabels()

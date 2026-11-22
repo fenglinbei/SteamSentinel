@@ -95,6 +95,46 @@ try {
             Assert ($result.exitCode -eq 0 -and $result.stdout -match 'STEAMSENTINEL_STARTUP_SELECTED/1\|') "Broker preflight failed: $($result.stdout) $($result.stderr)"
         }
     }
+    Check 'real-worker-no-gui-imports' {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+public static class WorkerImportAudit {
+    static int Rva(byte[] d, int pe, uint rva, int min) {
+        int opt = pe + 24, sec = opt + BitConverter.ToUInt16(d, pe + 20), cnt = BitConverter.ToUInt16(d, pe + 6);
+        for (int i = 0; i < cnt; i++) {
+            int s = sec + i * 40;
+            uint va = BitConverter.ToUInt32(d, s + 12), rs = BitConverter.ToUInt32(d, s + 16), ro = BitConverter.ToUInt32(d, s + 20);
+            if (rva >= va && (ulong)rva + (uint)min <= (ulong)va + rs) return checked((int)((long)ro + rva - va));
+        }
+        throw new InvalidDataException("RVA out of bounds.");
+    }
+    public static void AssertOnlyKernel32(string path) {
+        byte[] d = File.ReadAllBytes(path);
+        int pe = BitConverter.ToInt32(d, 60), opt = pe + 24;
+        if (BitConverter.ToUInt16(d, opt + 68) != 3) throw new InvalidDataException("Expected console subsystem: " + path);
+        uint impRva = BitConverter.ToUInt32(d, opt + 120), impSz = BitConverter.ToUInt32(d, opt + 124);
+        if (impRva == 0 || impSz < 20) throw new InvalidDataException("Missing imports: " + path);
+        int off = Rva(d, pe, impRva, 20), n = 0;
+        for (int p = off; p + 20 <= d.Length; p += 20) {
+            uint nameRva = BitConverter.ToUInt32(d, p + 12);
+            if (nameRva == 0) break;
+            int no = Rva(d, pe, nameRva, 1), end = no;
+            while (end < d.Length && end - no < 260 && d[end] != 0) end++;
+            string dll = Encoding.ASCII.GetString(d, no, end - no);
+            if (!String.Equals(dll, "KERNEL32.dll", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Forbidden GUI/shell import '" + dll + "' in " + path);
+            n++;
+        }
+        if (n == 0 || BitConverter.ToUInt32(d, opt + 216) != 0) throw new InvalidDataException("Invalid import/delay directory: " + path);
+    }
+}
+'@
+        foreach ($workerFile in @('SteamSentinel.ArchiveWorker.Standard.exe', 'SteamSentinel.ArchiveWorker.Compat.exe', 'SteamSentinel.ArchiveWorker.exe')) {
+            [WorkerImportAudit]::AssertOnlyKernel32((Join-Path $PublishRoot $workerFile))
+        }
+    }
 
     # Synthetic hosts exercise the production native launcher's failure state
     # machine, not hardware CET. They never load product DLLs or execute a plan.

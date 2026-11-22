@@ -32,7 +32,7 @@ internal static partial class Program
                 DisplayPhase3CaseUiFixture(window, record);
                 layout.Refresh();
                 TextBox details = (TextBox)window.FindName("CaseDetailsText");
-                string[] buttons = ["CaseRefreshButton", "CaseRecheckButton", "CaseExportButton"];
+                string[] buttons = ["CaseRefreshButton", "CaseRecheckButton", "CaseExportButton", "CaseClearCompletedButton"];
                 Check($"第三批病例UI {viewport} 已载入病例处于空闲状态且不残留初始化忙碌横幅",
                     typeof(MainWindow).GetField("_busy", TrustProxyUiPrivate)!.GetValue(window) is false &&
                     ((FrameworkElement)window.FindName("ActivityPanel")).Visibility == Visibility.Collapsed &&
@@ -47,10 +47,10 @@ internal static partial class Program
                     details.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled && details.ActualHeight >= 70 &&
                     layout.IsFullyVisible(details) && UiLayoutHarness.Descendants<ScrollViewer>(details).All(v => v.ScrollableWidth <= 1));
                 FrameworkElement casePage = (FrameworkElement)((TabItem)window.FindName("CasesTab")).Content;
-                Button[] caseButtons = UiLayoutHarness.Descendants<Button>(casePage).ToArray();
+                Button[] caseButtons = UiLayoutHarness.Descendants<Button>(casePage).Where(button => button.IsVisible).ToArray();
                 Check($"第三批病例UI {viewport} 病例页没有旧计划执行按钮且不提供处理入口",
-                    caseButtons.Length == 3 && caseButtons.Select(button => button.Content?.ToString()).OrderBy(s => s)
-                        .SequenceEqual(new[] { UiExpected("读取病例", "Load cases"), UiExpected("复验所选病例", "Verify selected case"), UiExpected("导出病例", "Export case") }.OrderBy(s => s)) &&
+                    caseButtons.Length == 4 && caseButtons.Select(button => button.Content?.ToString()).OrderBy(s => s)
+                        .SequenceEqual(new[] { UiExpected("读取病例", "Load cases"), UiExpected("复验所选病例", "Verify selected case"), UiExpected("导出病例", "Export case"), UiExpected("清理已完成记录", "Clear completed records") }.OrderBy(s => s)) &&
                     TrustProxyUiButton(window, "RemediateButton").Visibility == Visibility.Collapsed &&
                     details.Text.Contains(UiExpected("旧计划不会重放", "Old plans are not replayed"), StringComparison.Ordinal) && details.Text.Contains(UiExpected("不是管理员处置授权", "does not authorize administrator actions"), StringComparison.Ordinal));
                 Check($"第三批病例UI {viewport} 会话Unknown不显示为通过且来源仍未知",

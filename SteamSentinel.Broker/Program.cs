@@ -20,7 +20,8 @@ internal static class Program
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static async Task<int> RunAsync(string[] args)
     {
-        if (!TryInitializeDisplayLanguage(args)) return 2;
+        if (!TryParseArguments(args, out string? languageCode, out string? approvalPipeName)) return 2;
+        InitializeCulture(languageCode);
         string planPath = args[0];
         string expectedPlanSha256 = args[1];
         string? resultPath = null;
@@ -34,13 +35,13 @@ internal static class Program
         try
         {
             if (!IsAdministrator()) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.Program.Main.01"), sourceText => new UnauthorizedAccessException(sourceText));
-            InstallationSecurityStatus installation = InstallationSecurity.Evaluate();
-            if (!installation.IsProtected) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
+            InstallationSecurityStatus installation = InstallationSecurity.Evaluate(depth: InstallationVerificationDepth.Full);
+            if (!installation.CanRemediate) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
 
             RemediationPlan plan = await BrokerRequestReader.ReadAsync(planPath, expectedPlanSha256);
             boundPlanId = plan.PlanId;
             boundPlanIdentity = RemediationPlanIdentity.Fingerprint(plan);
-            MachineStateSecurity.EnsureProtectedRoots();
+            MachineStateSecurity.EnsureProtectedRoots(createIfMissing: true);
             resultPath = Path.Combine(AppPaths.ResultsRoot, $"result-{plan.PlanId:N}.json");
             if (Directory.Exists(resultPath))
                 return ResultChannelUnavailableExitCode;
@@ -75,7 +76,8 @@ internal static class Program
             }
             BrokerEngine engine = new();
             BrokerFileScopeAuthorization? prepared = await engine.PrepareForConfirmationAsync(plan);
-            if (!ConfirmPlan(plan, prepared))
+            bool approvedByUi = await UiApprovalClient.TryVerifyApprovalAsync(approvalPipeName, plan, boundPlanIdentity);
+            if (!approvedByUi && !ConfirmPlan(plan, prepared))
             {
                 result = new RemediationRunResult
                 {
@@ -123,12 +125,47 @@ internal static class Program
 
     internal static bool TryInitializeDisplayLanguage(string[] args)
     {
-        if (args.Length is not (2 or 4)) return false;
-        if (args.Length == 4 && (args[2] != "--ui-language" || args[3] is not ("en" or "zh-Hans"))) return false;
-        DisplayText.InitializeApplicationCulture(args.Length == 4
-            ? args[3] == "en" ? DisplayText.English : DisplayText.Chinese
-            : DisplayText.Resolve(System.Globalization.CultureInfo.CurrentUICulture));
+        if (!TryParseArguments(args, out string? languageCode, out _)) return false;
+        InitializeCulture(languageCode);
         return true;
+    }
+
+    internal static bool TryParseArguments(string[] args, out string? languageCode, out string? approvalPipeName)
+    {
+        languageCode = null;
+        approvalPipeName = null;
+        if (args is null || args.Length < 2 || args.Length > 6 || (args.Length - 2) % 2 != 0)
+            return false;
+
+        for (int i = 2; i < args.Length; i += 2)
+        {
+            string flag = args[i];
+            string value = args[i + 1];
+            if (flag == "--ui-language")
+            {
+                if (languageCode is not null || value is not ("en" or "zh-Hans"))
+                    return false;
+                languageCode = value;
+            }
+            else if (flag == UiApprovalProtocol.ApprovalPipeArgument)
+            {
+                if (approvalPipeName is not null || !UiApprovalProtocol.IsValidPipeName(value))
+                    return false;
+                approvalPipeName = value;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void InitializeCulture(string? languageCode)
+    {
+        DisplayText.InitializeApplicationCulture(languageCode is not null
+            ? languageCode == "en" ? DisplayText.English : DisplayText.Chinese
+            : DisplayText.Resolve(System.Globalization.CultureInfo.CurrentUICulture));
     }
 
     private static async Task<bool> TryWriteResultAsync(BrokerResultChannel channel, RemediationRunResult result)

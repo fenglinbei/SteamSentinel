@@ -157,16 +157,15 @@ internal sealed partial class BrokerEngine
             {
                 foreach (Process process in processes)
                 {
-                    DateTimeOffset started;
                     int pid;
-                    try
-                    {
-                        if (!PathsEquivalent(process.MainModule?.FileName ?? string.Empty, path)) continue;
-                        started = new(process.StartTime.ToUniversalTime());
-                        pid = process.Id;
-                    }
+                    try { pid = process.Id; }
                     catch (InvalidOperationException) { continue; }
-                    catch (Win32Exception) { throw WatchdogClosureFailure(); }
+                    if (!PowerShellScriptHost.TryReadProcessImage(pid, out string? imagePath, out DateTimeOffset started, out bool exited, out bool isProtectedSystemProcess))
+                    {
+                        if (exited || isProtectedSystemProcess) continue;
+                        throw WatchdogClosureFailure();
+                    }
+                    if (!PathsEquivalent(imagePath ?? string.Empty, path)) continue;
                     if (!plan.Actions.Any(action => action.Type == RemediationActionType.StopProcess && !completed.Contains(action.ActionId) &&
                         action.ProcessId == pid && action.ProcessStartedAtUtc == started &&
                         PathsEquivalent(action.Target, path) && string.Equals(action.ExpectedSha256, hash, StringComparison.OrdinalIgnoreCase)))
@@ -310,8 +309,8 @@ internal sealed partial class BrokerEngine
             if (host.Status == ScriptHostReadStatus.Exited) continue;
             if (!host.IsReadable)
             {
-                // Unsupported but fully read non-system interpreters can be positively
-                // unrelated; access-denied or changing instances cannot establish that.
+                // 受保护系统进程（SYSTEM/LocalService/NetworkService/PPL）或已证实无关的解释器直接跳过
+                if (host.IsProtectedSystemProcess) continue;
                 if (host.Status == ScriptHostReadStatus.Unsupported && host.CommandLine is not null &&
                     !bindings.Keys.Any(path => MentionsClosurePath(host.CommandLine, path))) continue;
                 throw WatchdogClosureFailure();
@@ -356,7 +355,11 @@ internal sealed partial class BrokerEngine
         foreach (PowerShellScriptHostSnapshot host in hosts)
         {
             if (host.Status == ScriptHostReadStatus.Exited) continue;
-            if (!host.IsReadable) throw WatchdogClosureFailure();
+            if (!host.IsReadable)
+            {
+                if (host.IsProtectedSystemProcess) continue;
+                throw WatchdogClosureFailure();
+            }
             if (!SteamAlertUpdateHandoff.TryParseCommandLine(host.CommandLine, out string? script))
             {
                 if (paths.Any(path => MentionsClosurePath(host.CommandLine!, path))) throw WatchdogClosureFailure();

@@ -66,6 +66,39 @@ public static partial class Validation
                !string.Equals(fullPath, userProfile, StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsRedirectingReparseTag(uint reparseTag) =>
+        (reparseTag & 0x20000000u) != 0 || reparseTag == 0x8000001Bu;
+
+    public static bool IsRedirectingReparsePoint(string path)
+    {
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(path); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
+        catch { return true; }
+        if ((attributes & FileAttributes.ReparsePoint) == 0) return false;
+        try
+        {
+            string full = LocalNativePath.Encode(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+            using SafeFindHandle find = FindFirstFileW(full, out Win32FindData data);
+            if (!find.IsInvalid) return (data.dwFileAttributes & (uint)FileAttributes.ReparsePoint) != 0 && IsRedirectingReparseTag(data.dwReserved0);
+            using Microsoft.Win32.SafeHandles.SafeFileHandle handle = CreateFileW(
+                LocalNativePath.Encode(Path.GetFullPath(path)), 0x80, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                int error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                return error is not (2 or 3);
+            }
+            return IsRedirectingReparseHandle(handle);
+        }
+        catch { return true; }
+    }
+
+    internal static bool IsRedirectingReparseHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle)
+    {
+        if (!GetFileInformationByHandleEx(handle, 9, out FileAttributeTagInfo info, 8)) return true;
+        return (info.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0 && IsRedirectingReparseTag(info.ReparseTag);
+    }
+
     public static bool ContainsReparsePoint(string path)
     {
         string full = Path.GetFullPath(path);
@@ -85,7 +118,7 @@ public static partial class Validation
             }
 
             FileAttributes attributes = File.GetAttributes(current);
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            if ((attributes & FileAttributes.ReparsePoint) != 0 && IsRedirectingReparsePoint(current))
             {
                 return true;
             }
@@ -93,4 +126,42 @@ public static partial class Validation
 
         return false;
     }
+
+    private sealed class SafeFindHandle : Microsoft.Win32.SafeHandles.SafeHandleZeroOrMinusOneIsInvalid
+    {
+        private SafeFindHandle() : base(true) { }
+        protected override bool ReleaseHandle() => FindClose(handle);
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private struct Win32FindData
+    {
+        public uint dwFileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME ftCreationTime, ftLastAccessTime, ftLastWriteTime;
+        public uint nFileSizeHigh, nFileSizeLow, dwReserved0, dwReserved1;
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string cFileName;
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 14)]
+        public string cAlternateFileName;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct FileAttributeTagInfo { public uint FileAttributes, ReparseTag; }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFindHandle FindFirstFileW(string lpFileName, out Win32FindData lpFindFileData);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool FindClose(IntPtr hFindFile);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(
+        string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr lpSecurityAttributes,
+        uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(
+        Microsoft.Win32.SafeHandles.SafeFileHandle hFile, int FileInformationClass, out FileAttributeTagInfo lpFileInformation, uint dwBufferSize);
 }

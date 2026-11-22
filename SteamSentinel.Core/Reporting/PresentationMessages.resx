@@ -3205,7 +3205,7 @@ Content locations in this scan: {0}.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.DeleteIncident_Click.03" xml:space="preserve">
-    <value>This permanently deletes the records and remaining backups of an incident that has been fully rolled back. They cannot be restored through this tool. The administrator component will check the incident state again. Continue?</value>
+    <value>This permanently deletes the selected quarantine incident records and quarantined copies without restoring them. This operation cannot be undone. The administrator component will confirm and execute the deletion. Continue?</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.DeleteIncident_Click.04" xml:space="preserve">
@@ -3318,6 +3318,26 @@ Content locations in this scan: {0}.</value>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.12" xml:space="preserve">
     <value>Administrator remediation available</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableElevated" xml:space="preserve">
+    <value>Portable mode verified (administrator window). Directory permissions are not restricted by Program Files; install via the installer for stronger protection.</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableStandard" xml:space="preserve">
+    <value>Portable mode verified (standard window). Component hashes match SHA256SUMS.txt, but this folder lacks Program Files write protection.</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintCanElevate" xml:space="preserve">
+    <value>Portable remediation will confirm risks before requesting Windows UAC elevation. Installing to Program Files via setup is recommended.</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintStandard" xml:space="preserve">
+    <value>Running in portable mode. To remediate, open an administrator window, provide admin credentials, and scan again.</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableTooltip" xml:space="preserve">
+    <value>Portable remediation is available (SHA256SUMS.txt verified; folder lacks Program Files ACL protection)</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.RefreshInstallation_Click.02" xml:space="preserve">
@@ -4627,6 +4647,10 @@ See exported records for more detail.</value>
     <value>Save your work first. Closing processes may interrupt games. Quarantine does not immediately delete files permanently.</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
+  <data name="Ui.RemediationPreviewWindow.PortableRiskNotice" xml:space="preserve">
+    <value>Notice: You are running from a portable folder outside Program Files. While SHA256SUMS.txt integrity checks passed, standard accounts may write to this folder; elevate only if you trust the current folder.</value>
+    <comment>Display only: Dialogs/RemediationPreviewWindow.xaml.cs</comment>
+  </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.004" xml:space="preserve">
     <value>Actions to run</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
@@ -5012,11 +5036,11 @@ See exported records for more detail.</value>
     <comment>Backend display descriptor; source text is preserved and never used to infer authorization.</comment>
   </data>
   <data name="Backend.Broker.BrokerEngine.EnsureIncidentDeletionAllowed.01" xml:space="preserve">
-    <value>This incident still has active quarantine records. Broker does not accept a clean-rescan claim that an ordinary process could forge as authorization for permanent deletion.</value>
+    <value>This quarantine incident record is incomplete or invalid, so permanent deletion was refused.</value>
     <comment>Backend display descriptor; source text is preserved and never used to infer authorization.</comment>
   </data>
   <data name="Backend.Broker.BrokerEngine.EnsureIncidentDeletionAllowed.02" xml:space="preserve">
-    <value>Keep the incident quarantined; do not roll back suspicious samples just to delete it. Only empty incidents whose records have already been safely rolled back can be removed.</value>
+    <value> Retain the existing quarantine entry and review the manifest metadata.</value>
     <comment>Backend display descriptor; source text is preserved and never used to infer authorization.</comment>
   </data>
   <data name="Backend.Broker.BrokerEngine.RestoreFileAsync.01" xml:space="preserve">
@@ -5249,10 +5273,10 @@ See exported records for more detail.</value>
 </value>
   </data>
   <data name="Backend.Broker.Program.BuildConfirmationMessage.02" xml:space="preserve">
-    <value>This operation cannot be undone. The broker only permits deletion when every record has been rolled back and no active quarantined content remains. </value>
+    <value>This operation cannot be undone. It will permanently delete the incident records and their quarantined backups. </value>
   </data>
   <data name="Backend.Broker.Program.BuildConfirmationMessage.03" xml:space="preserve">
-    <value>Do not restore suspicious samples just to delete an incident. If unsure, select No and keep the content quarantined.
+    <value>This operation will not restore quarantined samples to their original paths. If unsure, select No and keep them quarantined.
 
 Continue?</value>
   </data>
@@ -9986,7 +10010,7 @@ Component error output: </value>
     <value>The session read was cancelled. Existing fields are partial observations and do not establish a new boot or logon.</value>
   </data>
   <data name="Backend.Core.WindowsCaseSessionReader.ReadCore.09" xml:space="preserve">
-    <value> Boot evidence comes from an existing System/Kernel-General 12 event. Missing or reset logs do not imply a new boot. This establishes only a session change, not that the machine is clean.</value>
+    <value> Boot evidence comes from an existing System/Kernel-General 12 or Kernel-Boot 27 (BootType 0/1) event. Missing or reset logs do not imply a new boot. This establishes only a session change, not that the machine is clean.</value>
   </data>
   <data name="Backend.Core.WindowsCaseSessionReader.ReadBoot.01" xml:space="preserve">
     <value>No system boot event is readable. A new boot is not inferred from the current time or uptime.</value>
@@ -10639,6 +10663,9 @@ Component error output: </value>
   <data name="Backend.Core.InstallationSecurity.Protected.01" xml:space="preserve">
     <value>Protected installation and component integrity checks passed</value>
   </data>
+  <data name="Backend.Core.InstallationSecurity.Portable.01" xml:space="preserve">
+    <value>Portable mode component integrity checks passed (outside Program Files; install via setup for ACL protection)</value>
+  </data>
   <data name="Backend.Core.InstallationSecurity.Evaluate.01" xml:space="preserve">
     <value>This is not a protected Program Files installation. Scanning is available; administrator remediation is disabled</value>
   </data>
@@ -10856,7 +10883,7 @@ Component error output: </value>
     <value>A related group exceeds this batch's safety limit and was not split for execution: </value>
   </data>
   <data name="Backend.Core.RemediationBatchPlanner.PackActions.01" xml:space="preserve">
-    <value>A related group exceeds 64 actions and cannot be split for execution.</value>
+    <value>A related group exceeds 256 actions and cannot be split for execution.</value>
   </data>
   <data name="Backend.Core.RemediationBatchPlanner.ExecuteAsync.01" xml:space="preserve">
     <value>This batch session has already started execution. Scan again; it cannot be submitted twice.</value>
@@ -10937,7 +10964,7 @@ Component error output: </value>
     <value>Conflicting snapshots exist for the same remediation target. Scan again.</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.BuildAsync.04" xml:space="preserve">
-    <value>The complete remediation plan exceeds 64 actions. Process related groups in batches.</value>
+    <value>The complete remediation plan exceeds 256 actions. Process related groups in batches.</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.BuildAsync.05" xml:space="preserve">
     <value>Block outbound connections from the malicious program</value>
@@ -10946,7 +10973,7 @@ Component error output: </value>
     <value>Block known C2 domains in hosts</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.BuildAsync.07" xml:space="preserve">
-    <value>The complete remediation plan exceeds 64 actions. Process related groups in batches.</value>
+    <value>The complete remediation plan exceeds 256 actions. Process related groups in batches.</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.CreateFileActionAsync.01" xml:space="preserve">
     <value>Quarantine file</value>
@@ -11984,4 +12011,15 @@ Prerequisite target: {1}
 Reason: {2}</value></data>
   <data name="Backend.Core.FileOccupancy.WithProcesses" xml:space="preserve"><value>{0} Occupied by: {1}</value></data>
   <data name="Backend.Core.FileOccupancy.Append" xml:space="preserve"><value>{0} {1}</value></data>
+  <data name="Ui.Xaml.MainWindow.CaseClearCompletedButton" xml:space="preserve"><value>Clear completed records</value></data>
+  <data name="Ui.Cases.ClearCompleted.ConfirmTitle" xml:space="preserve"><value>Confirm Cleanup</value></data>
+  <data name="Ui.Cases.ClearCompleted.ConfirmBody" xml:space="preserve"><value>Remove all completed remediation records from the local history list? Records with pending or unresolved actions will be kept, and quarantined files are untouched.</value></data>
+  <data name="Ui.Cases.ClearCompleted.Result" xml:space="preserve"><value>Removed {0} completed record(s).</value></data>
+  <data name="Ui.Cases.ClearCompleted.None" xml:space="preserve"><value>No completed records can be removed right now.</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.Banner" xml:space="preserve"><value>An earlier administrator execution did not return a final receipt. If you are sure the elevated component has already closed, you may archive it as an unknown outcome so new scans and actions can continue.</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.Button" xml:space="preserve"><value>Mark as unknown outcome</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.ConfirmTitle" xml:space="preserve"><value>Confirm Unlock</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.ConfirmBody" xml:space="preserve"><value>Only continue if you confirmed no administrator Broker window is still running. Pending actions will be recorded as unknown outcome (not rolled back or marked successful) so new actions can resume. Continue?</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.ErrorSummary" xml:space="preserve"><value>Manually archived as unknown outcome by user because the earlier elevated run did not return a receipt.</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.Done" xml:space="preserve"><value>Archived the pending record as unknown outcome and unlocked remediation. Review affected targets carefully.</value></data>
 </root>

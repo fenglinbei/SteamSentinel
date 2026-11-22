@@ -83,20 +83,54 @@ public sealed class WindowsCaseSessionReader : ICaseSessionReader
 
     private static BootRead ReadBoot(CancellationToken token)
     {
-        // An event identity stays stable across wall-clock corrections and reopening this app.
-        // A reset/truncated log is handled as unknown by comparison, never as reboot proof.
+        // 同时查询传统冷启动事件（Kernel-General 12）与现代快速启动/冷启动事件（Kernel-Boot 27），兼容默认开启快速启动的 Windows 设备。
+        // 日志缺失或重置由比较逻辑判定为 Unknown，绝不凭当前时间猜想重启。
         using SafeEventHandle query = EvtQuery(IntPtr.Zero, "System",
-            "*[System[Provider[@Name='Microsoft-Windows-Kernel-General'] and EventID=12]]", 0x201);
+            "*[System[(Provider[@Name='Microsoft-Windows-Kernel-General'] and EventID=12) or (Provider[@Name='Microsoft-Windows-Kernel-Boot'] and EventID=27)]]", 0x201);
         if (query.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-        IntPtr[] events = new IntPtr[1];
-        if (!EvtNext(query, 1, events, 2000, 0, out int returned))
+
+        const int maxScanned = 8;
+        int scanned = 0;
+        IntPtr[] batch = new IntPtr[maxScanned];
+        while (scanned < maxScanned)
         {
-            int error = Marshal.GetLastWin32Error();
-            if (error == 259) return new(DiagnosticReadStatus.NotPresent, null, null, null, MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.01"));
-            throw new Win32Exception(error);
+            token.ThrowIfCancellationRequested();
+            if (!EvtNext(query, maxScanned - scanned, batch, 2000, 0, out int returned))
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error == 259)
+                    return new(DiagnosticReadStatus.NotPresent, null, null, null, MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.01"));
+                throw new Win32Exception(error);
+            }
+            if (returned <= 0 || returned > batch.Length)
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.02"), sourceText => new InvalidDataException(sourceText));
+
+            for (int i = 0; i < returned; i++)
+            {
+                IntPtr rawHandle = batch[i];
+                batch[i] = IntPtr.Zero;
+                if (rawHandle == IntPtr.Zero) continue;
+                using SafeEventHandle item = new(rawHandle);
+                scanned++;
+                string xml = RenderEventXml(item, token);
+                BootRead? candidate = ParseBootEventXml(xml, out bool isNonBootWake);
+                if (isNonBootWake) continue;
+                for (int rest = i + 1; rest < returned; rest++)
+                {
+                    if (batch[rest] != IntPtr.Zero)
+                    {
+                        _ = EvtClose(batch[rest]);
+                        batch[rest] = IntPtr.Zero;
+                    }
+                }
+                return candidate!;
+            }
         }
-        if (returned != 1 || events[0] == IntPtr.Zero) throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.02"), sourceText => new InvalidDataException(sourceText));
-        using SafeEventHandle item = new(events[0]);
+        return new(DiagnosticReadStatus.NotPresent, null, null, null, MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.01"));
+    }
+
+    private static string RenderEventXml(SafeEventHandle item, CancellationToken token)
+    {
         token.ThrowIfCancellationRequested();
         if (EvtRender(IntPtr.Zero, item, 1, 0, IntPtr.Zero, out int required, out _) ||
             Marshal.GetLastWin32Error() != 122 || required is <= 0 or > MaximumEventXmlBytes)
@@ -106,26 +140,60 @@ public sealed class WindowsCaseSessionReader : ICaseSessionReader
         {
             if (!EvtRender(IntPtr.Zero, item, 1, required, buffer, out int used, out _) || used <= 0 || used > required)
                 throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.04"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
-            string xml = Marshal.PtrToStringUni(buffer, used / 2)?.TrimEnd('\0') ?? string.Empty;
-            token.ThrowIfCancellationRequested();
-            using StringReader text = new(xml);
-            using XmlReader reader = XmlReader.Create(text, new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaximumEventXmlBytes });
-            XElement root = XElement.Load(reader);
-            XNamespace ns = root.Name.Namespace;
-            XElement system = root.Element(ns + "System") ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.05"), sourceText => new InvalidDataException(sourceText));
-            if ((string?)system.Element(ns + "Provider")?.Attribute("Name") != "Microsoft-Windows-Kernel-General" ||
-                (string?)system.Element(ns + "EventID") != "12" ||
-                !long.TryParse((string?)system.Element(ns + "EventRecordID"), NumberStyles.None, CultureInfo.InvariantCulture, out long recordId) || recordId <= 0 ||
-                !DateTimeOffset.TryParse((string?)system.Element(ns + "TimeCreated")?.Attribute("SystemTime"), CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal, out DateTimeOffset eventTime))
-                throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.06"), sourceText => new InvalidDataException(sourceText));
+            return Marshal.PtrToStringUni(buffer, used / 2)?.TrimEnd('\0') ?? string.Empty;
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    internal static (DiagnosticReadStatus Status, string? Identity, DateTimeOffset? Started, long? RecordId) ParseBootEventForTest(
+        string xml, out bool isNonBootWake)
+    {
+        BootRead? read = ParseBootEventXml(xml, out isNonBootWake);
+        return read is null ? default : (read.Status, read.Identity, read.Started, read.RecordId);
+    }
+
+    private static BootRead? ParseBootEventXml(string xml, out bool isNonBootWake)
+    {
+        isNonBootWake = false;
+        using StringReader text = new(xml);
+        using XmlReader reader = XmlReader.Create(text, new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaximumEventXmlBytes });
+        XElement root = XElement.Load(reader);
+        XNamespace ns = root.Name.Namespace;
+        XElement system = root.Element(ns + "System") ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.05"), sourceText => new InvalidDataException(sourceText));
+
+        string? provider = (string?)system.Element(ns + "Provider")?.Attribute("Name");
+        string? eventId = (string?)system.Element(ns + "EventID");
+        if (!long.TryParse((string?)system.Element(ns + "EventRecordID"), NumberStyles.None, CultureInfo.InvariantCulture, out long recordId) || recordId <= 0 ||
+            !DateTimeOffset.TryParse((string?)system.Element(ns + "TimeCreated")?.Attribute("SystemTime"), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal, out DateTimeOffset eventTime))
+        {
+            throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.06"), sourceText => new InvalidDataException(sourceText));
+        }
+
+        if (provider == "Microsoft-Windows-Kernel-General" && eventId == "12")
+        {
             string? start = root.Element(ns + "EventData")?.Elements(ns + "Data").FirstOrDefault(e => (string?)e.Attribute("Name") == "StartTime")?.Value;
             DateTimeOffset started = DateTimeOffset.TryParse(start, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed) ? parsed : eventTime;
             if (started > DateTimeOffset.UtcNow.AddMinutes(1)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.07"), sourceText => new InvalidDataException(sourceText));
             string identity = $"KernelGeneral12:{recordId}:{eventTime.UtcDateTime.Ticks}";
             return new(DiagnosticReadStatus.Complete, identity, started.ToUniversalTime(), recordId, MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.08"));
         }
-        finally { Marshal.FreeHGlobal(buffer); }
+
+        if (provider == "Microsoft-Windows-Kernel-Boot" && eventId == "27")
+        {
+            // BootType: 0 = 冷启动, 1 = 快速启动 (Hiberboot), 2 = 普通 S4 休眠恢复（不视为开机重启）
+            string? bootType = root.Element(ns + "EventData")?.Elements(ns + "Data").FirstOrDefault(e => (string?)e.Attribute("Name") == "BootType")?.Value;
+            if (bootType is not ("0" or "1"))
+            {
+                isNonBootWake = true;
+                return null;
+            }
+            if (eventTime > DateTimeOffset.UtcNow.AddMinutes(1)) throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.07"), sourceText => new InvalidDataException(sourceText));
+            string identity = $"KernelBoot27:{recordId}:{eventTime.UtcDateTime.Ticks}";
+            return new(DiagnosticReadStatus.Complete, identity, eventTime.ToUniversalTime(), recordId, MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.08"));
+        }
+
+        throw MessageExceptions.Create(MessageText.Create("Backend.Core.WindowsCaseSessionReader.ReadBoot.06"), sourceText => new InvalidDataException(sourceText));
     }
 
     private static LogonRead ReadInteractiveLogon(SafeAccessTokenHandle token, string sid, CancellationToken cancellationToken)

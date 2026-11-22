@@ -39,7 +39,7 @@ public sealed class RemediationPlan
     [JsonRequired]
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     [JsonRequired]
-    public DateTimeOffset ExpiresAtUtc { get; init; } = DateTimeOffset.UtcNow.AddMinutes(15);
+    public DateTimeOffset ExpiresAtUtc { get; init; } = DateTimeOffset.UtcNow.AddMinutes(60);
     [JsonRequired]
     public string RequestedBy { get; init; } = Environment.UserName;
     [JsonRequired]

@@ -42,7 +42,7 @@ public partial class MainWindow
                 : counts.AttentionCount > 0 ? RemediationAvailabilityState.ReviewRequired : RemediationAvailabilityState.NoActionableFindings,
                 RemediationAvailabilityAction.None, false);
         }
-        if (!_installationSecurity.IsProtected)
+        if (!_installationSecurity.CanRemediate)
             return new(RemediationAvailabilityState.InstallationUnavailable, RemediationAvailabilityAction.CheckInstallation, false);
         return _hasEndedUnknownExecution
             ? new(RemediationAvailabilityState.EndedUnknown, RemediationAvailabilityAction.ViewRecords, true)

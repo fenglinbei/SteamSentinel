@@ -28,14 +28,18 @@ public partial class MainWindow
     private void UpdateRemediationEligibility()
     {
         if (RemediateButton is null || SelectAllButton is null || Findings is null) return;
+        EnsureFindingSubscriptions();
         FindingHandlingCounts counts = FindingHandlingPresentation.Count(VisibleRemediationFindings.Select(item => item.Handling));
         FindingHandlingCounts priorityCounts = FindingHandlingPresentation.Count(Findings.Where(item => !item.IsReference).Select(item => item.Handling));
         bool available = priorityCounts.SelectableCount > 0;
+        int selectedCount = VisibleRemediationFindings.Count(item => item.IsSelected && item.CanSelect);
         RemediationAvailability availability = GetRemediationAvailability(counts);
-        RemediateButton.IsEnabled = availability.CanRemediate;
+        bool canExecuteRemediation = availability.CanRemediate && selectedCount > 0;
+        RemediateButton.IsEnabled = canExecuteRemediation;
         RemediateButton.ToolTip = availability.State == RemediationAvailabilityState.InstallationUnavailable
             ? _installationSecurity.MessageText.Display + DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.06")
-            : availability.CanRemediate ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.07")
+            : canExecuteRemediation ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.07")
+            : availability.CanRemediate ? DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.03")
             : RemediationAvailabilityText(availability.State);
         UpdateRemediationAvailabilityPresentation(availability);
         SelectAllButton.IsEnabled = !_busy && !_reportNeedsRefresh && available;

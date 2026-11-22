@@ -104,6 +104,9 @@ internal static partial class Program
             Snapshot(watchStop) with { ProcessId = 62010, CommandLine = "powershell.exe -NoProfile -Command Get-Date" }));
         Check("watchdog closure refuses to claim completeness when an instance cannot be read", Reject(complete, identities,
             Snapshot(watchStop) with { Status = ScriptHostReadStatus.AccessDenied, CommandLine = null }));
+        Check("watchdog closure safely skips protected system interpreter", !Reject(complete, identities,
+            Snapshot(watchStop), Snapshot(updateStop),
+            Snapshot(watchStop) with { ProcessId = 62099, Status = ScriptHostReadStatus.AccessDenied, CommandLine = null, IsProtectedSystemProcess = true }));
         Dictionary<string, string> extra = new(identities, StringComparer.OrdinalIgnoreCase)
         { [Path.Combine(root, "newly-created", "sa_launch.ps1")] = SteamAlertWatchdog.LauncherHash };
         Check("watchdog closure detects a newly dropped verified family component", Reject(complete, extra));

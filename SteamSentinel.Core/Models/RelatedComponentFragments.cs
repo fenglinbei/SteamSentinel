@@ -43,7 +43,7 @@ public sealed record RelatedComponentFragment(RelatedComponentMetadata Metadata,
 
 internal static class RelatedComponentFragments
 {
-    internal const int MaximumSources = 512, MaximumHosts = 32, MaximumCandidates = 128;
+    internal const int MaximumSources = 4096, MaximumHosts = 32, MaximumCandidates = 128;
     internal const int MaximumChecks = 2048, MaximumRelations = 4096, MaximumRounds = 2;
     internal const int MaximumRecordCharacters = 96 * 1024;
     internal const long MaximumTextCharacters = 16L * 1024 * 1024;

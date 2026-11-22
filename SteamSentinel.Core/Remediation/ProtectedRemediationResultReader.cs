@@ -9,7 +9,7 @@ namespace SteamSentinel.Core.Remediation;
 
 public static class ProtectedRemediationResultReader
 {
-    public const int MaximumBytes = 1024 * 1024;
+    public const int MaximumBytes = RemediationLimits.MaximumResultBytes;
     public static async Task<RemediationRunResult?> TryReadAsync(RemediationPlan plan, CancellationToken token = default)
     {
         if (plan.PlanId == Guid.Empty || plan.RequestedBySid != WindowsIdentity.GetCurrent().User?.Value)
@@ -110,7 +110,7 @@ public static class ProtectedRemediationResultReader
             !result.PlanIdentitySha256.Equals(RemediationPlanIdentity.Fingerprint(plan), StringComparison.OrdinalIgnoreCase) ||
             result.PlanId != plan.PlanId || result.StartedAtUtc == default || result.CompletedAtUtc is null ||
             result.CompletedAtUtc < result.StartedAtUtc || result.Success || result.Actions is null || result.Actions.Count != 0 ||
-            result.Errors is null || result.Errors.Count is < 1 or > 128 ||
+            result.Errors is null || result.Errors.Count is < 1 or > RemediationLimits.MaximumResultErrors ||
             result.Errors.Any(error => string.IsNullOrWhiteSpace(error) || error.Length > 8192) ||
             result.VerificationStatus is not (RemediationVerificationStatus.NotChecked or RemediationVerificationStatus.Unknown) ||
             result.ManifestPath is not null || result.VerificationCompletedAtUtc is not null ||
@@ -122,16 +122,16 @@ public static class ProtectedRemediationResultReader
             throw new InvalidDataException("Invalid result error message descriptors.");
         long displayCharacters = 0;
         foreach (DisplayMessage? message in errorMessages ?? []) displayCharacters += message?.Validate() ?? 0;
-        if (displayCharacters > 256 * 1024 || result.Errors.Sum(error => (long)error.Length) > 256 * 1024)
+        if (displayCharacters > RemediationLimits.MaximumResultDisplayCharacters || result.Errors.Sum(error => (long)error.Length) > RemediationLimits.MaximumResultDisplayCharacters)
             throw new InvalidDataException("Result display message limit exceeded.");
     }
 
     public static void Validate(RemediationPlan plan, RemediationRunResult result)
     {
-        if (result.Actions is null || result.Errors is null || result.Actions.Count > 64 || result.Errors.Count > 128 ||
+        if (result.Actions is null || result.Errors is null || result.Actions.Count > RemediationLimits.MaximumActionsPerPlan || result.Errors.Count > RemediationLimits.MaximumResultErrors ||
             result.Actions.Any(action => action is null || action.Verifications is null || action.Verifications.Count > 256 || action.Verifications.Any(observation => observation is null)))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.ProtectedRemediationResultReader.Validate.01"), sourceText => new InvalidDataException(sourceText));
-        if (result.ErrorMessages is not null && (result.ErrorMessages.Count != result.Errors.Count || result.ErrorMessages.Count > 128))
+        if (result.ErrorMessages is not null && (result.ErrorMessages.Count != result.Errors.Count || result.ErrorMessages.Count > RemediationLimits.MaximumResultErrors))
             throw new InvalidDataException("Invalid result error message descriptors.");
         long displayCharacters = 0;
         foreach (DisplayMessage? message in result.ErrorMessages ?? []) displayCharacters += message?.Validate() ?? 0;
@@ -143,7 +143,7 @@ public static class ProtectedRemediationResultReader
             foreach (RemediationVerificationObservation observation in action.Verifications)
                 displayCharacters += observation.ResultMessage?.Validate() ?? 0;
         }
-        if (displayCharacters > 256 * 1024) throw new InvalidDataException("Result display message limit exceeded.");
+        if (displayCharacters > RemediationLimits.MaximumResultDisplayCharacters) throw new InvalidDataException("Result display message limit exceeded.");
         if (!Validation.IsHexSha256(result.PlanIdentitySha256) ||
             !result.PlanIdentitySha256.Equals(RemediationPlanIdentity.Fingerprint(plan), StringComparison.OrdinalIgnoreCase) ||
             result.PlanId != plan.PlanId || result.CompletedAtUtc is null || result.StartedAtUtc == default ||
@@ -151,7 +151,7 @@ public static class ProtectedRemediationResultReader
             result.Disposition == RemediationRunDisposition.NotStarted && (result.Success || result.Actions.Count != 0 || result.Errors.Count == 0) ||
             result.Disposition != RemediationRunDisposition.NotStarted && result.Actions.Count != plan.Actions.Count ||
             result.CompletedAtUtc < result.StartedAtUtc || result.Actions is null || result.Errors is null ||
-            result.Actions.Count > 64 || result.Errors.Count > 128 ||
+            result.Actions.Count > RemediationLimits.MaximumActionsPerPlan || result.Errors.Count > RemediationLimits.MaximumResultErrors ||
             result.Actions.Select(a => a.ActionId).Distinct().Count() != result.Actions.Count ||
             result.Actions.Any(a => a.ExecutionStatus == RemediationExecutionStatus.ExecutionUnknown || !Enum.IsDefined(a.ExecutionStatus)) ||
             result.Actions.Any(r => !plan.Actions.Any(a => a.ActionId == r.ActionId && a.Type == r.Type && a.Target == r.Target)) ||

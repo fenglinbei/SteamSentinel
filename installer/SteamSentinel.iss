@@ -4,6 +4,9 @@
 #ifndef OutputDir
   #error OutputDir must be supplied by the release build.
 #endif
+#ifndef SetupHelperPath
+  #error SetupHelperPath must be supplied by the release build.
+#endif
 #ifndef AppVersion
 #define AppVersion "0.3.6"
 #endif
@@ -18,11 +21,7 @@
 #define WorkerStandardRuleIn "SteamSentinel ArchiveWorker Standard inbound block"
 #define WorkerCompatRuleOut "SteamSentinel ArchiveWorker Compat outbound block"
 #define WorkerCompatRuleIn "SteamSentinel ArchiveWorker Compat inbound block"
-#define WorkerFirewallScriptHash GetSHA256OfFile(SourcePath + "Verify-WorkerFirewall.ps1")
-#define MachineStateScriptHash GetSHA256OfFile(SourcePath + "Initialize-MachineState.ps1")
-#define MachineStateSourceHash GetSHA256OfFile(SourcePath + "MachineStateBootstrap.cs")
-#define PayloadScriptHash GetSHA256OfFile(SourcePath + "Maintain-InstallPayload.ps1")
-#define PayloadSourceHash GetSHA256OfFile(SourcePath + "PayloadMaintenance.cs")
+#define SetupHelperHash GetSHA256OfFile(SetupHelperPath)
 #define IncomingManifestHash GetSHA256OfFile(PayloadDir + "\SHA256SUMS.txt")
 ; The incoming checksum manifest verifies all bytes at install time. Reject an
 ; incomplete unified launch layout before an installer can be distributed.
@@ -131,14 +130,10 @@ zhHans.PayloadLogMissing=无法读取文件维护诊断日志，安装已停止�
 ; Replace matching payload files; the bound maintenance helper separately retires
 ; only approved obsolete bytes and verifies the complete installed file set.
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "Initialize-MachineState.ps1"; Flags: dontcopy
-Source: "MachineStateBootstrap.cs"; Flags: dontcopy
-Source: "Maintain-InstallPayload.ps1"; Flags: dontcopy
-Source: "PayloadMaintenance.cs"; Flags: dontcopy
-Source: "Verify-WorkerFirewall.ps1"; Flags: dontcopy
+Source: "{#SetupHelperPath}"; DestName: "SteamSentinel.SetupHelper.exe"; Flags: dontcopy
 Source: "{#PayloadDir}\SHA256SUMS.txt"; DestName: "incoming-payload-sha256.txt"; Flags: dontcopy
-; No blind deletion of the 17 formerly listed root documentation files. Without
-; an approved historical content hash, these are preserved and preflight refuses.
+; Precompiled SteamSentinel.SetupHelper.exe stays isolated in {tmp} via dontcopy and is never
+; deployed into {app}. Without approved manifest hashes, unknown local files are preserved.
 
 [Dirs]
 ; The bound bootstrap creates missing directories and can migrate only verified legacy empty directories.
@@ -159,32 +154,54 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 var
   PayloadLogSequence: Integer;
   StateLogSequence: Integer;
+  PreviousManifestHash: String;
+
+function GetVerifiedSetupHelper(): String;
+begin
+  Result := ExpandConstant('{tmp}\SteamSentinel.SetupHelper.exe');
+  if not FileExists(Result) then
+    ExtractTemporaryFile('SteamSentinel.SetupHelper.exe');
+  if CompareText(GetSHA256OfFile(Result), '{#SetupHelperHash}') <> 0 then
+    RaiseException(CustomMessage('PayloadComponentInvalid'));
+end;
 
 procedure CheckInstallPayload(const Mode: String);
 var
-  ScriptPath, SourceFile, ManifestPath, LogPath, Details: String;
+  HelperPath, ManifestPath, PrevSnapshotPath, LogPath, Params, Details: String;
   Lines: TArrayOfString;
   ResultCode, I: Integer;
 begin
-  ExtractTemporaryFile('Maintain-InstallPayload.ps1');
-  ExtractTemporaryFile('PayloadMaintenance.cs');
-  ExtractTemporaryFile('incoming-payload-sha256.txt');
-  ScriptPath := ExpandConstant('{tmp}\Maintain-InstallPayload.ps1');
-  SourceFile := ExpandConstant('{tmp}\PayloadMaintenance.cs');
+  HelperPath := GetVerifiedSetupHelper();
   ManifestPath := ExpandConstant('{tmp}\incoming-payload-sha256.txt');
-  if (CompareText(GetSHA256OfFile(ScriptPath), '{#PayloadScriptHash}') <> 0) or
-     (CompareText(GetSHA256OfFile(SourceFile), '{#PayloadSourceHash}') <> 0) or
-     (CompareText(GetSHA256OfFile(ManifestPath), '{#IncomingManifestHash}') <> 0) then
+  if not FileExists(ManifestPath) then
+    ExtractTemporaryFile('incoming-payload-sha256.txt');
+  if CompareText(GetSHA256OfFile(ManifestPath), '{#IncomingManifestHash}') <> 0 then
     RaiseException(CustomMessage('PayloadComponentInvalid'));
   PayloadLogSequence := PayloadLogSequence + 1;
   LogPath := ExpandConstant('{tmp}\payload-maintenance-') + Mode + '-' + IntToStr(PayloadLogSequence) + '.log';
-  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath +
-    '" -Mode ' + Mode + ' -IncomingManifestPath "' + ManifestPath +
-    '" -ExpectedManifestSha256 {#IncomingManifestHash} -ExpectedSourceSha256 {#PayloadSourceHash}' +
-    ' -LogPath "' + LogPath + '" -Language ' + ActiveLanguage,
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  PrevSnapshotPath := ExpandConstant('{tmp}\previous-payload-sha256.txt');
+  Params := 'payload --mode ' + Mode +
+    ' --manifest "' + ManifestPath + '"' +
+    ' --manifest-sha256 {#IncomingManifestHash}' +
+    ' --log "' + LogPath + '"' +
+    ' --lang ' + ActiveLanguage;
+  if Mode = 'Preflight' then
+  begin
+    PreviousManifestHash := '';
+    DeleteFile(PrevSnapshotPath);
+    Params := Params + ' --snapshot-previous-manifest "' + PrevSnapshotPath + '"';
+  end
+  else if ((Mode = 'Retire') or (Mode = 'RetireAndVerify')) and (PreviousManifestHash <> '') then
+  begin
+    if not FileExists(PrevSnapshotPath) or
+       (CompareText(GetSHA256OfFile(PrevSnapshotPath), PreviousManifestHash) <> 0) then
+      RaiseException(CustomMessage('PayloadComponentInvalid'));
+    Params := Params + ' --previous-manifest "' + PrevSnapshotPath + '" --previous-manifest-sha256 ' + PreviousManifestHash;
+  end;
+  if not Exec(HelperPath, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     RaiseException(CustomMessage('PayloadCheckFailed'));
+  if (Mode = 'Preflight') and (ResultCode = 0) and FileExists(PrevSnapshotPath) then
+    PreviousManifestHash := GetSHA256OfFile(PrevSnapshotPath);
   if not LoadStringsFromFile(LogPath, Lines) then
     RaiseException(CustomMessage('PayloadLogMissing'));
   Details := '';
@@ -209,26 +226,20 @@ end;
 
 function RunMachineState(const Mode, Purpose: String; var MigrationRequired: Boolean): String;
 var
-  ScriptPath, SourcePath, JsonPath, DisplayPath, Details: String;
+  HelperPath, JsonPath, DisplayPath, Details, Params: String;
   Lines, JsonLines: TArrayOfString;
   ResultCode, I: Integer;
 begin
   MigrationRequired := False;
-  ExtractTemporaryFile('Initialize-MachineState.ps1');
-  ExtractTemporaryFile('MachineStateBootstrap.cs');
-  ScriptPath := ExpandConstant('{tmp}\Initialize-MachineState.ps1');
-  SourcePath := ExpandConstant('{tmp}\MachineStateBootstrap.cs');
-  if (CompareText(GetSHA256OfFile(ScriptPath), '{#MachineStateScriptHash}') <> 0) or
-     (CompareText(GetSHA256OfFile(SourcePath), '{#MachineStateSourceHash}') <> 0) then
-    RaiseException(CustomMessage('StateScriptInvalid'));
+  HelperPath := GetVerifiedSetupHelper();
   StateLogSequence := StateLogSequence + 1;
   JsonPath := ExpandConstant('{tmp}\machine-state-') + Mode + '-' + IntToStr(StateLogSequence) + '.json';
   DisplayPath := ExpandConstant('{tmp}\machine-state-') + Mode + '-' + IntToStr(StateLogSequence) + '.txt';
-  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath +
-    '" -Mode ' + Mode + ' -ExpectedSourceSha256 {#MachineStateSourceHash}' +
-    ' -LogPath "' + JsonPath + '" -DisplayLogPath "' + DisplayPath + '" -Language ' + ActiveLanguage,
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  Params := 'state --mode ' + Mode +
+    ' --log "' + JsonPath + '"' +
+    ' --display-log "' + DisplayPath + '"' +
+    ' --lang ' + ActiveLanguage;
+  if not Exec(HelperPath, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     RaiseException(FmtMessage(CustomMessage('SystemToolStartFailed'), [Purpose]));
   if not LoadStringsFromFile(DisplayPath, Lines) then
     RaiseException(CustomMessage('StateLogMissing'));
@@ -318,73 +329,32 @@ begin
   end;
 end;
 
-procedure RemoveFirewallRuleIfPresent(const RuleName: String);
-var
-  ResultCode: Integer;
-begin
-  if not Exec(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall show rule name="' + RuleName + '"', '', SW_HIDE,
-    ewWaitUntilTerminated, ResultCode) then
-    RaiseException(CustomMessage('FirewallReadFailed'));
-  if ResultCode = 0 then
-    RunRequiredHidden(ExpandConstant('{sys}\netsh.exe'),
-      'advfirewall firewall delete rule name="' + RuleName + '"', CustomMessage('RemoveWorkerRule'));
-end;
-
-procedure AddAndVerifyFirewallRule(const RuleName, Direction, WorkerPath: String);
-var
-  ResultCode: Integer;
-begin
-  RunRequiredHidden(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall add rule name="' + RuleName + '" dir=' + Direction +
-    ' action=block enable=yes profile=any program="' + WorkerPath + '"',
-    FmtMessage(CustomMessage('AddWorkerRule'), [Direction]));
-  if not Exec(ExpandConstant('{sys}\netsh.exe'),
-    'advfirewall firewall show rule name="' + RuleName + '"', '', SW_HIDE,
-    ewWaitUntilTerminated, ResultCode) then
-    RaiseException(CustomMessage('FirewallVerifyStartFailed'));
-  if ResultCode <> 0 then
-    RaiseException(CustomMessage('FirewallVerifyFailed'));
-end;
-
 procedure ConfigureWorkerFirewall;
 var
-  WorkerPath, StandardPath, CompatPath, VerifyScript: String;
+  WorkerPath, StandardPath, CompatPath: String;
 begin
   WorkerPath := ExpandConstant('{app}\SteamSentinel.ArchiveWorker.exe');
   StandardPath := ExpandConstant('{app}\SteamSentinel.ArchiveWorker.Standard.exe');
   CompatPath := ExpandConstant('{app}\SteamSentinel.ArchiveWorker.Compat.exe');
   if not FileExists(WorkerPath) or not FileExists(StandardPath) or not FileExists(CompatPath) then
     RaiseException(CustomMessage('WorkerMissing'));
-  RemoveFirewallRuleIfPresent('{#WorkerRuleOut}');
-  RemoveFirewallRuleIfPresent('{#WorkerRuleIn}');
-  AddAndVerifyFirewallRule('{#WorkerRuleOut}', 'out', WorkerPath);
-  AddAndVerifyFirewallRule('{#WorkerRuleIn}', 'in', WorkerPath);
-  RemoveFirewallRuleIfPresent('{#WorkerStandardRuleOut}');
-  RemoveFirewallRuleIfPresent('{#WorkerStandardRuleIn}');
-  AddAndVerifyFirewallRule('{#WorkerStandardRuleOut}', 'out', StandardPath);
-  AddAndVerifyFirewallRule('{#WorkerStandardRuleIn}', 'in', StandardPath);
-  RemoveFirewallRuleIfPresent('{#WorkerCompatRuleOut}');
-  RemoveFirewallRuleIfPresent('{#WorkerCompatRuleIn}');
-  AddAndVerifyFirewallRule('{#WorkerCompatRuleOut}', 'out', CompatPath);
-  AddAndVerifyFirewallRule('{#WorkerCompatRuleIn}', 'in', CompatPath);
-  ExtractTemporaryFile('Verify-WorkerFirewall.ps1');
-  VerifyScript := ExpandConstant('{tmp}\Verify-WorkerFirewall.ps1');
-  if CompareText(GetSHA256OfFile(VerifyScript), '{#WorkerFirewallScriptHash}') <> 0 then
-    RaiseException(CustomMessage('PayloadComponentInvalid'));
-  RunRequiredHidden(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + VerifyScript +
-    '" -InstallRoot "' + ExpandConstant('{app}') + '"', CustomMessage('FirewallVerifyFailed'));
+  RunRequiredHidden(
+    GetVerifiedSetupHelper(),
+    'firewall --install-root "' + ExpandConstant('{app}') + '" --action sync',
+    CustomMessage('FirewallVerifyFailed'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    CheckInstallPayload('Retire');
-    CheckInstallPayload('Verify');
+    CheckInstallPayload('RetireAndVerify');
     CheckMachineState('Verify', CustomMessage('StateVerification'));
-    ConfigureWorkerFirewall;
+    try
+      ConfigureWorkerFirewall;
+    except
+      Log('Optional ArchiveWorker firewall rules were skipped: ' + GetExceptionMessage);
+    end;
   end;
 end;
 

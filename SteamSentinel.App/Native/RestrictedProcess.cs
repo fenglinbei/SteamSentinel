@@ -1,6 +1,7 @@
 using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
@@ -8,16 +9,26 @@ namespace SteamSentinel.App.Native;
 
 internal sealed class RestrictedProcess : IDisposable
 {
+    // READ_CONTROL (0x00020000) | DESKTOP_WRITEOBJECTS (0x0080) | DESKTOP_CREATEWINDOW (0x0002) | DESKTOP_READOBJECTS (0x0001)
+    // 刻意排除 DESKTOP_SWITCHDESKTOP、DESKTOP_HOOKCONTROL、DESKTOP_JOURNALRECORD、DESKTOP_JOURNALPLAYBACK、DESKTOP_CREATEMENU、DESKTOP_ENUMERATE、WRITE_DAC、WRITE_OWNER、DELETE
+    internal const uint IsolatedDesktopAccess = 0x00020083;
+    private const int UoiName = 2;
+
     private readonly SafeKernelHandle _processHandle;
+    private readonly SafeDesktopHandle? _desktopHandle;
     private bool _disposed;
 
     private RestrictedProcess(
         SafeKernelHandle processHandle,
+        SafeDesktopHandle? desktopHandle,
+        string? isolatedDesktopName,
         StreamWriter standardInput,
         StreamReader standardOutput,
         StreamReader standardError)
     {
         _processHandle = processHandle;
+        _desktopHandle = desktopHandle;
+        IsolatedDesktopName = isolatedDesktopName;
         StandardInput = standardInput;
         StandardOutput = standardOutput;
         StandardError = standardError;
@@ -26,6 +37,7 @@ internal sealed class RestrictedProcess : IDisposable
     public StreamWriter StandardInput { get; }
     public StreamReader StandardOutput { get; }
     public StreamReader StandardError { get; }
+    internal string? IsolatedDesktopName { get; }
     public bool HasExited => WaitForSingleObject(_processHandle, 0) switch
     {
         0 => true,
@@ -59,6 +71,7 @@ internal sealed class RestrictedProcess : IDisposable
 
         SafeKernelHandle? processHandle = null;
         SafeKernelHandle? threadHandle = null;
+        SafeDesktopHandle? desktopHandle = null;
         IntPtr environment = IntPtr.Zero;
         IntPtr attributes = IntPtr.Zero, inheritedHandles = IntPtr.Zero;
         bool attributesInitialized = false;
@@ -68,6 +81,7 @@ internal sealed class RestrictedProcess : IDisposable
             CreatePipePair(inheritable, childReads: false, out childStdout, out parentStdout);
             CreatePipePair(inheritable, childReads: false, out childStderr, out parentStderr);
             using SafeAccessTokenHandle restrictedToken = CreateLowIntegrityToken();
+            _ = TryCreateIsolatedDesktop(restrictedToken, out desktopHandle, out string? isolatedDesktopName);
             environment = BuildEnvironmentBlock(fullWorkingDirectory);
             nuint attributeBytes = 0;
             InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeBytes);
@@ -88,6 +102,7 @@ internal sealed class RestrictedProcess : IDisposable
                 Info = new StartupInfo
                 {
                     Size = Marshal.SizeOf<StartupInfoEx>(),
+                    Desktop = isolatedDesktopName,
                     Flags = StartfUseStdHandles,
                     StandardInput = childStdin.DangerousGetHandle(),
                     StandardOutput = childStdout.DangerousGetHandle(),
@@ -135,8 +150,9 @@ internal sealed class RestrictedProcess : IDisposable
             StreamWriter input = new(stdinStream, new UTF8Encoding(false)) { AutoFlush = false };
             StreamReader output = new(stdoutStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             StreamReader errorReader = new(stderrStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            RestrictedProcess result = new(processHandle, input, output, errorReader);
+            RestrictedProcess result = new(processHandle, desktopHandle, isolatedDesktopName, input, output, errorReader);
             processHandle = null; // Ownership transfers only after all streams are ready.
+            desktopHandle = null;
             return result;
         }
         catch
@@ -151,6 +167,7 @@ internal sealed class RestrictedProcess : IDisposable
             parentStderr?.Dispose();
             processHandle?.Dispose();
             threadHandle?.Dispose();
+            desktopHandle?.Dispose();
             throw;
         }
         finally
@@ -179,10 +196,16 @@ internal sealed class RestrictedProcess : IDisposable
         if (_disposed) return;
         _disposed = true;
         try { Kill(); } catch { }
+        // 等待被终止的子进程完成内核对象清理并释放隔离桌面引用，防止关闭桌面时产生竞争
+        if (!_processHandle.IsInvalid)
+        {
+            try { _ = WaitForSingleObject(_processHandle, 200); } catch { }
+        }
         StandardInput.Dispose();
         StandardOutput.Dispose();
         StandardError.Dispose();
         _processHandle.Dispose();
+        _desktopHandle?.Dispose();
     }
 
     private static void CreatePipePair(
@@ -271,6 +294,81 @@ internal sealed class RestrictedProcess : IDisposable
         }
     }
 
+    /// <summary>
+    /// 构造带受保护 DACL（D:P）与 Low 强制标签（S:(ML;;NW;;;LW)）的隔离桌面 SDDL。
+    /// 仅授予受限 Worker 用户最小桌面权限与 SYSTEM 完全访问权限。
+    /// </summary>
+    internal static string BuildIsolatedDesktopSddl(SecurityIdentifier user)
+    {
+        if (user.IsWellKnown(WellKnownSidType.LocalSystemSid))
+            return "D:P(A;;GA;;;SY)S:(ML;;NW;;;LW)";
+        return $"D:P(A;;0x{IsolatedDesktopAccess:X8};;;{user.Value})(A;;GA;;;SY)S:(ML;;NW;;;LW)";
+    }
+
+    /// <summary>
+    /// 为受限子进程创建不可见的 Low Integrity 专属隔离桌面；若当前会话禁止创建桌面则优雅回退。
+    /// </summary>
+    private static bool TryCreateIsolatedDesktop(
+        SafeAccessTokenHandle restrictedToken,
+        out SafeDesktopHandle? desktopHandle,
+        out string? desktopPath)
+    {
+        desktopHandle = null;
+        desktopPath = null;
+        try
+        {
+            IntPtr windowStation = GetProcessWindowStation();
+            if (windowStation == IntPtr.Zero) return false;
+
+            _ = GetUserObjectInformation(windowStation, UoiName, null, 0, out uint needed);
+            if (needed is < 2 or > 4096) return false;
+            byte[] nameBuffer = new byte[needed];
+            if (!GetUserObjectInformation(windowStation, UoiName, nameBuffer, needed, out _)) return false;
+
+            string windowStationName = Encoding.Unicode.GetString(nameBuffer).TrimEnd('\0');
+            if (string.IsNullOrWhiteSpace(windowStationName) ||
+                windowStationName.Contains('\\') ||
+                windowStationName.Contains('\0'))
+            {
+                return false;
+            }
+
+            SecurityIdentifier user = RestrictedTokenSecurity.GetTokenUser(restrictedToken);
+            string sddl = BuildIsolatedDesktopSddl(user);
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out IntPtr securityDescriptor, out _))
+                return false;
+
+            try
+            {
+                SecurityAttributes desktopAttributes = new()
+                {
+                    Length = Marshal.SizeOf<SecurityAttributes>(),
+                    SecurityDescriptor = securityDescriptor,
+                    // 绝不将父进程桌面的顶层句柄继承给 Low Integrity 子进程
+                    InheritHandle = false
+                };
+                string desktopName = "SteamSentinelWkr_" + Guid.NewGuid().ToString("N")[..16];
+                IntPtr rawDesktop = CreateDesktop(desktopName, null, IntPtr.Zero, 0, IsolatedDesktopAccess, ref desktopAttributes);
+                if (rawDesktop == IntPtr.Zero) return false;
+
+                desktopHandle = new SafeDesktopHandle(rawDesktop, ownsHandle: true);
+                desktopPath = $"{windowStationName}\\{desktopName}";
+                return true;
+            }
+            finally
+            {
+                LocalFree(securityDescriptor);
+            }
+        }
+        catch
+        {
+            desktopHandle?.Dispose();
+            desktopHandle = null;
+            desktopPath = null;
+            return false;
+        }
+    }
+
     private static IntPtr BuildEnvironmentBlock(string temporaryDirectory)
     {
         Dictionary<string, string> values = new(StringComparer.OrdinalIgnoreCase)
@@ -345,7 +443,7 @@ internal sealed class RestrictedProcess : IDisposable
         public IntPtr StandardError;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct StartupInfoEx
     {
         public StartupInfo Info;
@@ -381,6 +479,47 @@ internal sealed class RestrictedProcess : IDisposable
             SetHandle(preexistingHandle);
         protected override bool ReleaseHandle() => CloseHandle(handle);
     }
+
+    private sealed class SafeDesktopHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        public SafeDesktopHandle() : base(true) { }
+        public SafeDesktopHandle(IntPtr preexistingHandle, bool ownsHandle) : base(ownsHandle) =>
+            SetHandle(preexistingHandle);
+        protected override bool ReleaseHandle() => CloseDesktop(handle);
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetProcessWindowStation();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetUserObjectInformation(
+        IntPtr objectHandle,
+        int index,
+        [Out] byte[]? info,
+        uint length,
+        out uint lengthNeeded);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateDesktop(
+        string desktop,
+        string? device,
+        IntPtr devmode,
+        uint flags,
+        uint desiredAccess,
+        ref SecurityAttributes securityAttributes);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseDesktop(IntPtr desktop);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(
+        string stringSecurityDescriptor,
+        uint stringSdRevision,
+        out IntPtr securityDescriptor,
+        out uint securityDescriptorSize);
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetCurrentProcess();

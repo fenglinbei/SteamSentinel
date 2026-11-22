@@ -12,9 +12,9 @@ public interface IRemediationStateProbe
 public sealed class RemediationVerification(IRemediationStateProbe probe)
 {
     public const int MaximumMessageCharacters = 512;
-    public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(4);
+    public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan FirewallProbeTimeout = TimeSpan.FromSeconds(15);
-    public static readonly TimeSpan SecondPassBudget = TimeSpan.FromSeconds(20);
+    public static readonly TimeSpan SecondPassBudget = TimeSpan.FromSeconds(45);
 
     public static TimeSpan GetProbeTimeout(RemediationActionType type) =>
         type == RemediationActionType.AddProgramFirewallBlock ? FirewallProbeTimeout : ProbeTimeout;

@@ -140,42 +140,93 @@ static class HostBuilder
         if (Cet(path) != expected) throw new InvalidDataException($"Unexpected CET_COMPAT value for {path}; expected {expected}.");
     }
 
+    static void RequireOnlyKernel32Imports(string path)
+    {
+        byte[] data = File.ReadAllBytes(path);
+        if (data.Length < 64 || BitConverter.ToUInt16(data, 0) != 0x5A4D) throw new InvalidDataException("Invalid DOS header: " + path);
+        int pe = BitConverter.ToInt32(data, 60);
+        if (pe < 64 || pe > data.Length - 264 || BitConverter.ToUInt32(data, pe) != 0x4550 ||
+            BitConverter.ToUInt16(data, pe + 4) != 0x8664 || BitConverter.ToUInt16(data, pe + 24) != 0x020B)
+            throw new InvalidDataException("Expected a Windows x64 PE32+ host: " + path);
+        int optional = pe + 24;
+        if (BitConverter.ToUInt16(data, optional + 68) != 3)
+            throw new InvalidDataException("Worker host must use console subsystem: " + path);
+        if (BitConverter.ToUInt32(data, optional + 108) < 14)
+            throw new InvalidDataException("Unexpected PE data directory count: " + path);
+        uint importRva = BitConverter.ToUInt32(data, optional + 112 + 1 * 8);
+        uint importSize = BitConverter.ToUInt32(data, optional + 112 + 1 * 8 + 4);
+        if (importRva == 0 || importSize < 20)
+            throw new InvalidDataException("Missing PE import directory: " + path);
+        int importOffset = Rva(data, pe, importRva, 20);
+        int count = 0;
+        for (int pos = importOffset; pos + 20 <= data.Length; pos += 20)
+        {
+            uint ilt = BitConverter.ToUInt32(data, pos);
+            uint ts = BitConverter.ToUInt32(data, pos + 4);
+            uint fwd = BitConverter.ToUInt32(data, pos + 8);
+            uint nameRva = BitConverter.ToUInt32(data, pos + 12);
+            uint iat = BitConverter.ToUInt32(data, pos + 16);
+            if (ilt == 0 && ts == 0 && fwd == 0 && nameRva == 0 && iat == 0) break;
+            if (nameRva == 0) break;
+            int nameOff = Rva(data, pe, nameRva, 1);
+            int end = nameOff;
+            while (end < data.Length && end - nameOff < 260 && data[end] != 0) end++;
+            string dll = System.Text.Encoding.ASCII.GetString(data, nameOff, end - nameOff);
+            if (!String.Equals(dll, "KERNEL32.dll", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"Worker host contains forbidden PE import '{dll}': {path}");
+            count++;
+        }
+        if (count == 0) throw new InvalidDataException("Worker host imports list is empty: " + path);
+        if (BitConverter.ToUInt32(data, optional + 112 + 13 * 8) != 0)
+            throw new InvalidDataException("Worker host must not have delay-load imports: " + path);
+    }
+
     static void Main(string[] args)
     {
         if (args.Length != 4) throw new ArgumentException("Expected mode, template, payload and output manifest.");
         string template = args[1], root = args[2];
-        string[] roles = ["SteamSentinel", "SteamSentinel.Broker", "SteamSentinel.ArchiveWorker"];
+        string[] apphostRoles = ["SteamSentinel", "SteamSentinel.Broker"];
+        string[] allRoles = ["SteamSentinel", "SteamSentinel.Broker", "SteamSentinel.ArchiveWorker"];
         if (args[0] == "generate")
         {
             RequireCet(template, true);
-            foreach (string role in roles)
+            foreach (string role in apphostRoles)
                 foreach (bool compat in new[] { false, true })
                 {
                     string destination = Path.Combine(root, role + (compat ? ".Compat.exe" : ".Standard.exe"));
                     HostWriter.CreateAppHost(template, destination, role + ".dll",
-                        windowsGraphicalUserInterface: role != "SteamSentinel.ArchiveWorker",
+                        windowsGraphicalUserInterface: true,
                         assemblyToCopyResourcesFrom: Path.Combine(root, role + ".dll"), disableCetCompat: compat);
                     RequireCet(destination, !compat);
                 }
-            File.Copy(Path.Combine(root, "SteamSentinel.ArchiveWorker.Standard.exe"), Path.Combine(root, "SteamSentinel.ArchiveWorker.exe"), true);
+            return;
         }
         else if (args[0] != "verify") throw new ArgumentException("Unknown host-builder mode.");
         List<object> hosts = [];
-        foreach (string role in roles)
+        foreach (string role in allRoles)
             foreach (bool compat in new[] { false, true })
             {
                 string file = role + (compat ? ".Compat.exe" : ".Standard.exe");
-                RequireCet(Path.Combine(root, file), !compat);
-                hosts.Add(new { path = file, managedDll = role + ".dll", cetCompat = !compat, kind = "managed-apphost" });
+                string fullPath = Path.Combine(root, file);
+                RequireCet(fullPath, !compat);
+                if (role == "SteamSentinel.ArchiveWorker") RequireOnlyKernel32Imports(fullPath);
+                hosts.Add(new
+                {
+                    path = file,
+                    managedDll = role + ".dll",
+                    cetCompat = !compat,
+                    kind = role == "SteamSentinel.ArchiveWorker" ? "native-worker-host" : "managed-apphost"
+                });
             }
-        RequireCet(Path.Combine(root, "SteamSentinel.ArchiveWorker.exe"), true);
+        string legacyWorker = Path.Combine(root, "SteamSentinel.ArchiveWorker.exe");
+        RequireCet(legacyWorker, true);
+        RequireOnlyKernel32Imports(legacyWorker);
         hosts.Add(new { path = "SteamSentinel.ArchiveWorker.exe", managedDll = "SteamSentinel.ArchiveWorker.dll", cetCompat = true, kind = "legacy-standard-alias" });
-        if (args[0] == "verify")
-            foreach (string file in new[] { "SteamSentinel.exe", "SteamSentinel.Broker.exe" })
-            {
-                RequireCet(Path.Combine(root, file), false);
-                hosts.Add(new { path = file, managedDll = (string?)null, cetCompat = false, kind = "native-launcher" });
-            }
+        foreach (string file in new[] { "SteamSentinel.exe", "SteamSentinel.Broker.exe" })
+        {
+            RequireCet(Path.Combine(root, file), false);
+            hosts.Add(new { path = file, managedDll = (string?)null, cetCompat = false, kind = "native-launcher" });
+        }
         File.WriteAllText(args[3], JsonSerializer.Serialize(hosts, new JsonSerializerOptions { WriteIndented = true }));
     }
 }
@@ -189,10 +240,24 @@ Invoke-BuildDotNet build $helperProject '-c' 'Release' '--nologo' '--no-restore'
     '-p:ImportDirectoryBuildProps=false' '-p:ImportDirectoryBuildTargets=false'
 Invoke-BuildDotNet $helperDll 'generate' $template $PublishRoot $hostManifestPath
 
+$workerHostScript = Join-Path $SourceRoot 'scripts\build-worker-host.ps1'
+$workerHostSource = Join-Path $SourceRoot 'native\SteamSentinel.WorkerHost.cpp'
+$workerHostManifest = Join-Path $SourceRoot 'native\SteamSentinel.WorkerHost.manifest'
+& $workerHostScript -SourcePath $workerHostSource -OutputPath (Join-Path $PublishRoot 'SteamSentinel.ArchiveWorker.Standard.exe') `
+    -BuildDirectory (Join-Path $BuildRoot 'worker-standard') -Version $Version -BuildIdentity $BuildIdentity `
+    -OriginalFilename 'SteamSentinel.ArchiveWorker.Standard.exe' -CetCompat $true -SelfContainedOnly $true -ManifestPath $workerHostManifest
+& $workerHostScript -SourcePath $workerHostSource -OutputPath (Join-Path $PublishRoot 'SteamSentinel.ArchiveWorker.Compat.exe') `
+    -BuildDirectory (Join-Path $BuildRoot 'worker-compat') -Version $Version -BuildIdentity $BuildIdentity `
+    -OriginalFilename 'SteamSentinel.ArchiveWorker.Compat.exe' -CetCompat $false -SelfContainedOnly $true -ManifestPath $workerHostManifest
+Copy-Item -LiteralPath (Join-Path $PublishRoot 'SteamSentinel.ArchiveWorker.Standard.exe') -Destination (Join-Path $PublishRoot 'SteamSentinel.ArchiveWorker.exe') -Force
+
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) { throw 'Visual Studio C++ Build Tools (vswhere) are required.' }
-$visualStudio = (& $vswhere '-latest' '-products' '*' '-requires' 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' '-property' 'installationPath' | Select-Object -First 1)
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($visualStudio)) { throw 'An x64 Visual C++ toolchain was not found.' }
+# 先等待 vswhere.exe 完整退出再筛选，避免 Select-Object -First 1 提前中止管道导致 $LASTEXITCODE = -1
+$vsCandidates = @(& $vswhere '-latest' '-products' '*' '-requires' 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' '-property' 'installationPath')
+if ($LASTEXITCODE -ne 0) { throw 'An x64 Visual C++ toolchain was not found.' }
+$visualStudio = $vsCandidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+if ([string]::IsNullOrWhiteSpace($visualStudio)) { throw 'An x64 Visual C++ toolchain was not found.' }
 $vcvars = Join-Path $visualStudio 'VC\Auxiliary\Build\vcvars64.bat'
 $nativeSource = Join-Path $SourceRoot 'native\SteamSentinel.Launcher.cpp'
 $icon = (Join-Path $SourceRoot 'SteamSentinel.App\Assets\App.ico').Replace('\', '\\')
@@ -254,7 +319,7 @@ foreach ($file in @('SteamSentinel.exe', 'SteamSentinel.Broker.exe')) {
     Copy-Item -LiteralPath $nativeExe -Destination (Join-Path $PublishRoot $file) -Force
 }
 Invoke-BuildDotNet $helperDll 'verify' $template $PublishRoot $hostManifestPath
-$hosts = @(Get-Content -LiteralPath $hostManifestPath -Raw | ConvertFrom-Json)
+$hosts = @((Get-Content -LiteralPath $hostManifestPath -Raw | ConvertFrom-Json))
 if ($hosts.Count -ne 9) { throw 'Unified startup must contain exactly nine verified executable entries.' }
 [pscustomobject][ordered]@{
     schema = 'SteamSentinel.UnifiedStartup/1'

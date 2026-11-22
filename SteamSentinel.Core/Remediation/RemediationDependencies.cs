@@ -40,14 +40,14 @@ public static class RemediationDependencies
 
     public static IReadOnlyDictionary<Guid, HashSet<Guid>> Build(IReadOnlyList<RemediationAction> actions, bool requireOrder = true)
     {
-        if (actions.Count > 64 || actions.Any(a => a is null || a.ActionId == Guid.Empty) ||
+        if (actions.Count > RemediationLimits.MaximumActionsPerPlan || actions.Any(a => a is null || a.ActionId == Guid.Empty) ||
             actions.Select(a => a.ActionId).Distinct().Count() != actions.Count)
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.Build.01"), sourceText => new InvalidDataException(sourceText));
         Dictionary<Guid, int> indices = actions.Select((a, i) => (a.ActionId, i)).ToDictionary(x => x.ActionId, x => x.i);
         Dictionary<Guid, HashSet<Guid>> result = actions.ToDictionary(a => a.ActionId, _ => new HashSet<Guid>());
         foreach (RemediationAction action in actions)
         {
-            if (action.ChainId == Guid.Empty || action.DependsOnActionIds is null || action.DependsOnActionIds.Count > 63 ||
+            if (action.ChainId == Guid.Empty || action.DependsOnActionIds is null || action.DependsOnActionIds.Count > RemediationLimits.MaximumDependenciesPerAction ||
                 action.DependsOnActionIds.Distinct().Count() != action.DependsOnActionIds.Count)
                 throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.Build.02"), sourceText => new InvalidDataException(sourceText));
             foreach (Guid dependency in action.DependsOnActionIds)
@@ -59,12 +59,14 @@ public static class RemediationDependencies
         }
         foreach (List<RemediationAction> group in Groups(actions))
             foreach (RemediationAction action in group)
-                foreach (RemediationAction predecessor in group.Where(a => Phase(a) < Phase(action)))
+                foreach (RemediationAction predecessor in group.Where(a =>
+                    a.Type != RemediationActionType.AddProgramFirewallBlock && Phase(a) < Phase(action)))
                     result[action.ActionId].Add(predecessor.ActionId);
         // Reconstruct source-cleanup dependencies independently of request chain labels.
         HashSet<string> sourceHashes = SteamScriptRepairTarget.SourceHashes(RuleLoader.LoadEmbedded());
         foreach (RemediationAction repair in actions.Where(action => action.Type == RemediationActionType.RepairSteamScript))
-            foreach (RemediationAction source in actions.Where(action => action.Type != RemediationActionType.RepairSteamScript &&
+            foreach (RemediationAction source in actions.Where(action =>
+                action.Type is not (RemediationActionType.RepairSteamScript or RemediationActionType.AddProgramFirewallBlock) &&
                 (sourceHashes.Contains(action.ExpectedSha256 ?? string.Empty) || sourceHashes.Contains(action.RelatedFileSha256 ?? string.Empty))))
                 result[repair.ActionId].Add(source.ActionId);
         HashSet<Guid> active = [], done = [];
@@ -165,7 +167,7 @@ public static class RemediationDependencies
 
     public static IReadOnlyList<QuarantineRecord> RollbackOrder(QuarantineManifest manifest)
     {
-        if (manifest.ActionOrder is null || manifest.ActionOrder.Count > 64 ||
+        if (manifest.ActionOrder is null || manifest.ActionOrder.Count > RemediationLimits.MaximumActionsPerPlan ||
             manifest.ActionOrder.Any(id => id == Guid.Empty) || manifest.ActionOrder.Distinct().Count() != manifest.ActionOrder.Count)
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationDependencies.RollbackOrder.01"), sourceText => new InvalidDataException(sourceText));
         if (manifest.ActionOrder.Count == 0)

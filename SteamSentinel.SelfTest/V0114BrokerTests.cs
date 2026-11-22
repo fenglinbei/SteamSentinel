@@ -3,8 +3,10 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using SteamSentinel.App.Services;
 using SteamSentinel.Broker;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
@@ -71,7 +73,7 @@ internal static partial class Program
             return new() { Status = RemediationVerificationStatus.Verified };
         }));
         await timeout.ObserveAsync(file, timed, 1);
-        Check("v0.1.14 只读探测在固定期限内终止为未知", timed.VerificationStatus == RemediationVerificationStatus.Unknown && timer.Elapsed < TimeSpan.FromSeconds(7));
+        Check("v0.1.14 只读探测在固定期限内终止为未知", timed.VerificationStatus == RemediationVerificationStatus.Unknown && timer.Elapsed < TimeSpan.FromSeconds(13));
 
         DateTimeOffset started = DateTimeOffset.UtcNow.AddMinutes(-2);
         Check("v0.1.14 PID 复用不误判原进程仍运行", WindowsRemediationStateProbe.AssessProcessIdentity(started, started.AddMinutes(1), true).Status == RemediationVerificationStatus.NoResidual);
@@ -233,8 +235,126 @@ internal static partial class Program
         string[] nativeEntries = typeof(FileOccupancy).GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
             .Select(method => method.GetCustomAttribute<DllImportAttribute>()?.EntryPoint).OfType<string>().ToArray();
         Check("v0.1.14 Restart Manager 只含会话与查询 API", nativeEntries.Length == 4 && nativeEntries.All(name => name is "RmStartSession" or "RmRegisterResources" or "RmGetList" or "RmEndSession"));
+        await TestP1BBrokerFunnelAsync(folder);
 
         string cleanPathForMismatch() => Path.Combine(folder, "different-module.dll");
+    }
+
+    private static async Task TestP1BBrokerFunnelAsync(string folder)
+    {
+        string currentSid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("Current SID unavailable.");
+        Guid chainId = Guid.NewGuid();
+        List<RemediationAction> actions256 = Enumerable.Range(0, RemediationLimits.MaximumActionsPerPlan)
+            .Select(index => new RemediationAction
+            {
+                ChainId = chainId,
+                Type = RemediationActionType.QuarantineFile,
+                Target = Path.Combine(folder, $"p1b-action-{index:D3}.inert"),
+                ExpectedSha256 = new string('1', 64)
+            }).ToList();
+        RemediationPlan plan256 = new() { RequestedBySid = currentSid, Actions = actions256 };
+        IReadOnlyDictionary<Guid, HashSet<Guid>> deps256 = RemediationDependencies.Build(plan256.Actions);
+        string identity256 = RemediationPlanIdentity.Fingerprint(plan256);
+        RemediationRunResult result256 = new()
+        {
+            PlanId = plan256.PlanId,
+            PlanIdentitySha256 = identity256,
+            Success = true,
+            Disposition = RemediationRunDisposition.Completed,
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+            Actions = actions256.Select(action => new RemediationActionResult
+            {
+                ActionId = action.ActionId,
+                Type = action.Type,
+                Target = action.Target,
+                Success = true,
+                ExecutionStatus = RemediationExecutionStatus.Succeeded,
+                VerificationStatus = RemediationVerificationStatus.NoResidual
+            }).ToList()
+        };
+        ProtectedRemediationResultReader.Validate(plan256, result256);
+        RemediationClient restoreClient = new((_, _) => Task.FromResult<RemediationRunResult?>(null));
+        restoreClient.RestoreUnresolvedPlan(plan256);
+        Check("P1-B 256 动作计划依赖图、身份哈希、结果验证与未决恢复全链路通过",
+            deps256.Count == RemediationLimits.MaximumActionsPerPlan && Validation.IsHexSha256(identity256));
+
+        List<RemediationAction> actions257 = [.. actions256, new RemediationAction
+        {
+            ChainId = chainId,
+            Type = RemediationActionType.QuarantineFile,
+            Target = Path.Combine(folder, "p1b-action-257.inert"),
+            ExpectedSha256 = new string('1', 64)
+        }];
+        RemediationPlan plan257 = new() { RequestedBySid = currentSid, Actions = actions257 };
+        bool overDepsRejected = false, overClientRejected = false;
+        try { RemediationDependencies.Build(plan257.Actions); } catch (InvalidDataException) { overDepsRejected = true; }
+        try { restoreClient.RestoreUnresolvedPlan(plan257); } catch (InvalidDataException) { overClientRejected = true; }
+        Check("P1-B 超过 256 个动作被依赖图和客户端拒绝", overDepsRejected && overClientRejected);
+
+        string validPipe = UiApprovalProtocol.CreatePipeName();
+        Check("P1-B Broker 接受有效语言与 UI 审批管道参数组合",
+            SteamSentinel.Broker.Program.TryParseArguments(["plan", "hash", "--ui-language", "zh-Hans", UiApprovalProtocol.ApprovalPipeArgument, validPipe], out string? parsedLang, out string? parsedPipe) &&
+            parsedLang == "zh-Hans" && parsedPipe == validPipe);
+        Check("P1-B Broker 拒绝重复选项、未知参数和非法管道名",
+            !SteamSentinel.Broker.Program.TryParseArguments(["plan", "hash", UiApprovalProtocol.ApprovalPipeArgument, validPipe, UiApprovalProtocol.ApprovalPipeArgument, validPipe], out _, out _) &&
+            !SteamSentinel.Broker.Program.TryParseArguments(["plan", "hash", UiApprovalProtocol.ApprovalPipeArgument, @"..\bad-pipe"], out _, out _) &&
+            !SteamSentinel.Broker.Program.TryParseArguments(["plan", "hash", "--unknown", "value"], out _, out _));
+
+        RemediationPlan samplePlan = new()
+        {
+            RequestedBySid = currentSid,
+            Actions = [new RemediationAction { Type = RemediationActionType.QuarantineFile, Target = Path.Combine(folder, "pipe-sample.inert"), ExpectedSha256 = new string('2', 64) }]
+        };
+        string sampleIdentity = RemediationPlanIdentity.Fingerprint(samplePlan);
+        await using (UiApprovalServer oneTimeServer = new(samplePlan.PlanId, sampleIdentity))
+        {
+            bool accepted = await UiApprovalClient.TryVerifyApprovalAsync(
+                oneTimeServer.PipeName,
+                samplePlan,
+                sampleIdentity,
+                isAllowedServerForTest: (pid, path) => pid == Environment.ProcessId && !string.IsNullOrWhiteSpace(path));
+            bool replayed = await UiApprovalClient.TryVerifyApprovalAsync(
+                oneTimeServer.PipeName,
+                samplePlan,
+                sampleIdentity,
+                isAllowedServerForTest: (pid, path) => pid == Environment.ProcessId && !string.IsNullOrWhiteSpace(path));
+            Check("P1-B Named Pipe 一次性 Challenge-Response 通过且防重放", accepted && !replayed);
+        }
+
+        await using (UiApprovalServer mismatchServer = new(samplePlan.PlanId, sampleIdentity))
+        {
+            bool tampered = await UiApprovalClient.TryVerifyApprovalAsync(
+                mismatchServer.PipeName,
+                samplePlan,
+                new string('F', 64),
+                isAllowedServerForTest: (pid, _) => pid == Environment.ProcessId);
+            Check("P1-B 计划指纹不匹配时管道审批 fail-closed 回退弹窗", !tampered);
+        }
+
+        await using (UiApprovalServer nonAppServer = new(samplePlan.PlanId, sampleIdentity))
+        {
+            bool rejectedByHostPolicy = await UiApprovalClient.TryVerifyApprovalAsync(
+                nonAppServer.PipeName,
+                samplePlan,
+                sampleIdentity);
+            Check("P1-B 生产严格内核策略拒绝非 SteamSentinel UI 宿主进程", !rejectedByHostPolicy);
+        }
+
+        RemediationPlan deletePlan = new()
+        {
+            RequestedBySid = currentSid,
+            Actions = [new RemediationAction { Type = RemediationActionType.DeleteIncident, Target = Guid.NewGuid().ToString("D") }]
+        };
+        string deleteIdentity = RemediationPlanIdentity.Fingerprint(deletePlan);
+        await using (UiApprovalServer deleteServer = new(deletePlan.PlanId, deleteIdentity))
+        {
+            bool skippedDelete = await UiApprovalClient.TryVerifyApprovalAsync(
+                deleteServer.PipeName,
+                deletePlan,
+                deleteIdentity,
+                isAllowedServerForTest: (_, _) => true);
+            Check("P1-B DeleteIncident 永不通过 UI 管道跳过确认弹窗", !skippedDelete);
+        }
     }
 
     private sealed class V0114FixtureProbe(Func<RemediationAction, CancellationToken, Task<RemediationVerificationObservation>> observe) : IRemediationStateProbe

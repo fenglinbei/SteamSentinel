@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using System.Windows.Controls;
 using Microsoft.Win32.SafeHandles;
@@ -30,6 +31,38 @@ internal static partial class Program
             (a.SecurityIdentifier.Equals(user) || a.SecurityIdentifier.IsWellKnown(WellKnownSidType.LocalSystemSid))));
         RawAcl systemAcl = new(RestrictedTokenSecurity.BuildDefaultDacl(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null)), 0);
         Check("SYSTEM 身份的默认权限不重复添加同一 SID", systemAcl.Count == 1);
+
+        // 校验专属隔离桌面 SDDL 最小权限与 Low Mandatory Label
+        string desktopSddl = RestrictedProcess.BuildIsolatedDesktopSddl(user);
+        RawSecurityDescriptor desktopSd = new(desktopSddl);
+        CommonAce[] desktopAces = desktopSd.DiscretionaryAcl?.Cast<CommonAce>().ToArray() ?? [];
+        const int forbiddenDesktopMask = 0x0100 | 0x0008 | 0x00040000 | 0x00080000;
+        bool hasLowMandatoryLabel = desktopSddl.Contains("S:(ML;;NW;;;LW)", StringComparison.Ordinal) &&
+            desktopSd.SystemAcl is { Count: 1 } &&
+            desktopSd.SystemAcl[0] is CustomAce mlAce &&
+            (byte)mlAce.AceType == 0x11 &&
+            mlAce.BinaryLength >= 20;
+        if (hasLowMandatoryLabel)
+        {
+            byte[] mlBytes = new byte[desktopSd.SystemAcl![0].BinaryLength];
+            desktopSd.SystemAcl[0].GetBinaryForm(mlBytes, 0);
+            hasLowMandatoryLabel = BitConverter.ToUInt32(mlBytes, 4) == 1u &&
+                new SecurityIdentifier(mlBytes, 8).Value == "S-1-16-4096";
+        }
+        Check("隔离桌面 SDDL 采用受保护 DACL 与最小权限集",
+            desktopSd.ControlFlags.HasFlag(ControlFlags.DiscretionaryAclProtected) &&
+            desktopAces.Length == 2 &&
+            desktopAces.Any(a => a.AceQualifier == AceQualifier.AccessAllowed &&
+                a.SecurityIdentifier.Equals(user) &&
+                a.AccessMask == (int)RestrictedProcess.IsolatedDesktopAccess &&
+                (a.AccessMask & forbiddenDesktopMask) == 0) &&
+            desktopAces.Any(a => a.AceQualifier == AceQualifier.AccessAllowed &&
+                a.SecurityIdentifier.IsWellKnown(WellKnownSidType.LocalSystemSid) &&
+                a.AccessMask == 0x10000000) &&
+            hasLowMandatoryLabel);
+        RawSecurityDescriptor systemDesktopSd = new(RestrictedProcess.BuildIsolatedDesktopSddl(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null)));
+        Check("SYSTEM 身份的隔离桌面权限不重复添加同一 SID", systemDesktopSd.DiscretionaryAcl?.Count == 1);
+
         using (SafeAccessTokenHandle token = RestrictedProcess.CreateLowIntegrityToken())
         {
             Check("新扫描令牌保留 Low 且对象所有者为当前用户", TokenProbe.Sid(token, 25) == "S-1-16-4096" && TokenProbe.Sid(token, 4) == user.Value);
@@ -101,6 +134,17 @@ internal static partial class Program
             Check("环境兼容修复保留 Low、系统 PATH 和私有临时目录", values.GetProperty("integrity").GetString() == "Low" &&
                 values.GetProperty("path").GetString() == Environment.GetFolderPath(Environment.SpecialFolder.System) &&
                 values.GetProperty("temp").GetString() == environmentWorking && values.GetProperty("tmp").GetString() == environmentWorking);
+            string? isolatedDesktop = environmentWorker.IsolatedDesktopName;
+            string? childDesktop = values.TryGetProperty("desktop", out JsonElement desktopValue) ? desktopValue.GetString() : null;
+            string? parentDesktop = ReadCurrentThreadDesktopName();
+            string isolatedShortName = isolatedDesktop is not null && isolatedDesktop.Contains('\\')
+                ? isolatedDesktop[(isolatedDesktop.IndexOf('\\') + 1)..]
+                : string.Empty;
+            Check("受限子进程连接专属 Low 隔离桌面且区别于宿主桌面",
+                !string.IsNullOrEmpty(isolatedDesktop) &&
+                isolatedShortName.StartsWith("SteamSentinelWkr_", StringComparison.Ordinal) &&
+                string.Equals(childDesktop, isolatedDesktop, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(childDesktop, parentDesktop, StringComparison.OrdinalIgnoreCase));
             Check("受限环境探针正常退出", environmentWorker.ExitCode == 0);
         }
         finally
@@ -176,11 +220,20 @@ internal static partial class Program
             bool exited = await FixtureExitedAsync(hangingFixture);
             Check("握手前取消仍返回取消且不等待完整超时", cancelled && exited);
         }
+        Check("默认握手超时设为45秒",
+            ArchiveWorkerClient.DefaultHandshakeTimeout == TimeSpan.FromSeconds(45) &&
+            ArchiveWorkerClient.HandshakeTimeout == ArchiveWorkerClient.DefaultHandshakeTimeout);
         WorkerFailureException? timedOut = null;
-        using (CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15)))
+        ArchiveWorkerClient.HandshakeTimeout = TimeSpan.FromSeconds(2);
+        try
         {
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
             try { await new ArchiveWorkerClient(Fixture("hang")).RunAsync(options, NoPassword, null, timeout.Token); }
             catch (WorkerFailureException ex) { timedOut = ex; }
+        }
+        finally
+        {
+            ArchiveWorkerClient.HandshakeTimeout = ArchiveWorkerClient.DefaultHandshakeTimeout;
         }
         Check("握手超时报告对应阶段且不将清理退出码当成故障码", timedOut?.Stage == WorkerStage.Handshake &&
             timedOut.NativeExitCode is null && timedOut.Message.Contains("按时完成安全握手", StringComparison.Ordinal));
@@ -198,6 +251,10 @@ internal static partial class Program
         Finding threat = new() { Category = FindingCategory.Steam, CanRemediate = true, IsKnownMalware = true, Severity = FindingSeverity.Critical };
         system.Findings.Add(threat);
         WorkerFailureException launchError = new(WorkerStage.Handshake, unchecked((int)0xC0000142), "inert fixture");
+        WorkerFailureException coreClrError = new(WorkerStage.Handshake, unchecked((int)0x80008089), "inert fixture");
+        Check("CoreCLR 启动失败使用受限环境初始化提示",
+            coreClrError.Message.Contains("0x80008089", StringComparison.Ordinal) &&
+            coreClrError.Message.Contains(MessageText.Create("WorkerFailureException.Describe.07").OriginalText, StringComparison.Ordinal));
         ScanReport preserved = ScanFailureReports.PreserveSystemResults(system, ScanMode.Quick, [], "fixture", launchError, false);
         Check("Worker 失败保留既有系统发现与计数", preserved.Findings.Contains(threat) && preserved.Metrics.ProcessesVisited == 7);
         Check("Worker 失败结果明确 Partial 且缺口不可处置", preserved.Coverage == ScanCoverage.Partial && preserved.Findings.Any(f => f.RuleId == "CONTENT-SCAN-FAILED" && !f.CanRemediate));
@@ -221,7 +278,8 @@ internal static partial class Program
                 path = Environment.GetEnvironmentVariable("PATH"),
                 temp = Environment.GetEnvironmentVariable("TEMP"),
                 tmp = Environment.GetEnvironmentVariable("TMP"),
-                integrity = ProcessIntegrity.GetCurrent().ToString()
+                integrity = ProcessIntegrity.GetCurrent().ToString(),
+                desktop = ReadCurrentThreadDesktopName()
             }));
             return 0;
         }
@@ -324,4 +382,31 @@ internal static partial class Program
         [DllImport("advapi32.dll", SetLastError = true)] private static extern bool GetTokenInformation(SafeAccessTokenHandle token, int type, IntPtr buffer, int length, out int returned);
         [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetTokenInformation(SafeAccessTokenHandle token, int type, IntPtr buffer, int length);
     }
+
+    private static string? ReadCurrentThreadDesktopName()
+    {
+        IntPtr windowStation = GetProcessWindowStation();
+        IntPtr desktop = GetThreadDesktop(GetCurrentThreadId());
+        if (windowStation == IntPtr.Zero || desktop == IntPtr.Zero) return null;
+        string? winstaName = ReadUserObjectName(windowStation);
+        string? deskName = ReadUserObjectName(desktop);
+        return string.IsNullOrEmpty(winstaName) || string.IsNullOrEmpty(deskName) ? null : $"{winstaName}\\{deskName}";
+    }
+
+    private static string? ReadUserObjectName(IntPtr objectHandle)
+    {
+        _ = GetUserObjectInformation(objectHandle, 2, null, 0, out uint needed);
+        if (needed is < 2 or > 4096) return null;
+        byte[] buffer = new byte[needed];
+        return GetUserObjectInformation(objectHandle, 2, buffer, needed, out _)
+            ? Encoding.Unicode.GetString(buffer).TrimEnd('\0')
+            : null;
+    }
+
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr GetProcessWindowStation();
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr GetThreadDesktop(uint threadId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetUserObjectInformation(IntPtr objectHandle, int index, [Out] byte[]? info, uint length, out uint lengthNeeded);
 }

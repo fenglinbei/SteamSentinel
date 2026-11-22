@@ -17,9 +17,12 @@ internal sealed class ArchiveWorkerClient
     public ArchiveWorkerClient(string? workerPathOverride = null) =>
         _workerPathOverride = workerPathOverride;
 
+    internal static TimeSpan? HardTimeoutOverride { get; set; }
+
     internal static TimeSpan ScanHardTimeout(ScanOptions options)
     {
         if (options.ContainerLimits is { } limits) ContainerResourceBudget.Validate(limits);
+        if (HardTimeoutOverride is { } overrideTimeout) return overrideTimeout;
         int seconds = options.ContainerLimits?.MaximumDurationSeconds ?? (options.Mode == ScanMode.Quick ? 300 : 1800);
         // The scanner owns its cooperative deadline. A separate launcher deadline also bounds
         // native decoders and signature providers that never return to the scanner's checks.
@@ -230,7 +233,7 @@ internal sealed class ArchiveWorkerClient
         try
         {
             using CancellationTokenSource readyTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            readyTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+            readyTimeout.CancelAfter(HandshakeTimeout);
             string? readyLine;
             try
             {
@@ -349,7 +352,18 @@ internal sealed class ArchiveWorkerClient
                             LastPathText = new MessageText(lastProgress.CurrentItem, lastProgress.CurrentItemMessage),
                             OperationText = new MessageText(lastProgress.Message, lastProgress.DetailMessage)
                         };
-                        ArchivePasswordResponse response = await passwordCallback(message.PasswordRequest, cancellationToken).WaitAsync(cancellationToken);
+                        ArchivePasswordResponse response;
+                        hardTimeout.CancelAfter(Timeout.InfiniteTimeSpan);
+                        activeTime.Stop();
+                        try
+                        {
+                            response = await passwordCallback(message.PasswordRequest, callerCancellationToken).WaitAsync(callerCancellationToken);
+                        }
+                        finally
+                        {
+                            activeTime.Start();
+                            hardTimeout.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, ScanHardTimeout(options).TotalMilliseconds - activeTime.Elapsed.TotalMilliseconds)));
+                        }
                         if (!string.Equals(response.RequestId, message.PasswordRequest.RequestId, StringComparison.Ordinal))
                             throw MessageExceptions.Create(MessageText.Create("Backend.App.ArchiveWorkerClient.RunProtocolAsync.06"), sourceText => new InvalidDataException(sourceText));
                         _ = ArchivePasswordInput.ValidateAndGetPasswords(response);
@@ -459,6 +473,9 @@ internal sealed class ArchiveWorkerClient
             try { await errorTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); } catch { }
         }
     }
+
+    internal static readonly TimeSpan DefaultHandshakeTimeout = TimeSpan.FromSeconds(45);
+    internal static TimeSpan HandshakeTimeout { get; set; } = DefaultHandshakeTimeout;
 
     internal sealed class BoundedWorkerError
     {

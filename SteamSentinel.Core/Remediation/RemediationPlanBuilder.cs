@@ -26,8 +26,8 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         RemediationPlan plan = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets, Mode = remediationMode };
         Dictionary<string, RemediationAction> deduplication = new(StringComparer.OrdinalIgnoreCase);
         bool shouldBlockDomains = addKnownDomainBlock;
-        Finding[] selected = selectedFindings.Take(257).Select(f => RemediationModePolicy.ProjectFinding(f, remediationMode)).ToArray();
-        if (selected.Length > 256) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.01"), sourceText => new InvalidDataException(sourceText));
+        Finding[] selected = selectedFindings.Take(RemediationLimits.MaximumActionsPerPlan + 1).Select(f => RemediationModePolicy.ProjectFinding(f, remediationMode)).ToArray();
+        if (selected.Length > RemediationLimits.MaximumActionsPerPlan) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.01"), sourceText => new InvalidDataException(sourceText));
         // Old reports keep their original flags. Retired token-only evidence must be
         // rejected before it can seed related actions or silently disappear from a plan.
         foreach (Finding finding in selected) RequireEvidence(finding);
@@ -158,7 +158,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                         throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.03"), sourceText => new InvalidDataException(sourceText));
                 }
                 else { deduplication.Add(key, action); plan.Actions.Add(action); }
-                if (plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.04"), sourceText => new InvalidDataException(sourceText));
+                if (plan.Actions.Count > RemediationLimits.MaximumActionsPerPlan) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.04"), sourceText => new InvalidDataException(sourceText));
             }
 
             if (addAutomaticProgramBlock && finding.IsKnownMalware && !finding.SuggestedActions.Contains(SuggestedActionKind.StopHostProcess) &&
@@ -196,7 +196,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
 
         foreach (RemediationAction file in plan.Actions.Where(a => a.UserSelectedRisk && a.Type == RemediationActionType.QuarantineFile).ToArray())
             plan.Actions.AddRange(UserRiskCompanions.Discover(file, cancellationToken));
-        if (plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.07"), sourceText => new InvalidDataException(sourceText));
+        if (plan.Actions.Count > RemediationLimits.MaximumActionsPerPlan) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.07"), sourceText => new InvalidDataException(sourceText));
         SteamScriptRepairTarget.AddSourceDependencies(plan.Actions, rules);
         OrderActionsForSafeExecution(plan.Actions);
 

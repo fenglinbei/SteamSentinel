@@ -108,14 +108,16 @@ public partial class MainWindow
                 return;
             }
             ShowActivity(ActivityPhase.Confirmation);
-            RemediationPreviewWindow preview = new(batch, _coordinator.Rules, _findingScopeLayout) { Owner = this };
+            RemediationPreviewWindow preview = new(batch, _coordinator.Rules, _findingScopeLayout,
+                isPortableInstallation: _installationSecurity.Mode == InstallationTrustMode.Portable)
+            { Owner = this };
             if (preview.ShowDialog() != true) { batch.AddNote(MessageText.Create("Remediation.ExecuteSelectedRemediationAsync.10")); return; }
             await BeginPersistentCaseAsync(batch, original);
             _scanCancellation.Dispose(); _scanCancellation = null; CancelScanButton.IsEnabled = false;
             _operationCommitted = true; _reportNeedsRefresh = true;
             ShowActivity(ActivityPhase.Applying, DisplayText.Get(repairsSteamScripts
                 ? "SteamScript.Applying" : "Remediation.ExecuteSelectedRemediationAsync.11"));
-            await Task.Run(() => RemediationBatchPlanner.ExecuteAsync(batch, ExecuteRecordedPlanAsync, progress));
+            await Task.Run(() => RemediationBatchPlanner.ExecuteAsync(batch, plan => ExecuteRecordedPlanAsync(plan, approvedInUi: true), progress));
             await _caseStore.SaveAsync(_persistedCase!);
             DisplayCaseRecord(_persistedCase!);
             // Legacy exports retain the single-plan fields only for truly single-plan sessions.

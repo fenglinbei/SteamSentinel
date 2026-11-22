@@ -28,7 +28,7 @@ public static class DirectoryFingerprint
         {
             cancellationToken.ThrowIfCancellationRequested();
             FileAttributes attributes = File.GetAttributes(entry);
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            if ((attributes & FileAttributes.ReparsePoint) != 0 && Validation.IsRedirectingReparsePoint(entry))
                 throw MessageExceptions.Create(MessageText.Create("Backend.Core.DirectoryFingerprint.CaptureAsync.02", (entry)), sourceText => new UnauthorizedAccessException(sourceText));
 
             string relative = Path.GetRelativePath(fullRoot, entry).Replace(Path.DirectorySeparatorChar, '/');
@@ -65,7 +65,7 @@ public static class DirectoryFingerprint
             foreach (string entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
             {
                 FileAttributes attributes = File.GetAttributes(entry);
-                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                if ((attributes & FileAttributes.ReparsePoint) != 0 && Validation.IsRedirectingReparsePoint(entry))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Core.DirectoryFingerprint.EnumerateWithoutFollowingReparsePoints.02", (entry)), sourceText => new UnauthorizedAccessException(sourceText));
                 yield return entry;
                 if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);

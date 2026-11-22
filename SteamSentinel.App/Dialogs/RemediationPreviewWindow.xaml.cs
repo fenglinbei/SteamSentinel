@@ -11,10 +11,12 @@ namespace SteamSentinel.App.Dialogs;
 public partial class RemediationPreviewWindow : Window
 {
     public RemediationPreviewWindow(RemediationPlan plan, IReadOnlyList<string>? notes = null,
-        RuleSet? rules = null, SteamLayout? layout = null) : this(plan, notes, rules, layout, null) { }
+        RuleSet? rules = null, SteamLayout? layout = null, bool isPortableInstallation = false)
+        : this(plan, notes, rules, layout, null, isPortableInstallation) { }
 
     private RemediationPreviewWindow(RemediationPlan plan, IReadOnlyList<string>? notes, RuleSet? rules,
-        SteamLayout? layout, IEnumerable<(RemediationAction Action, int Batch, bool Explicit)>? entries)
+        SteamLayout? layout, IEnumerable<(RemediationAction Action, int Batch, bool Explicit)>? entries,
+        bool isPortableInstallation = false)
     {
         InitializeComponent();
         DialogLayout.ConstrainToWorkArea(this);
@@ -28,6 +30,8 @@ public partial class RemediationPreviewWindow : Window
             ? "\n" + DisplayText.Get("Scope.Ui.PreviewNotice") : string.Empty);
         if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamScript))
             NoticeText += "\n" + DisplayText.Get("SteamScript.PreviewNotice");
+        if (isPortableInstallation)
+            NoticeText += "\n" + DisplayText.Get("Ui.RemediationPreviewWindow.PortableRiskNotice");
         ConfirmationText = DisplayText.Get(plan.ExplicitFileTargetsRequested ? "Scope.Ui.PreviewConfirm" : "Ui.Xaml.RemediationPreviewWindow.020");
         if (plan.Mode == RemediationMode.Aggressive)
         {
@@ -44,14 +48,16 @@ public partial class RemediationPreviewWindow : Window
     }
 
     public RemediationPlan Plan { get; }
-    public RemediationPreviewWindow(RemediationBatchSession batch, RuleSet? rules = null, SteamLayout? layout = null) : this(new RemediationPlan
-    {
-        Actions = batch.Plans.SelectMany(p => p.Actions).ToList(),
-        Mode = batch.Plans.Any(plan => plan.Mode == RemediationMode.Aggressive)
+    public RemediationPreviewWindow(RemediationBatchSession batch, RuleSet? rules = null, SteamLayout? layout = null,
+        bool isPortableInstallation = false) : this(new RemediationPlan
+        {
+            Actions = batch.Plans.SelectMany(p => p.Actions).ToList(),
+            Mode = batch.Plans.Any(plan => plan.Mode == RemediationMode.Aggressive)
             ? RemediationMode.Aggressive : RemediationMode.Conservative,
-        ExplicitFileTargetsRequested = batch.Plans.Any(plan => plan.ExplicitFileTargetsRequested)
-    }, batch.NoteTexts.Select(note => note.Display).ToArray(), rules, layout,
-        batch.Plans.SelectMany((plan, index) => plan.Actions.Select(action => (action, index + 1, plan.ExplicitFileTargetsRequested))))
+            ExplicitFileTargetsRequested = batch.Plans.Any(plan => plan.ExplicitFileTargetsRequested)
+        }, batch.NoteTexts.Select(note => note.Display).ToArray(), rules, layout,
+        batch.Plans.SelectMany((plan, index) => plan.Actions.Select(action => (action, index + 1, plan.ExplicitFileTargetsRequested))),
+        isPortableInstallation)
     {
         Summary = batch.Summary + DisplayText.Get("Ui.RemediationPreviewWindow.xaml.Constructor.03");
         OmittedTargets = batch.Targets.Where(t => t.MissingActions.Count > 0 || t.ActionIds.Count == 0).ToArray();

@@ -97,7 +97,8 @@ internal sealed class BrokerConfirmationWindow : Form
         buttons.Controls.Add(cancel);
         buttons.Controls.Add(confirm);
         CancelButton = cancel;
-        AcceptButton = cancel;
+        // 禁止将 Cancel 设为 AcceptButton，防止用户按回车阅读表格时误取消高危确认。
+        AcceptButton = null;
         layout.Controls.Add(introduction, 0, 0);
         layout.Controls.Add(grid, 0, 1);
         layout.Controls.Add(detail, 0, 2);
@@ -109,7 +110,7 @@ internal sealed class BrokerConfirmationWindow : Form
         {
             ConstrainToWorkingArea(Screen.FromControl(this).WorkingArea);
             ShowSelection();
-            cancel.Focus();
+            grid.Focus();
         };
         DpiChanged += (_, _) => ConstrainToWorkingArea(Screen.FromControl(this).WorkingArea);
     }

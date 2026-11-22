@@ -361,6 +361,53 @@ internal static partial class Program
         bool emptyIdRejected = false;
         try { await store.LoadAsync(Guid.Empty); } catch (ArgumentException) { emptyIdRejected = true; }
         Check("第三批病例目录仅接受非空GUID而不接收任意路径", emptyIdRejected);
+
+        // 快速启动 Kernel-Boot 27 (BootType=1) 解析与普通休眠唤醒 (BootType=2) 排除
+        string fastBootTime = epoch.AddHours(1).ToUniversalTime().ToString("O");
+        string fastBootXml = $"<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Boot'/><EventID>27</EventID><TimeCreated SystemTime='{fastBootTime}'/><EventRecordID>250</EventRecordID></System><EventData><Data Name='BootType'>1</Data></EventData></Event>";
+        var parsedFastBoot = WindowsCaseSessionReader.ParseBootEventForTest(fastBootXml, out bool fastBootNonBoot);
+        string sleepResumeXml = $"<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Boot'/><EventID>27</EventID><TimeCreated SystemTime='{fastBootTime}'/><EventRecordID>251</EventRecordID></System><EventData><Data Name='BootType'>2</Data></EventData></Event>";
+        var parsedSleepResume = WindowsCaseSessionReader.ParseBootEventForTest(sleepResumeXml, out bool sleepNonBoot);
+        CaseSessionObservation fastBootSession = Session(parsedFastBoot.Identity!, parsedFastBoot.RecordId!.Value,
+            bootStarted: parsedFastBoot.Started);
+        Check("快速启动 KernelBoot27 BootType=1 可识别为新启动且跳过 BootType=2 休眠唤醒",
+            !fastBootNonBoot && parsedFastBoot.Status == DiagnosticReadStatus.Complete &&
+            parsedFastBoot.Identity!.StartsWith("KernelBoot27:", StringComparison.Ordinal) &&
+            sleepNonBoot && parsedSleepResume.Identity is null &&
+            RemediationCaseReverification.CompareSessions(baseline, fastBootSession, sid) == CaseSessionTransition.NewBoot);
+
+        // 超过 128 病例自动淘汰最旧已完成记录并保留未决记录，ClearCompletedCasesAsync 清理已完成而不误删未决
+        string rotationRoot = Path.Combine(root, "phase3-case-rotation-" + Guid.NewGuid().ToString("N"));
+        RemediationCaseStore rotationStore = new(rotationRoot, () => sid);
+        RemediationCaseRecord oldestPending = Case();
+        oldestPending.PendingPlanIds.Add(oldestPending.Plans[0].PlanId);
+        await rotationStore.SaveAsync(oldestPending);
+        for (int idx = 1; idx < RemediationCaseStore.MaximumCases; idx++)
+        {
+            await rotationStore.SaveAsync(new RemediationCaseRecord
+            {
+                UserSid = sid,
+                CreatedAtUtc = epoch.AddMinutes(idx),
+                UpdatedAtUtc = epoch.AddMinutes(idx)
+            });
+        }
+        RemediationCaseRecord overflowCase = new()
+        {
+            UserSid = sid,
+            CreatedAtUtc = epoch.AddHours(3),
+            UpdatedAtUtc = epoch.AddHours(3)
+        };
+        await rotationStore.SaveAsync(overflowCase);
+        IReadOnlyList<RemediationCaseSummary> rotatedList = await rotationStore.ListAsync();
+        bool pendingStillPresent = await rotationStore.LoadAsync(oldestPending.CaseId) is not null;
+        int clearedCount = await rotationStore.ClearCompletedCasesAsync();
+        IReadOnlyList<RemediationCaseSummary> remainingAfterClear = await rotationStore.ListAsync();
+        Check("超过128病例自动淘汰最旧已完成病例且不阻塞后续保存与列表加载",
+            Directory.EnumerateDirectories(rotationRoot).Count() <= RemediationCaseStore.MaximumCases &&
+            rotatedList.Count == RemediationCaseStore.MaximumCases && pendingStillPresent);
+        Check("清理已完成病例仅清除无未决计划的记录并安全保留未决病例",
+            clearedCount == RemediationCaseStore.MaximumCases - 1 &&
+            remainingAfterClear.Count == 1 && remainingAfterClear[0].CaseId == oldestPending.CaseId);
     }
 
     private sealed class Phase3CaseClock(DateTimeOffset now) : TimeProvider

@@ -117,5 +117,41 @@ internal static partial class Program
         Check("处置恢复 真正未知会中止原批次而非自动继续", executeCalls == 1 && batch.ExecutionFinished &&
             batch.Targets[0].State == RemediationTargetState.ReviewRequired && batch.Targets[1].State == RemediationTargetState.NotExecuted);
         Check("处置恢复 未知结果原始对象未改写", JsonSerializer.Serialize(unknown, JsonFile.Options) == receiptBefore);
+
+        // 人工显式归档未决执行测试：持久化失败时不提前放行，持久化成功后解除门槛并保存 ExecutionUnknown 状态
+        RemediationClient manualUnlockClient = new((_, _) => Task.FromResult<RemediationRunResult?>(null));
+        RemediationPlan stuckPlan = new()
+        {
+            Actions = [new() { Type = RemediationActionType.QuarantineFile, Target = @"C:\InertRecovery\stuck.txt", ExpectedSha256 = new string('C', 64) }]
+        };
+        RemediationCaseRecord stuckCase = new()
+        {
+            UserSid = stuckPlan.RequestedBySid,
+            BatchSession = new()
+            {
+                Plans = [stuckPlan],
+                ExecutionStarted = true,
+                ExecutionFinished = true,
+                Targets = [new() { Key = "stuck", Target = stuckPlan.Actions[0].Target, ActionIds = [stuckPlan.Actions[0].ActionId], RequiredActions = ["inert"] }]
+            },
+            PendingPlanIds = [stuckPlan.PlanId]
+        };
+        manualUnlockClient.RestoreUnresolvedPlan(stuckPlan);
+        bool persistFailKeptLock = false;
+        try
+        {
+            await manualUnlockClient.AcknowledgeUnresolvedPlansAsUnknownAsync((_, _) => throw new IOException("inert persist fail"));
+        }
+        catch (IOException) { persistFailKeptLock = manualUnlockClient.HasUnresolvedExecution; }
+        await manualUnlockClient.AcknowledgeUnresolvedPlansAsUnknownAsync((p, result) =>
+        {
+            _ = RemediationCaseRecovery.ApplyFinishedResult(stuckCase, result);
+            return Task.CompletedTask;
+        });
+        Check("处置恢复 人工显式归档未决执行仅在持久保存后解锁并保留未知结论",
+            persistFailKeptLock && !manualUnlockClient.HasUnresolvedExecution &&
+            stuckCase.PendingPlanIds.Count == 0 &&
+            stuckCase.ExecutionResults.Single().Disposition == RemediationRunDisposition.ExecutionUnknown &&
+            stuckCase.BatchSession.Targets.Single().State == RemediationTargetState.ReviewRequired);
     }
 }

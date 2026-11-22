@@ -301,16 +301,24 @@
                     </TabItem>
                     <TabItem x:Name="CasesTab" Header="{ui:Text Ui.Xaml.MainWindow.067}">
                         <Grid Margin="8">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <ComboBox x:Name="CaseListComboBox" MinWidth="80" Margin="0,0,6,0" VerticalContentAlignment="Center" ToolTip="{ui:Text Ui.Xaml.MainWindow.068}"/>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <ComboBox x:Name="CaseListComboBox" MinWidth="80" Margin="0,0,6,0" VerticalContentAlignment="Center" SelectionChanged="CaseList_SelectionChanged" ToolTip="{ui:Text Ui.Xaml.MainWindow.068}"/>
                                 <Button x:Name="CaseRefreshButton" Grid.Column="1" Content="{ui:Text Ui.Xaml.MainWindow.069}" Click="CaseRefresh_Click" Margin="0,0,6,0"/>
                                 <Button x:Name="CaseRecheckButton" Grid.Column="2" Content="{ui:Text Ui.Xaml.MainWindow.070}" Click="CaseRecheck_Click" Margin="0"/>
                                 <Button x:Name="CaseExportButton" Grid.Column="3" Content="{ui:Text Ui.Xaml.MainWindow.071}" Click="CaseExport_Click" Margin="6,0,0,0"/>
+                                <Button x:Name="CaseClearCompletedButton" Grid.Column="4" Content="{ui:Text Ui.Xaml.MainWindow.CaseClearCompletedButton}" Click="CaseClearCompleted_Click" Margin="6,0,0,0"/>
                             </Grid>
                             <TextBlock Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#475467" Text="{ui:Text Ui.Xaml.MainWindow.072}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-                            <TextBox x:Name="CaseDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
+                            <Border x:Name="UnresolvedExecutionBanner" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,6" Padding="8,6" CornerRadius="6" Background="#FEF3C7" BorderBrush="#F59E0B" BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBlock VerticalAlignment="Center" Foreground="#92400E" TextWrapping="Wrap" Text="{ui:Text Ui.Cases.AcknowledgeUnknown.Banner}" Margin="0,0,8,0"/>
+                                    <Button x:Name="CaseAcknowledgeUnknownButton" Grid.Column="1" VerticalAlignment="Center" Content="{ui:Text Ui.Cases.AcknowledgeUnknown.Button}" Click="CaseAcknowledgeUnknown_Click"/>
+                                </Grid>
+                            </Border>
+                            <TextBox x:Name="CaseDetailsText" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
                                      AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.073}" Text="{ui:Text Ui.Xaml.MainWindow.074}"/>
                         </Grid>
@@ -444,7 +452,7 @@
                         <TextBlock TextWrapping="Wrap" Text="{ui:Text Ui.Xaml.MainWindow.104}" />
                     </Border>
                     <DataGrid x:Name="QuarantineGrid" Grid.Row="1" Margin="0,12,0,12" ItemsSource="{Binding QuarantineItems}"
-                              AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single">
+                              AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="QuarantineGrid_SelectionChanged">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.105}" Binding="{Binding IncidentId}" Width="2*" MinWidth="140" ElementStyle="{StaticResource GridCellText}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.106}" Binding="{Binding Created}" Width="156" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />

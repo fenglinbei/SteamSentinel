@@ -84,11 +84,11 @@ internal static partial class Program
             !legacyJson.Contains(nameof(RemediationAction.ExpectedFileIdentity), StringComparison.Ordinal) && !legacyJson.Contains(nameof(RemediationAction.ExpectedParentIdentity), StringComparison.Ordinal));
         Check("v032 scope importing an old plan does not request expanded scope", !JsonSerializer.Deserialize<RemediationPlan>(legacyJson, JsonFile.Options)!.ExplicitFileTargetsRequested);
 
-        List<List<RemediationAction>> groups = Enumerable.Range(0, 130).Select(index => new List<RemediationAction>
+        List<List<RemediationAction>> groups = Enumerable.Range(0, 520).Select(index => new List<RemediationAction>
         { new() { Type = RemediationActionType.QuarantineFile, Target = Path.Combine(directory, $"not-created-{index}.bin"), ExpectedSha256 = hash,
             ExpectedFileIdentity = firstIdentity, ExpectedParentIdentity = parentIdentity } }).ToList();
         List<RemediationPlan> packed = RemediationBatchPlanner.PackActions(groups, true);
-        Check("v032 scope every child batch preserves the finite request", packed.Count == 3 && packed.All(p => p.ExplicitFileTargetsRequested && p.Actions.Count <= 64) &&
+        Check("v032 scope every child batch preserves the finite request", packed.Count == 3 && packed.All(p => p.ExplicitFileTargetsRequested && p.Actions.Count <= RemediationLimits.MaximumActionsPerPlan) &&
             packed.SelectMany(p => p.Actions).Select(a => a.ActionId).SequenceEqual(groups.SelectMany(g => g).Select(a => a.ActionId)));
         Check("v032 scope legacy batch packing never invents authorization", RemediationBatchPlanner.PackActions(groups).All(p => !p.ExplicitFileTargetsRequested));
 

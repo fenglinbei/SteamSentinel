@@ -111,14 +111,14 @@ public static class BoundConfigurationPlanBuilder
     {
         RemediationAction[] configurations = configurationActions.Take(17).ToArray();
         if (configurations.Length is < 1 or > 16) throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Build.01"), sourceText => new InvalidDataException(sourceText));
-        List<RemediationAction> actions = (prerequisites ?? []).Take(65).ToList();
+        List<RemediationAction> actions = (prerequisites ?? []).Take(RemediationLimits.MaximumActionsPerPlan + 1).ToList();
         if (actions.Any(a => a.Type is RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident || a.BoundCertificate is not null || a.BoundProxy is not null))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Build.02"), sourceText => new InvalidDataException(sourceText));
         foreach (RemediationAction action in configurations) catalog.Authorize(action);
         actions.AddRange(configurations);
         RemediationDependencies.AssignAndOrder(actions);
         RemediationPlan plan = new() { Actions = actions };
-        if (JsonSerializer.SerializeToUtf8Bytes(plan, JsonFile.Options).Length > 1024 * 1024)
+        if (JsonSerializer.SerializeToUtf8Bytes(plan, JsonFile.Options).Length > RemediationLimits.MaximumPlanBytes)
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.BoundConfigurationEvidence.Build.03"), sourceText => new InvalidDataException(sourceText));
         return plan;
     }

@@ -114,7 +114,11 @@ internal static partial class Program
 
                     SetTrustProxyUiReport(window, new() { Findings = [findings[1], findings[2]], CompletedAtUtc = DateTimeOffset.UtcNow });
                     layout.Refresh();
+                    bool scopeDisabledBeforeCheck = !remediate.IsEnabled;
+                    window.Findings[0].IsSelected = true;
+                    layout.Refresh();
                     Check($"v032 范围 UI {culture.Name}/{width} 只有待确认项目仍可打开预览",
+                        scopeDisabledBeforeCheck &&
                         window.GetRemediationAvailability().CanRemediate && remediate.IsEnabled && selectAll.IsEnabled &&
                         FindingHandlingPresentation.Count(window.Findings.Select(item => item.Handling)).Actionable == 0);
                     SetTrustProxyUiReport(window, new() { Findings = [findings[3], findings[4]], CompletedAtUtc = DateTimeOffset.UtcNow });

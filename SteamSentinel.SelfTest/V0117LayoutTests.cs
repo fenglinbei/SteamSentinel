@@ -624,6 +624,17 @@ internal sealed class UiLayoutHarness : IDisposable
             foreach (Control control in Descendants<Control>(Root).ToArray()) control.ApplyTemplate();
             Root.UpdateLayout();
             Root.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            if (pass < 4 &&
+                Math.Abs(_source.CompositionTarget.TransformToDevice.M11 - _layoutDpi.DpiScaleX) <= 0.001 &&
+                Math.Abs(_source.CompositionTarget.TransformToDevice.M22 - _layoutDpi.DpiScaleY) <= 0.001 &&
+                VisualTreeHelper.GetDpi(Root).Equals(_layoutDpi) &&
+                Descendants<Visual>(Root).Any(visual => !VisualTreeHelper.GetDpi(visual).Equals(_layoutDpi)))
+            {
+                // 隐藏 HWND 的物理监视器 DPI 不随模拟 WM_DPICHANGED 改变，延迟展开的控件模板（如滚动条箭头）
+                // 新接入视觉树时可能带有监视器默认 DPI；此处同步子树后继续下一轮完整布局与收敛校验。
+                VisualTreeHelper.SetRootDpi(Root, _layoutDpi);
+                continue;
+            }
             if (pass >= 2 && Root.IsMeasureValid && Root.IsArrangeValid &&
                 Descendants<Visual>(Root).All(visual => VisualTreeHelper.GetDpi(visual).Equals(_layoutDpi))) return;
         }

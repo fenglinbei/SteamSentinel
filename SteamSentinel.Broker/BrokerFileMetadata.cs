@@ -17,6 +17,9 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
         FileAttributes.System | FileAttributes.Archive | FileAttributes.Normal | FileAttributes.NotContentIndexed |
         FileAttributes.Temporary;
 
+    internal static bool IsIgnorableDownloadStream(string streamName) =>
+        streamName.Equals(":Zone.Identifier:$DATA", StringComparison.OrdinalIgnoreCase);
+
     internal static BrokerFileMetadata Capture(SafeFileHandle handle, string path, bool hasSecurityAccess = false,
         BrokerFileValidationStage stage = BrokerFileValidationStage.Execute)
     {
@@ -216,7 +219,7 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
         catch { handle.Dispose(); throw; }
     }
 
-    internal static void EnsureOnlyDefaultStream(SafeFileHandle handle)
+    internal static void EnsureOnlyDefaultStream(SafeFileHandle handle, bool allowExtendedAttributes = false)
     {
         int status = NtQueryInformationFile(handle, out IoStatus ioStatus, out uint eaBytes, 4, 7);
         if (status == 0x103)
@@ -227,7 +230,7 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
                 throw BrokerScopeText.Invalid(BrokerScopeText.UnsupportedMetadata);
             status = unchecked((int)ioStatus.Status.ToInt64());
         }
-        if (status != 0 || ioStatus.Information.ToUInt64() != 4 || eaBytes != 0)
+        if (status != 0 || ioStatus.Information.ToUInt64() != 4 || (!allowExtendedAttributes && eaBytes != 0))
             throw BrokerScopeText.Denied(BrokerScopeText.UnsupportedMetadata);
         for (int size = 4096; size <= 1024 * 1024; size *= 2)
         {
@@ -250,7 +253,8 @@ internal sealed record BrokerFileMetadata(string SecurityDescriptor, int Attribu
                     if (nameBytes <= 0 || (nameBytes & 1) != 0 || nameBytes > size - offset - 24)
                         throw BrokerScopeText.Invalid(BrokerScopeText.UnsupportedMetadata);
                     string name = Marshal.PtrToStringUni(IntPtr.Add(buffer, offset + 24), nameBytes / 2)!;
-                    if (!name.Equals("::$DATA", StringComparison.OrdinalIgnoreCase))
+                    // 忽略浏览器/即时通讯工具下载时系统附加的 Zone.Identifier (MOTW) 备用流，仍拒绝其他任意备用流。
+                    if (!name.Equals("::$DATA", StringComparison.OrdinalIgnoreCase) && !IsIgnorableDownloadStream(name))
                         throw BrokerScopeText.Denied(BrokerScopeText.UnsupportedMetadata);
                     if (next == 0) return;
                     if (next < 24 + nameBytes || next > size - offset)

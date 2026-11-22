@@ -312,6 +312,23 @@ internal static partial class Program
         }
         catch (OperationCanceledException) { wireCancelled = true; }
         Check("0.1.19 Low Worker等待密码时取消不会继续扫描", wireCancelled);
+        ArchiveWorkerClient.HardTimeoutOverride = TimeSpan.FromSeconds(2);
+        try
+        {
+            using CancellationTokenSource pauseCancelSource = new(TimeSpan.FromSeconds(20));
+            ScanReport pauseReport = await new ArchiveWorkerClient(worker).RunAsync(V0119PasswordOptions([one]),
+                async (request, token) =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(3), token);
+                    return Candidates(request, [alpha]);
+                }, null, pauseCancelSource.Token);
+            Check("0.1.19 Low Worker等待用户输入密码期间暂停硬超时",
+                pauseReport.Coverage == ScanCoverage.Complete && pauseReport.Metrics.ArchiveEntriesVisited == 1);
+        }
+        finally
+        {
+            ArchiveWorkerClient.HardTimeoutOverride = null;
+        }
         foreach (bool wrongRequestId in new[] { true, false })
         {
             string processName = Path.GetFileNameWithoutExtension(worker);

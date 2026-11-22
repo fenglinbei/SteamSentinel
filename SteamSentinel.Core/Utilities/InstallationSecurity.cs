@@ -5,10 +5,23 @@ using System.Security.Principal;
 
 namespace SteamSentinel.Core.Utilities;
 
+public enum InstallationTrustMode { Protected, Portable, Unsafe }
+
+public enum InstallationVerificationDepth { Fast, Full }
+
 [method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record InstallationSecurityStatus(bool IsProtected, string Message)
 {
+    public InstallationTrustMode Mode { get; init; } = IsProtected ? InstallationTrustMode.Protected : InstallationTrustMode.Unsafe;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool CanRemediate => Mode is InstallationTrustMode.Protected or InstallationTrustMode.Portable;
+
     public static InstallationSecurityStatus Protected { get; } = new(true, MessageText.Create("Backend.Core.InstallationSecurity.Protected.01"));
+
+    public static InstallationSecurityStatus Portable(SteamSentinel.Core.Reporting.MessageText message) =>
+        new(false, message) { Mode = InstallationTrustMode.Portable };
+
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public SteamSentinel.Core.Models.DisplayMessage? MessageMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Message); init => field = value; }
 
@@ -37,6 +50,22 @@ public static class InstallationSecurity
         "S-1-5-32-544",  // Builtin Administrators
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464" // TrustedInstaller
     };
+
+    /// <summary>校验主体 SID 是否为受信任的系统/管理员身份，包括域与本机内置管理员 RID (-500/-512/-519)，绝不放行普通用户 RID。</summary>
+    public static bool IsTrustedOwnerSid(string? sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid)) return false;
+        if (TrustedOwners.Contains(sid)) return true;
+        if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase)) return false;
+        string[] parts = sid.Split('-');
+        if (parts.Length != 8) return false;
+        for (int i = 4; i <= 6; i++)
+        {
+            if (!uint.TryParse(parts[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _))
+                return false;
+        }
+        return parts[7] is "500" or "512" or "519";
+    }
 
     private const FileSystemRights DangerousRights =
         // Composite Modify/FullControl include read bits, so they cannot be used as a mask.
@@ -79,28 +108,36 @@ public static class InstallationSecurity
         Enum.GetValues<StartupRole>().SelectMany(role => Enum.GetValues<StartupMode>().Select(mode => StartupCompatibility.HostFileName(role, mode)))
             .Any(name => expected.ContainsKey(name) || File.Exists(Path.Combine(root, name)));
 
-    public static InstallationSecurityStatus Evaluate(string? baseDirectory = null)
+    public static InstallationSecurityStatus Evaluate(
+        string? baseDirectory = null,
+        InstallationVerificationDepth depth = InstallationVerificationDepth.Full)
     {
         try
         {
             string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseDirectory ?? AppContext.BaseDirectory));
-            if (!IsUnderProgramFiles(root))
-                return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.01"));
             if (Validation.ContainsReparsePoint(root))
                 return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.02"));
 
-            InstallationSecurityStatus directoryAcl = CheckAcl(new DirectoryInfo(root));
-            if (!directoryAcl.IsProtected) return directoryAcl;
+            bool inProgramFiles = IsUnderProgramFiles(root);
+            if (inProgramFiles)
+            {
+                InstallationSecurityStatus directoryAcl = CheckAcl(new DirectoryInfo(root));
+                if (!directoryAcl.IsProtected) return directoryAcl;
+            }
 
             string sumsPath = Path.Combine(root, "SHA256SUMS.txt");
-            if (!File.Exists(sumsPath) || (File.GetAttributes(sumsPath) & FileAttributes.ReparsePoint) != 0)
+            if (!File.Exists(sumsPath) || Validation.IsRedirectingReparsePoint(sumsPath))
                 return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.03"));
-            InstallationSecurityStatus sumsAcl = CheckAcl(new FileInfo(sumsPath));
-            if (!sumsAcl.IsProtected) return sumsAcl;
+            if (inProgramFiles)
+            {
+                InstallationSecurityStatus sumsAcl = CheckAcl(new FileInfo(sumsPath));
+                if (!sumsAcl.IsProtected) return sumsAcl;
+            }
 
             Dictionary<string, string> expected = ReadChecksums(sumsPath);
             bool unified = HasUnifiedPayload(root, expected, Environment.ProcessPath);
-            foreach (string component in RequiredComponents(unified))
+            string[] required = RequiredComponents(unified).ToArray();
+            foreach (string component in required)
                 if (!expected.ContainsKey(component)) return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.04", (component)));
 
             foreach (string file in EnumerateInstallFilesWithoutReparsePoints(root))
@@ -109,31 +146,42 @@ public static class InstallationSecurity
                 if (!IsLoadablePayloadPath(relative) || expected.ContainsKey(relative)) continue;
                 if (!IsAllowedUnlistedInstallFile(relative))
                     return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.05", (relative)));
-                InstallationSecurityStatus uninstallerAcl = CheckAcl(new FileInfo(file));
-                if (!uninstallerAcl.IsProtected) return uninstallerAcl;
+                if (inProgramFiles)
+                {
+                    InstallationSecurityStatus uninstallerAcl = CheckAcl(new FileInfo(file));
+                    if (!uninstallerAcl.IsProtected) return uninstallerAcl;
+                }
             }
 
-            // Apphosts load managed assemblies and bundled runtime files. Protect the payload,
-            // including every launcher and both host variants, before the broker or UI can elevate.
+            // Apphosts load managed assemblies and bundled runtime files. Verify hashes under
+            // exclusive read handles; Fast checks core launch targets while Full verifies all entries.
             HashSet<string> checkedDirectories = new(StringComparer.OrdinalIgnoreCase) { root };
-            foreach ((string component, string expectedHash) in expected)
+            IEnumerable<KeyValuePair<string, string>> verificationTargets = depth == InstallationVerificationDepth.Full
+                ? expected
+                : required.Select(component => new KeyValuePair<string, string>(component, expected[component]));
+            foreach ((string component, string expectedHash) in verificationTargets)
             {
                 string path = Path.Combine(root, component);
                 if (!File.Exists(path) || Validation.ContainsReparsePoint(path))
                     return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.06", (component)));
-                for (DirectoryInfo? parent = Directory.GetParent(path); parent is not null && checkedDirectories.Add(parent.FullName); parent = parent.Parent)
+                if (inProgramFiles)
                 {
-                    InstallationSecurityStatus parentAcl = CheckAcl(parent);
-                    if (!parentAcl.IsProtected) return parentAcl;
+                    for (DirectoryInfo? parent = Directory.GetParent(path); parent is not null && checkedDirectories.Add(parent.FullName); parent = parent.Parent)
+                    {
+                        InstallationSecurityStatus parentAcl = CheckAcl(parent);
+                        if (!parentAcl.IsProtected) return parentAcl;
+                    }
+                    InstallationSecurityStatus fileAcl = CheckAcl(new FileInfo(path));
+                    if (!fileAcl.IsProtected) return fileAcl;
                 }
-                InstallationSecurityStatus fileAcl = CheckAcl(new FileInfo(path));
-                if (!fileAcl.IsProtected) return fileAcl;
                 string actualHash = ComputeSha256Exclusive(path);
                 if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
                     return new(false, MessageText.Create("Backend.Core.InstallationSecurity.Evaluate.07", (component)));
             }
 
-            return InstallationSecurityStatus.Protected;
+            return inProgramFiles
+                ? InstallationSecurityStatus.Protected
+                : InstallationSecurityStatus.Portable(MessageText.Create("Backend.Core.InstallationSecurity.Portable.01"));
         }
         catch (Exception ex)
         {
@@ -168,7 +216,7 @@ public static class InstallationSecurity
     internal static InstallationSecurityStatus CheckSecurityDescriptor(FileSystemSecurity security, string name)
     {
         if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
-            !TrustedOwners.Contains(owner.Value))
+            !IsTrustedOwnerSid(owner.Value))
         {
             return new(false, MessageText.Create("Backend.Core.InstallationSecurity.CheckSecurityDescriptor.01", (name)));
         }
@@ -191,7 +239,7 @@ public static class InstallationSecurity
 
             // Deny ACEs are deliberately not used to excuse an unsafe allow entry.
             // Also cover custom users/groups, including a filtered administrator's direct SID.
-            if (!TrustedOwners.Contains(identity.Value))
+            if (!IsTrustedOwnerSid(identity.Value))
             {
                 return new(false, MessageText.Create("Backend.Core.InstallationSecurity.CheckSecurityDescriptor.03", (name)));
             }
@@ -230,14 +278,18 @@ public static class InstallationSecurity
                extension.Equals(".ocx", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".sys", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".winmd", StringComparison.OrdinalIgnoreCase) ||
-               extension.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".config", StringComparison.OrdinalIgnoreCase) ||
                name.Contains(".deps.", StringComparison.OrdinalIgnoreCase) ||
                name.Contains(".runtimeconfig.", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static bool IsAllowedUnlistedInstallFile(string relativePath) =>
-        relativePath.Equals("unins000.exe", StringComparison.OrdinalIgnoreCase);
+        relativePath.Length == 12 &&
+        relativePath.StartsWith("unins", StringComparison.OrdinalIgnoreCase) &&
+        relativePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+        char.IsAsciiDigit(relativePath[5]) &&
+        char.IsAsciiDigit(relativePath[6]) &&
+        char.IsAsciiDigit(relativePath[7]);
 
     private static IEnumerable<string> EnumerateInstallFilesWithoutReparsePoints(string root)
     {
@@ -249,7 +301,7 @@ public static class InstallationSecurity
             foreach (string entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
             {
                 FileAttributes attributes = File.GetAttributes(entry);
-                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                if ((attributes & FileAttributes.ReparsePoint) != 0 && Validation.IsRedirectingReparsePoint(entry))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnumerateInstallFilesWithoutReparsePoints.01", (Path.GetRelativePath(root, entry))), sourceText => new UnauthorizedAccessException(sourceText));
                 if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
                 else yield return entry;
@@ -276,25 +328,43 @@ public static class MachineStateSecurity
 {
     private const int MaximumProtectedTreeEntries = 200_000;
 
-    public static void EnsureProtectedRoots()
+    public static void EnsureProtectedRoots(bool createIfMissing = false)
     {
         string machineRoot = Path.GetFullPath(AppPaths.MachineStateRoot);
         if (Validation.ContainsReparsePoint(machineRoot))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedRoots.01"), sourceText => new UnauthorizedAccessException(sourceText));
 
-        EnsureExistingProtectedDirectory(machineRoot);
-        ApplyProtectedDirectoryAcl(machineRoot, allowUsersBrowse: true);
+        EnsureProtectedOrCreateRootDirectory(machineRoot, createIfMissing, allowUsersBrowse: true);
         foreach (string child in new[] { AppPaths.QuarantineRoot, AppPaths.ResultsRoot, AppPaths.BrokerTemporaryRoot })
         {
             if (Validation.ContainsReparsePoint(child))
                 throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedRoots.02"), sourceText => new UnauthorizedAccessException(sourceText));
-            EnsureExistingProtectedDirectory(child);
-            ApplyProtectedDirectoryAcl(
-                child,
-                allowUsersBrowse: !Path.GetFullPath(child).Equals(
-                    Path.GetFullPath(AppPaths.BrokerTemporaryRoot),
-                    StringComparison.OrdinalIgnoreCase));
+            bool allowUsersBrowse = !Path.GetFullPath(child).Equals(
+                Path.GetFullPath(AppPaths.BrokerTemporaryRoot),
+                StringComparison.OrdinalIgnoreCase);
+            EnsureProtectedOrCreateRootDirectory(child, createIfMissing, allowUsersBrowse);
         }
+    }
+
+    private static void EnsureProtectedOrCreateRootDirectory(string path, bool createIfMissing, bool allowUsersBrowse)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path))
+        {
+            if (!createIfMissing)
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureExistingProtectedDirectory.01"), sourceText => new UnauthorizedAccessException(sourceText));
+
+            string? parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path));
+            if (!string.IsNullOrEmpty(parent) && Validation.ContainsReparsePoint(parent))
+                throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedRoots.01"), sourceText => new UnauthorizedAccessException(sourceText));
+
+            Directory.CreateDirectory(path);
+            ApplyProtectedDirectoryAcl(path, allowUsersBrowse);
+            EnsureProtectedPath(path);
+            return;
+        }
+
+        EnsureExistingProtectedDirectory(path);
+        ApplyProtectedDirectoryAcl(path, allowUsersBrowse);
     }
 
     private static void EnsureExistingProtectedDirectory(string path)
@@ -389,7 +459,7 @@ public static class MachineStateSecurity
                 if (++count > MaximumProtectedTreeEntries)
                     throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedSubtree.01"), sourceText => new InvalidDataException(sourceText));
                 FileAttributes attributes = File.GetAttributes(entry);
-                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                if ((attributes & FileAttributes.ReparsePoint) != 0 && Validation.IsRedirectingReparsePoint(entry))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Core.InstallationSecurity.EnsureProtectedSubtree.02", (entry)), sourceText => new UnauthorizedAccessException(sourceText));
                 EnsureProtectedPath(entry);
                 if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);

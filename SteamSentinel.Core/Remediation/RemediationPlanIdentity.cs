@@ -15,7 +15,7 @@ public static class RemediationPlanIdentity
     {
         ArgumentNullException.ThrowIfNull(plan);
         byte[] serialized = JsonSerializer.SerializeToUtf8Bytes(plan, JsonFile.Options);
-        if (serialized.Length > 1024 * 1024) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanIdentity.Fingerprint.01"), sourceText => new InvalidDataException(sourceText));
+        if (serialized.Length > RemediationLimits.MaximumPlanBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanIdentity.Fingerprint.01"), sourceText => new InvalidDataException(sourceText));
         JsonNode node = JsonNode.Parse(serialized) ?? throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanIdentity.Fingerprint.02"), sourceText => new InvalidDataException(sourceText));
         string actionsName = JsonFile.Options.PropertyNamingPolicy?.ConvertName(nameof(RemediationPlan.Actions)) ?? nameof(RemediationPlan.Actions);
         string displayName = JsonFile.Options.PropertyNamingPolicy?.ConvertName(nameof(RemediationAction.DisplayNameMessage)) ?? nameof(RemediationAction.DisplayNameMessage);

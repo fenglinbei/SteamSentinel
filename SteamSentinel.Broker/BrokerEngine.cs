@@ -17,7 +17,7 @@ internal sealed partial class BrokerEngine
 {
     internal static readonly MessageText DirectoryRollbackSafetyMessage =
         MessageText.Create("Backend.Broker.BrokerEngine.DirectoryRollbackSafetyMessage.01");
-    private const int MaximumManifestBytes = 1024 * 1024;
+    private const int MaximumManifestBytes = RemediationLimits.MaximumManifestBytes;
     private readonly RuleSet _rules = RuleLoader.LoadEmbedded();
     private readonly SteamLayout _steamLayout = SteamLocator.Discover();
     private readonly IIncidentTrustStore _incidentTrustStore;
@@ -145,11 +145,11 @@ internal sealed partial class BrokerEngine
         if (plan.CreatedAtUtc == default || plan.ExpiresAtUtc == default ||
             plan.CreatedAtUtc > now.AddMinutes(2) || plan.ExpiresAtUtc < now ||
             plan.ExpiresAtUtc <= plan.CreatedAtUtc ||
-            plan.ExpiresAtUtc - plan.CreatedAtUtc > TimeSpan.FromHours(1))
+            plan.ExpiresAtUtc - plan.CreatedAtUtc > TimeSpan.FromHours(4))
         {
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidatePlan.03"), sourceText => new InvalidDataException(sourceText));
         }
-        if (plan.Actions is null || plan.Actions.Count is < 1 or > 64)
+        if (plan.Actions is null || plan.Actions.Count is < 1 or > RemediationLimits.MaximumActionsPerPlan)
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.ValidatePlan.04"), sourceText => new InvalidDataException(sourceText));
         if (string.IsNullOrWhiteSpace(plan.RequestedBy) || plan.RequestedBy.Length > 256 ||
             string.IsNullOrWhiteSpace(plan.RequestedBySid) || plan.RequestedBySid.Length > 184)
@@ -705,7 +705,8 @@ internal sealed partial class BrokerEngine
 
     internal static void EnsureIncidentDeletionAllowed(QuarantineManifest manifest)
     {
-        if (manifest.Records.Any(record => !record.RolledBack))
+        // 允许直接永久删除尚未回滚的隔离事件及其目录备份（必须存在至少一条记录）
+        if (manifest is null || manifest.IncidentId == Guid.Empty || manifest.Records.Count == 0)
         {
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.EnsureIncidentDeletionAllowed.01") +
                 MessageText.Create("Backend.Broker.BrokerEngine.EnsureIncidentDeletionAllowed.02"), sourceText => new InvalidOperationException(
@@ -1146,7 +1147,7 @@ sourceText));
         string expectedRequester = requestedBySidForTest ?? _requestedBySid;
         if (!manifest.RequestedBySid.Equals(expectedRequester, StringComparison.OrdinalIgnoreCase))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.LoadTrustedManifestAsync.04"), sourceText => new UnauthorizedAccessException(sourceText));
-        if (manifest.Records is null || manifest.Records.Count > 64 ||
+        if (manifest.Records is null || manifest.Records.Count > RemediationLimits.MaximumActionsPerPlan ||
             manifest.Records.Any(record => record is null || record.ActionId == Guid.Empty) ||
             manifest.Records.Select(record => record.ActionId).Distinct().Count() != manifest.Records.Count)
         {

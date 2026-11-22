@@ -114,7 +114,7 @@ internal sealed partial class BrokerEngine
                     throw BrokerScopeText.Denied(BrokerScopeText.MetadataDifference(BrokerFileValidationStage.FinalQuarantine,
                         verified.Metadata, actualMetadata));
             }
-            else BrokerFileMetadata.EnsureOnlyDefaultStream(source.Handle);
+            else BrokerFileMetadata.EnsureOnlyDefaultStream(source.Handle, allowExtendedAttributes: true);
         }
         catch { source.CancelDelete(); throw; }
         return record;

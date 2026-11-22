@@ -26,7 +26,7 @@ public sealed class RemediationCaseReverification(
         ArgumentNullException.ThrowIfNull(record);
         limits ??= new();
         if (limits.MaximumActions is < 1 or > 256 || limits.MaximumEpisodes is < 1 or > RemediationCaseStore.MaximumEpisodes ||
-            limits.ProbeTimeout <= TimeSpan.Zero || limits.ProbeTimeout > TimeSpan.FromSeconds(10) ||
+            limits.ProbeTimeout <= TimeSpan.Zero || limits.ProbeTimeout > TimeSpan.FromSeconds(15) ||
             limits.FirewallProbeTimeout <= TimeSpan.Zero || limits.FirewallProbeTimeout > RemediationVerification.FirewallProbeTimeout ||
             limits.SessionTimeout <= TimeSpan.Zero || limits.SessionTimeout > TimeSpan.FromSeconds(15) ||
             limits.MaximumDuration <= TimeSpan.Zero || limits.MaximumDuration > TimeSpan.FromMinutes(10))

@@ -28,18 +28,18 @@ internal static partial class Program
             DependsOnActionIds = [firewall.ActionId]
         };
         Guid incident = Guid.NewGuid();
-        Check("防火墙复验只有新增程序阻断使用15秒普通动作仍4秒",
+        Check("防火墙复验只有新增程序阻断使用15秒普通动作仍10秒",
             Enum.GetValues<RemediationActionType>().All(type => RemediationVerification.GetProbeTimeout(type) ==
-                TimeSpan.FromSeconds(type == RemediationActionType.AddProgramFirewallBlock ? 15 : 4)) &&
+                TimeSpan.FromSeconds(type == RemediationActionType.AddProgramFirewallBlock ? 15 : 10)) &&
             new CaseReverificationLimits().FirewallProbeTimeout == RemediationVerification.FirewallProbeTimeout &&
             new CaseReverificationLimits().ProbeTimeout == RemediationVerification.ProbeTimeout &&
-            RemediationVerification.SecondPassBudget == TimeSpan.FromSeconds(20));
+            RemediationVerification.SecondPassBudget == TimeSpan.FromSeconds(45));
 
         // Start independent deadline regressions together so the 15-second ceiling is
         // tested without adding the individual waiting periods to the full suite.
         Task<RemediationRunResult> slow = SequenceAsync(new FirewallBudgetProbe(async (_, token) =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(4500), token);
+            await Task.Delay(TimeSpan.FromMilliseconds(11500), token);
             return new() { Status = RemediationVerificationStatus.Verified };
         }), complete: true);
         Stopwatch timeoutClock = Stopwatch.StartNew();
@@ -47,7 +47,7 @@ internal static partial class Program
         RemediationActionResult ordinary = new() { ExecutionStatus = RemediationExecutionStatus.Succeeded };
         Task ordinaryProbe = new RemediationVerification(new FirewallBudgetProbe(async (_, token) =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(4500), token);
+            await Task.Delay(TimeSpan.FromMilliseconds(11500), token);
             return new() { Status = RemediationVerificationStatus.Verified };
         })).ObserveAsync(cleanup, ordinary, 1);
         long slowCaseRunnerElapsedMs = 0;
@@ -101,8 +101,10 @@ internal static partial class Program
         }));
         foreach (var fixture in fixtureResults)
         {
-            RemediationVerificationStatus expected = fixture.Fixture is "exact" or "prefix-neighbor"
-                ? RemediationVerificationStatus.Verified : fixture.Fixture is "duplicate" or "profile-error" or "provider-error"
+            // 关闭或缺少某项防火墙配置文件时（常见于第三方安全软件接管环境），精确的阻断规则本身存在且有效即返回 Verified。
+            RemediationVerificationStatus expected = fixture.Fixture is "exact" or "prefix-neighbor" or
+                "profile-disabled" or "profile-missing" or "profile-error"
+                ? RemediationVerificationStatus.Verified : fixture.Fixture is "duplicate" or "provider-error"
                     ? RemediationVerificationStatus.Unknown : RemediationVerificationStatus.ResidualDetected;
             if (fixture.Observation.Status == RemediationVerificationStatus.Unknown || fixture.Observation.Status != expected)
                 Console.WriteLine("FW_PREDICATE " + JsonSerializer.Serialize(new
@@ -121,7 +123,7 @@ internal static partial class Program
 
         Task<CaseVerificationEpisode> caseProbe = SlowCaseAsync();
         RemediationRunResult slowResult = await slow;
-        Check("防火墙大于4秒的两轮观察通过并放行依赖隔离", slowResult.Actions.Count == 2 && slowResult.Actions.All(a => a.Success) &&
+        Check("防火墙大于10秒的两轮观察通过并放行依赖隔离", slowResult.Actions.Count == 2 && slowResult.Actions.All(a => a.Success) &&
             slowResult.Actions[0].Verifications.Count == 2 && slowResult.Actions[0].Verifications.All(v => v.Status == RemediationVerificationStatus.Verified));
         RemediationRunResult timeoutResult = await timedOut;
         Check("防火墙15秒上限到达保持Unknown且依赖不执行", timeoutResult.Actions[0].VerificationStatus == RemediationVerificationStatus.Unknown &&

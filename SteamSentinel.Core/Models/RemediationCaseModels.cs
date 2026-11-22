@@ -105,7 +105,7 @@ public sealed class CaseReverificationLimits
 {
     public int MaximumActions { get; init; } = 256;
     public int MaximumEpisodes { get; init; } = 32;
-    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(4);
+    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(10);
     public TimeSpan FirewallProbeTimeout { get; init; } = TimeSpan.FromSeconds(15);
     public TimeSpan SessionTimeout { get; init; } = TimeSpan.FromSeconds(6);
     public TimeSpan MaximumDuration { get; init; } = TimeSpan.FromMinutes(2);

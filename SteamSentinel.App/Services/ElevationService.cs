@@ -33,7 +33,7 @@ internal sealed class ElevationService
     private readonly Func<InstallationSecurityStatus> _validate;
     private readonly Func<ProcessStartInfo, bool> _start;
 
-    public ElevationService() : this(() => InstallationSecurity.Evaluate(), info =>
+    public ElevationService() : this(() => InstallationSecurity.Evaluate(depth: InstallationVerificationDepth.Fast), info =>
     {
         using Process? process = Process.Start(info);
         return process is not null;
@@ -50,7 +50,7 @@ internal sealed class ElevationService
     public ElevationOutcome OpenAdministratorWindow()
     {
         InstallationSecurityStatus installation = _validate();
-        if (!installation.IsProtected) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
+        if (!installation.CanRemediate) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
         ProcessStartInfo info = CreateStartInfo();
         try
         {

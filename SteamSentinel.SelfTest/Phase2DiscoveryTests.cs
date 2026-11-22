@@ -200,6 +200,17 @@ internal static partial class Program
         RelatedComponentDiagnosticReport expired = new() { TargetUserSid = sid };
         new RelatedComponentDiscovery(timed, clock).Collect(new() { TargetUserSid = sid }, expired, new() { MaximumDiscoveryDuration = TimeSpan.FromSeconds(1) });
         Check("第二批 来源调用返回后检查时间预算不追加超时结果", expired.Sources.Count == 0 && expired.Checks.Any(c => c.Status == DiagnosticReadStatus.LimitReached));
+        Check("关联组件默认来源上限提升至4096以适配常规电脑", new RelatedComponentLimits().MaximumSources == 4096);
+        Phase2SourceFixture nonRequired = new(sid);
+        nonRequired.Sources.Add(new() { Kind = "Run", Scope = "CurrentUser", Location = "HKU/fixture/Run/NonRequired", RawCommand = "\"" + hostPath + "\"" });
+        nonRequired.Processes.Add(new(501, start, hostPath, DiagnosticReadStatus.Complete, "fixture"));
+        nonRequired.Processes.Add(new(502, start, @"C:\Protected\ppl.exe", DiagnosticReadStatus.AccessDenied, "fixture"));
+        nonRequired.Modules[501] = new(DiagnosticReadStatus.Complete, "fixture", true, [hostPath, module]);
+        RelatedComponentDiagnosticReport nonRequiredReport = Discover(nonRequired);
+        Check("关联发现缺失宿主命令行与非种子进程拒绝访问不标记为必需缺口",
+            nonRequiredReport.Checks.Any(c => c.CheckCode == "related.process_read" && !c.Required) &&
+            nonRequiredReport.Checks.Any(c => c.CheckCode == "related.host_command" && !c.Required) &&
+            nonRequiredReport.Checks.Where(c => c.Required).All(c => c.Status == DiagnosticReadStatus.Complete));
 
         RelatedComponentDiagnosticReport Discover(Phase2SourceFixture data, RelatedComponentDiscoveryRequest? request = null,
             RelatedComponentLimits? limits = null, CancellationToken token = default)

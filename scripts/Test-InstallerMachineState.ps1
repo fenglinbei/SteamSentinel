@@ -163,6 +163,35 @@ try{
  Test 'Untrusted create-link access on isolated journal prevents recovery' {$f=Fixture 'pending-journal-acl';$hook=[Action[string]]{param($stage)if($stage -eq 'after-change:root'){throw 'interrupt'}};$null=Reject {Run $f 'Prepare' $hook};$key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($f.registry,$true);try{$a=$key.GetAccessControl();$rule=[Security.AccessControl.RegistryAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),[Security.AccessControl.RegistryRights]::CreateLink,[Security.AccessControl.AccessControlType]::Allow);$a.AddAccessRule($rule);$key.SetAccessControl($a);Check (@($key.GetAccessControl().Access|Where-Object{$_.RegistryRights -band [Security.AccessControl.RegistryRights]::CreateLink}).Count -gt 0) 'Journal unsafe ACE fixture missing'}finally{$key.Dispose()};$before=Snapshot $f;$null=Reject {Run $f} @('MigrationJournalUnsafe');Check ((Snapshot $f) -ceq $before) 'Unsafe journal changed state'}
  Test 'Final concurrent unknown entry prevents completion and stays preserved' {$f=Fixture 'late-entry';$p=Join-Path $f.root 'unexpected.txt';$hook=[Action[string]]{param($stage)if($stage -eq 'before-complete'){Text $p 'inert concurrent entry'}};$r=Reject {Run $f 'Prepare' $hook};Check $r.Pending 'Incomplete final observation lost pending';Check ([IO.File]::ReadAllText($p) -eq 'inert concurrent entry') 'Concurrent entry disappeared'}
  Test 'Failure before pending cannot change directory ACLs' {$f=Fixture 'before-pending';$before=Snapshot $f;$hook=[Action[string]]{param($stage)if($stage -eq 'before-pending'){throw 'before pending failure'}};$null=Reject {Run $f 'Prepare' $hook};Check ((Snapshot $f) -ceq $before) 'Mutation preceded durable pending'}
+ Test 'Standard ProgramData inherited empty tree hardens cleanly without legacy installation' {
+  $f=Fixture 'std-empty' 'absent';[IO.Directory]::Delete($f.install,$true)
+  $stdSddl='O:BAG:BAD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIIOID;GA;;;CO)(A;OICIID;0x1200a9;;;BU)(A;CIID;0x116;;;BU)'
+  [StateFixtureNative]::NewDirectory($f.root,$stdSddl)
+  foreach($c in @('Quarantine','Results','BrokerTemp')){[StateFixtureNative]::NewDirectory((Join-Path $f.root $c),$stdSddl)}
+  $insp=Run $f 'Inspect'
+  Check ($insp.MigrationRequired -and $insp.ReasonCode -eq 'LegacyStateMigrationRequired') 'Standard empty ProgramData tree was not detected.'
+  $prep=Run $f 'Prepare'
+  Check ($prep.Succeeded -and $prep.ReasonCode -eq 'EmptyStateAclHardened') ('Unexpected hardening outcome: '+$prep.ReasonCode)
+  AllSafe $f
+ }
+ Test 'Standard ProgramData hardening without prior installation still rejects non-empty directory' {
+  $f=Fixture 'std-nonempty' 'absent';[IO.Directory]::Delete($f.install,$true)
+  $stdSddl='O:BAG:BAD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIIOID;GA;;;CO)(A;OICIID;0x1200a9;;;BU)(A;CIID;0x116;;;BU)'
+  [StateFixtureNative]::NewDirectory($f.root,$stdSddl)
+  foreach($c in @('Quarantine','Results','BrokerTemp')){[StateFixtureNative]::NewDirectory((Join-Path $f.root $c),$stdSddl)}
+  $p=Join-Path $f.root 'Results\user.json';Text $p '{"inert":true}';$before=Snapshot $f
+  $null=Reject {Run $f 'Prepare'} @('LegacyStateContainsData')
+  Check ((Snapshot $f) -ceq $before) 'Non-empty directory was changed without legacy install.'
+ }
+ Test 'Standard ProgramData hardening rejects untrusted WD allow ACE' {
+  $f=Fixture 'std-unsafe-wd' 'absent';[IO.Directory]::Delete($f.install,$true)
+  $stdSddl='O:BAG:BAD:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIIOID;GA;;;CO)(A;OICIID;0x1200a9;;;BU)(A;CIID;0x116;;;BU)'
+  [StateFixtureNative]::NewDirectory($f.root,($stdSddl+'(A;OICI;FW;;;WD)'))
+  foreach($c in @('Quarantine','Results','BrokerTemp')){[StateFixtureNative]::NewDirectory((Join-Path $f.root $c),$stdSddl)}
+  $before=Snapshot $f
+  $null=Reject {Run $f 'Prepare'} @('LegacyStateUnsupportedAcl')
+  Check ((Snapshot $f) -ceq $before) 'Unsafe WD ACE was accepted.'
+ }
  Test 'Production compilation does not expose the alternate test-root entrypoint' {$compiler=[Microsoft.CSharp.CSharpCodeProvider]::new();$options=[CodeDom.Compiler.CompilerParameters]::new();$options.GenerateInMemory=$true;$options.TreatWarningsAsErrors=$true;foreach($a in @('System.dll','System.Core.dll','System.Web.Extensions.dll')){$null=$options.ReferencedAssemblies.Add($a)};try{$compiled=$compiler.CompileAssemblyFromSource($options,[Text.Encoding]::UTF8.GetString($sourceBytes).TrimStart([char]0xfeff));Check (-not $compiled.Errors.HasErrors) ($compiled.Errors|Out-String);$type=$compiled.CompiledAssembly.GetType('SteamSentinelMachineStateBootstrap',$true);Check ($null -eq $type.GetMethod('RunForTests')) 'Test-only arbitrary root API leaked into production';Check ($type.GetMethod('Run').GetParameters().Count -eq 1) 'Production entrypoint unexpectedly accepts paths'}finally{$compiler.Dispose()}}
 }finally{
  $timer.Stop();$failed=@($tests.ToArray()|Where-Object{-not $_.passed}).Count

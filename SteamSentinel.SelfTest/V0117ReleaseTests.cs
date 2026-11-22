@@ -38,7 +38,7 @@ internal static partial class Program
         }
 
         string expectedManifestVersion = version + ".0";
-        string[] manifests = ["SteamSentinel.App/app.manifest", "SteamSentinel.Broker/app.manifest", "SteamSentinel.SelfTest/app.manifest"];
+        string[] manifests = ["SteamSentinel.App/app.manifest", "SteamSentinel.Broker/app.manifest", "SteamSentinel.SelfTest/app.manifest", "native/SteamSentinel.WorkerHost.manifest"];
         Check("0.1.17 应用清单版本与中央版本一致", manifests.All(relative =>
             XDocument.Load(Path.Combine(repository, relative.Replace('/', Path.DirectorySeparatorChar)))
                 .Descendants().Single(element => element.Name.LocalName == "assemblyIdentity")
@@ -49,24 +49,28 @@ internal static partial class Program
             installer.Contains("MinVersion=10.0.19041", StringComparison.Ordinal) &&
             installer.Contains("OutputBaseFilename={#ArtifactBaseName}-setup", StringComparison.Ordinal) &&
             installer.Contains("SetupIconFile={#PayloadDir}\\SteamSentinel.App\\Assets\\App.ico", StringComparison.Ordinal));
-        int retirePayload = installer.LastIndexOf("CheckInstallPayload('Retire');", StringComparison.Ordinal);
-        int verifyPayload = installer.LastIndexOf("CheckInstallPayload('Verify');", StringComparison.Ordinal);
-        Check("0.3.0 安装升级先预检并按受控目录退役再核验，不盲删旧文档",
+        int retireAndVerifyPayload = installer.LastIndexOf("CheckInstallPayload('RetireAndVerify');", StringComparison.Ordinal);
+        Check("0.3.0 安装升级先预检、预编译 helper 单趟退役与核验，且安装阶段无 PowerShell/Add-Type",
             !installer.Contains("[InstallDelete]", StringComparison.Ordinal) &&
+            !installer.Contains("powershell.exe", StringComparison.OrdinalIgnoreCase) &&
+            installer.Contains("Flags: dontcopy", StringComparison.Ordinal) &&
             installer.Contains("CheckInstallPayload('Preflight');", StringComparison.Ordinal) &&
+            installer.Contains("#define SetupHelperHash GetSHA256OfFile(SetupHelperPath)", StringComparison.Ordinal) &&
             installer.Contains("#define IncomingManifestHash GetSHA256OfFile(PayloadDir", StringComparison.Ordinal) &&
-            retirePayload >= 0 && verifyPayload > retirePayload);
+            retireAndVerifyPayload >= 0);
         int installRunStart = installer.IndexOf("[Run]", StringComparison.Ordinal);
         int uninstallRunStart = installer.IndexOf("[UninstallRun]", StringComparison.Ordinal);
         string installRunSection = installRunStart >= 0 && uninstallRunStart > installRunStart
             ? installer[installRunStart..uninstallRunStart]
             : string.Empty;
+        string codeSection = installer[installer.IndexOf("[Code]", StringComparison.Ordinal)..installRunStart];
         Check("0.1.17 安装器防火墙配置失败即停止", installer.Contains("procedure ConfigureWorkerFirewall", StringComparison.Ordinal) &&
             installer.Contains("if ResultCode <> 0 then", StringComparison.Ordinal) &&
             installer.Contains("if CurStep = ssPostInstall then", StringComparison.Ordinal) &&
             installer.Contains("ConfigureWorkerFirewall;", StringComparison.Ordinal) &&
             !installer.Contains("procedure ConfigureMachineStateAcl", StringComparison.Ordinal) &&
             !installer.Contains("icacls.exe", StringComparison.Ordinal) &&
+            !codeSection.Contains("netsh.exe", StringComparison.OrdinalIgnoreCase) &&
             !installRunSection.Contains("netsh.exe", StringComparison.Ordinal));
 
         string[] workerRules = (from variant in new[] { "", " Standard", " Compat" }
@@ -126,5 +130,11 @@ internal static partial class Program
         Check("0.1.17 公开发布签名与 RFC3161 时间戳 fail closed", release.Contains("-RequirePublicTrust:$isPublicRelease", StringComparison.Ordinal) &&
             signing.Contains("'/tr', $Profile.TimestampUrl, '/td', 'SHA256'", StringComparison.Ordinal) &&
             signing.Contains("TimeStamperCertificate", StringComparison.Ordinal));
+        string unifiedStartup = File.ReadAllText(Path.Combine(repository, "scripts", "build-unified-startup.ps1"));
+        Check("0.3.6 Worker 宿主切换为零 USER32 原生实现并校验仅导入 KERNEL32",
+            File.Exists(Path.Combine(repository, "native", "SteamSentinel.WorkerHost.cpp")) &&
+            File.Exists(Path.Combine(repository, "scripts", "build-worker-host.ps1")) &&
+            unifiedStartup.Contains("build-worker-host.ps1", StringComparison.Ordinal) &&
+            unifiedStartup.Contains("RequireOnlyKernel32Imports", StringComparison.Ordinal));
     }
 }

@@ -8,4 +8,12 @@
   <ItemGroup>
     <ProjectReference Include="..\SteamSentinel.Core\SteamSentinel.Core.csproj" />
   </ItemGroup>
+  <Target Name="BuildNativeWorkerHost" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' and Exists('$(TargetDir)$(AssemblyName).dll')">
+    <PropertyGroup>
+      <_WorkerHostSelfContained>false</_WorkerHostSelfContained>
+      <_WorkerHostSelfContained Condition="'$(SelfContained)' == 'true'">true</_WorkerHostSelfContained>
+      <_WorkerHostBuildDir>$([System.IO.Path]::TrimEndingDirectorySeparator($([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)worker-host'))))</_WorkerHostBuildDir>
+    </PropertyGroup>
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\scripts\build-worker-host.ps1&quot; -SourcePath &quot;$(MSBuildThisFileDirectory)..\native\SteamSentinel.WorkerHost.cpp&quot; -OutputPath &quot;$(TargetDir)$(AssemblyName).exe&quot; -BuildDirectory &quot;$(_WorkerHostBuildDir)&quot; -Version &quot;$(VersionPrefix)&quot; -BuildIdentity &quot;$(InformationalVersion)&quot; -OriginalFilename &quot;$(AssemblyName).exe&quot; -CetCompat true -SelfContainedOnly $(_WorkerHostSelfContained) -ManifestPath &quot;$(MSBuildThisFileDirectory)..\native\SteamSentinel.WorkerHost.manifest&quot; -Optional -Incremental" />
+  </Target>
 </Project>

@@ -190,7 +190,7 @@ internal static partial class Program
         ScanReport tooMany = new()
         {
             RelatedComponentDiagnostics = new()
-            { Sources = Enumerable.Range(0, 513).Select(i => new RelatedSourceObservation { Id = "s" + i, Kind = "Run", Scope = "LocalMachine" }).ToList() }
+            { Sources = Enumerable.Range(0, RelatedComponentFragments.MaximumSources + 1).Select(i => new RelatedSourceObservation { Id = "s" + i, Kind = "Run", Scope = "LocalMachine" }).ToList() }
         };
         Check("组件累计来源数量在发送普通范围前拒绝", RejectBeforeSend(tooMany));
         string block = new('x', 32768);

@@ -93,7 +93,11 @@ internal static partial class Program
                     SetRemediationAvailabilityFlag(window, "_reportNeedsRefresh", false);
                     SetTrustProxyUiReport(window, RemediationAvailabilityUiReport());
                     layout.Refresh();
+                    bool disabledWithoutSelection = !remediate.IsEnabled;
+                    window.Findings[0].IsSelected = true;
+                    layout.Refresh();
                     Check($"处置可用UI {fixture} 新扫描可处理但历史未知不显示为成功",
+                        disabledWithoutSelection &&
                         window.GetRemediationAvailability().State == AvailabilityState.EndedUnknown && remediate.IsEnabled &&
                         action.Content?.ToString() == UiExpected("查看记录", "View records") &&
                         explanation.Text == DisplayText.Get("Ui.RemediationAvailability.EndedUnknown") &&
@@ -114,7 +118,10 @@ internal static partial class Program
                         window.GetRemediationAvailability().Action == AvailabilityAction.Rescan && !remediate.IsEnabled && !selectAll.IsEnabled);
                     SetRemediationAvailabilityFlag(window, "_reportNeedsRefresh", false);
                     SetTrustProxyUiReport(window, RemediationAvailabilityUiReport(finishedAt.AddSeconds(1)));
+                    bool endedUnknownRequiresSelection = !remediate.IsEnabled;
+                    window.Findings[0].IsSelected = true;
                     Check($"处置可用UI {fixture} 执行结束后开始的新扫描允许处理并保留未知历史说明",
+                        endedUnknownRequiresSelection &&
                         window.GetRemediationAvailability().State == AvailabilityState.EndedUnknown && remediate.IsEnabled && selectAll.IsEnabled);
                     SetRemediationAvailabilityFlag(window, "_reportNeedsRefresh", false);
                     SetTrustProxyUiReport(window, RemediationAvailabilityUiReport(finishedAt.AddSeconds(-1)));

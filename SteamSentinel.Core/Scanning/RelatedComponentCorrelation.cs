@@ -23,7 +23,7 @@ public sealed partial class RelatedComponentPipeline
                 s.Location.Equals(source.Location, StringComparison.OrdinalIgnoreCase) && s.RawCommand == source.RawCommand && s.WorkingDirectory == source.WorkingDirectory);
             if (old is null)
             {
-                if (target.Sources.Count >= Math.Min(512, limits.MaximumSources)) { truncated = true; continue; }
+                if (target.Sources.Count >= Math.Min(RelatedComponentFragments.MaximumSources, limits.MaximumSources)) { truncated = true; continue; }
                 target.Sources.Add(source); old = source;
             }
             ids[source.Id] = old.Id;

@@ -182,7 +182,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                 IsKnownMalware = true,
                 ConfidenceScore = 100
             };
-            if (session.Plans[0].Actions.Count == 64) session.Plans.Insert(0, new() { Actions = [block], Mode = remediationMode, ExplicitFileTargetsRequested = requestExplicitFileTargets });
+            if (session.Plans[0].Actions.Count == RemediationLimits.MaximumActionsPerPlan) session.Plans.Insert(0, new() { Actions = [block], Mode = remediationMode, ExplicitFileTargetsRequested = requestExplicitFileTargets });
             else { session.Plans[0].Actions.Add(block); RemediationPlanBuilder.OrderActionsForSafeExecution(session.Plans[0].Actions); }
         }
         foreach (MessageText note in notes.Texts.DistinctBy(n => n.OriginalText).Take(4096)) session.AddNote(note);
@@ -263,7 +263,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             Finding[] group = Coalesce(rawGroup);
             string[] files = group.SelectMany(FileKeys).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             long bytes = files.Sum(FileBytes);
-            if (group.Length > 256 || files.Length > 64 || bytes > RelatedArtifactScanner.MaximumVerificationBytes)
+            if (group.Length > RemediationLimits.MaximumActionsPerPlan || files.Length > RemediationLimits.MaximumActionsPerPlan || bytes > RelatedArtifactScanner.MaximumVerificationBytes)
             {
                 foreach (Finding f in rawGroup)
                 {
@@ -288,9 +288,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         List<RemediationPlan> plans = []; RemediationPlan current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets, Mode = remediationMode }; long bytes = 0;
         foreach (List<RemediationAction> group in groups)
         {
-            if (group.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PackActions.01"), sourceText => new InvalidDataException(sourceText));
+            if (group.Count > RemediationLimits.MaximumActionsPerPlan) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.PackActions.01"), sourceText => new InvalidDataException(sourceText));
             long groupBytes = group.Select(a => a.RelatedFilePath ?? a.Target).Distinct(StringComparer.OrdinalIgnoreCase).Sum(FileBytes);
-            if (current.Actions.Count > 0 && (current.Actions.Count + group.Count > 64 || bytes + groupBytes > PreparationBatchBytes))
+            if (current.Actions.Count > 0 && (current.Actions.Count + group.Count > RemediationLimits.MaximumActionsPerPlan || bytes + groupBytes > PreparationBatchBytes))
             { CompletePlan(); current = new() { ExplicitFileTargetsRequested = requestExplicitFileTargets, Mode = remediationMode }; bytes = 0; }
             current.Actions.AddRange(group); bytes += groupBytes;
         }
@@ -435,9 +435,21 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                     result.Actions.Any(r => !plan.Actions.Any(a => a.ActionId == r.ActionId && r.Type == a.Type && r.Target == a.Target)))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationBatchPlanner.ExecuteAsync.05"), sourceText => new InvalidDataException(sourceText));
                 session.Results.Add(result);
-                if (!result.Success || result.Actions.Count != plan.Actions.Count ||
-                    result.Errors.Count > 0 || result.Actions.Any(a => !a.Success || a.VerificationStatus is not (RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual)) ||
-                    result.VerificationStatus is not (RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual))
+                // 防火墙规则作为尽力而为的辅助防护：若本批核心动作（隔离/杀进程/清自启/修复脚本）全部完成且通过验证，
+                // 即使仅防火墙阻断失败或复验未过，也不中止后续批次；同时兼容未填 Disposition 的模拟成功结果。
+                bool hasNonFirewallAction = plan.Actions.Any(a => a.Type != RemediationActionType.AddProgramFirewallBlock);
+                bool hasFirewallAction = plan.Actions.Any(a => a.Type == RemediationActionType.AddProgramFirewallBlock);
+                bool allNonFirewallVerified = hasNonFirewallAction &&
+                    result.Actions.Count == plan.Actions.Count &&
+                    result.Actions.Where(a => a.Type != RemediationActionType.AddProgramFirewallBlock)
+                        .All(a => a.Success && a.VerificationStatus is RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual);
+                bool firewallOnlyDegraded = hasFirewallAction && allNonFirewallVerified &&
+                    result.Disposition is not (RemediationRunDisposition.ExecutionUnknown or RemediationRunDisposition.NotStarted);
+                bool strictFailed = !result.Success || result.Actions.Count != plan.Actions.Count ||
+                    result.Errors.Count > 0 ||
+                    result.Actions.Any(a => !a.Success || a.VerificationStatus is not (RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual)) ||
+                    result.VerificationStatus is not (RemediationVerificationStatus.Verified or RemediationVerificationStatus.NoResidual);
+                if (strictFailed && !firewallOnlyDegraded)
                 { session.InterruptionReasonCode = ReasonCodes.BatchIncomplete; session.InterruptionText = MessageText.Status(ReasonCodes.BatchIncomplete); break; }
                 RefreshOutcomes(session);
             }

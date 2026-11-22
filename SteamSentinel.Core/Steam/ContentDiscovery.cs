@@ -68,7 +68,7 @@ public static class ContentDiscovery
             if (drive is null || new DriveInfo(drive).DriveType == DriveType.Network) return false;
             for (string? current = full; current is not null; current = System.IO.Path.GetDirectoryName(current))
             {
-                try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return false; }
+                try { if (SteamSentinel.Core.Utilities.Validation.IsRedirectingReparsePoint(current)) return false; }
                 catch (FileNotFoundException) { }
                 catch (DirectoryNotFoundException) { }
             }

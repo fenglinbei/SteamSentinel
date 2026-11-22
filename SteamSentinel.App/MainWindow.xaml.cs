@@ -74,7 +74,6 @@ public partial class MainWindow : Window
         try
         {
             await RefreshInstallationSecurityAsync();
-            SetBusy(true);
             ShowActivity(ActivityPhase.Working, DisplayText.Get("Ui.xaml.MainWindow_Loaded.01"));
             SteamLayout layout = await Task.Run(SteamLocator.Discover);
             _findingScopeLayout = layout;
@@ -410,11 +409,65 @@ public partial class MainWindow : Window
         FooterText.Text = DisplayText.Format("Ui.xaml.UpdateProgress.01", (progress.Completed), (progress.DisplayCurrentItem));
     }
 
+    private readonly HashSet<FindingItemViewModel> _subscribedFindings = [];
+    private bool _findingsCollectionHooked;
+
+    private void EnsureFindingSubscriptions()
+    {
+        if (!_findingsCollectionHooked)
+        {
+            Findings.CollectionChanged += Findings_CollectionChanged;
+            _findingsCollectionHooked = true;
+        }
+        foreach (FindingItemViewModel item in Findings) SubscribeFinding(item);
+    }
+
+    private void SubscribeFinding(FindingItemViewModel item)
+    {
+        if (_subscribedFindings.Add(item)) item.PropertyChanged += FindingItem_PropertyChanged;
+    }
+
+    private void UnsubscribeAllFindings()
+    {
+        foreach (FindingItemViewModel item in _subscribedFindings) item.PropertyChanged -= FindingItem_PropertyChanged;
+        _subscribedFindings.Clear();
+    }
+
+    private void Findings_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
+        {
+            UnsubscribeAllFindings();
+            return;
+        }
+        if (e.OldItems is not null)
+        {
+            foreach (FindingItemViewModel item in e.OldItems)
+            {
+                if (_subscribedFindings.Remove(item)) item.PropertyChanged -= FindingItem_PropertyChanged;
+            }
+        }
+        if (e.NewItems is not null)
+        {
+            foreach (FindingItemViewModel item in e.NewItems) SubscribeFinding(item);
+        }
+    }
+
+    private void FindingItem_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(FindingItemViewModel.IsSelected) or nameof(FindingItemViewModel.CanSelect))
+        {
+            UpdateRemediationEligibility();
+        }
+    }
+
     private void PopulateFindings(ScanReport report)
     {
         InvalidateStaleRemediationReport(report);
+        UnsubscribeAllFindings();
         Findings.Clear();
         ClearFindingGroups();
+        EnsureFindingSubscriptions();
         IReadOnlySet<string> referenceIds = FindingPriorityPresentation.ReferenceFindingIds(report);
         foreach (Finding finding in report.Findings.Where(f => f.Category != FindingCategory.Coverage))
         {
@@ -673,58 +726,67 @@ public partial class MainWindow : Window
     private async Task RefreshQuarantineItemsAsync()
     {
         QuarantineItems.Clear();
-        if (!Directory.Exists(AppPaths.QuarantineRoot)) return;
-
-        string[] incidentPaths;
         try
         {
-            incidentPaths = await Task.Run(() => Directory.EnumerateDirectories(AppPaths.QuarantineRoot).Take(2049).ToArray());
-            if (incidentPaths.Length > 2048) FooterText.Text = DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.01");
-        }
-        catch (Exception ex)
-        {
-            FooterText.Text = DisplayText.Format("Ui.xaml.RefreshQuarantineItemsAsync.02", (SteamSentinel.Core.Reporting.MessageExceptions.Display(ex)));
-            return;
-        }
+            if (!Directory.Exists(AppPaths.QuarantineRoot)) return;
 
-        using System.Security.Principal.WindowsIdentity identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-        foreach (string incidentPath in incidentPaths.Take(2048))
-        {
-            if (!Guid.TryParseExact(Path.GetFileName(incidentPath), "D", out Guid incidentId) &&
-                !Guid.TryParseExact(Path.GetFileName(incidentPath), "N", out incidentId)) continue;
-            string manifestPath = Path.Combine(incidentPath, "manifest.json");
+            string[] incidentPaths;
             try
             {
-                if (Validation.ContainsReparsePoint(manifestPath) || new FileInfo(manifestPath).Length > 2 * 1024 * 1024)
-                    throw new InvalidDataException(DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.03"));
-                QuarantineManifest manifest = await JsonFile.ReadAsync<QuarantineManifest>(manifestPath);
-                if (!string.Equals(manifest.RequestedBySid, identity.User?.Value, StringComparison.Ordinal))
-                {
-                    if (string.IsNullOrEmpty(manifest.RequestedBySid))
-                        QuarantineItems.Add(new QuarantineItemViewModel
-                        {
-                            Manifest = new() { IncidentId = incidentId },
-                            ManifestPath = manifestPath,
-                            ReadError = DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.04")
-                        });
-                    continue;
-                }
-                QuarantineItems.Add(new QuarantineItemViewModel { Manifest = manifest, ManifestPath = manifestPath });
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Another user's event is intentionally not readable or displayed.
+                incidentPaths = await Task.Run(() => Directory.EnumerateDirectories(AppPaths.QuarantineRoot).Take(2049).ToArray());
+                if (incidentPaths.Length > 2048) FooterText.Text = DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.01");
             }
             catch (Exception ex)
             {
-                AppErrorLog.Write("ReadQuarantineManifest", ex);
-                QuarantineItems.Add(new QuarantineItemViewModel
-                {
-                    Manifest = new() { IncidentId = incidentId },
-                    ManifestPath = manifestPath,
-                    ReadError = DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.05")
-                });
+                FooterText.Text = DisplayText.Format("Ui.xaml.RefreshQuarantineItemsAsync.02", (SteamSentinel.Core.Reporting.MessageExceptions.Display(ex)));
+                return;
             }
+
+            using System.Security.Principal.WindowsIdentity identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            foreach (string incidentPath in incidentPaths.Take(2048))
+            {
+                if (!Guid.TryParseExact(Path.GetFileName(incidentPath), "D", out Guid incidentId) &&
+                    !Guid.TryParseExact(Path.GetFileName(incidentPath), "N", out incidentId)) continue;
+                string manifestPath = Path.Combine(incidentPath, "manifest.json");
+                try
+                {
+                    if (Validation.ContainsReparsePoint(manifestPath) || new FileInfo(manifestPath).Length > RemediationLimits.MaximumManifestBytes)
+                        throw new InvalidDataException(DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.03"));
+                    QuarantineManifest manifest = await JsonFile.ReadAsync<QuarantineManifest>(manifestPath);
+                    if (!string.Equals(manifest.RequestedBySid, identity.User?.Value, StringComparison.Ordinal))
+                    {
+                        if (string.IsNullOrEmpty(manifest.RequestedBySid))
+                            QuarantineItems.Add(new QuarantineItemViewModel
+                            {
+                                Manifest = new() { IncidentId = incidentId },
+                                ManifestPath = manifestPath,
+                                ReadError = DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.04")
+                            });
+                        continue;
+                    }
+                    QuarantineItems.Add(new QuarantineItemViewModel { Manifest = manifest, ManifestPath = manifestPath });
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Another user's event is intentionally not readable or displayed.
+                }
+                catch (Exception ex)
+                {
+                    AppErrorLog.Write("ReadQuarantineManifest", ex);
+                    QuarantineItems.Add(new QuarantineItemViewModel
+                    {
+                        Manifest = new() { IncidentId = incidentId },
+                        ManifestPath = manifestPath,
+                        ReadError = DisplayText.Get("Ui.xaml.RefreshQuarantineItemsAsync.05")
+                    });
+                }
+            }
+        }
+        finally
+        {
+            if (QuarantineItems.Count > 0 && QuarantineGrid.SelectedItem is null)
+                QuarantineGrid.SelectedIndex = 0;
+            UpdateQuarantineActions();
         }
     }
 
@@ -852,17 +914,33 @@ public partial class MainWindow : Window
         CaseRefreshButton.IsEnabled = !busy;
         CaseRecheckButton.IsEnabled = !busy && CaseListComboBox.Items.Count > 0;
         CaseExportButton.IsEnabled = !busy && CaseListComboBox.Items.Count > 0;
+        if (CaseClearCompletedButton is not null) CaseClearCompletedButton.IsEnabled = !busy && CaseListComboBox.Items.Count > 0;
         CaseListComboBox.IsEnabled = !busy;
+        UpdateUnresolvedExecutionBanner();
         UpdateContainerActions();
-        RollbackButton.IsEnabled = !busy && !_recoveryRequired && !_caseRecoveryUnavailable && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
-        DeleteIncidentButton.IsEnabled = !busy && !_recoveryRequired && !_caseRecoveryUnavailable && !_remediationClient.HasUnresolvedExecution && _installationSecurity.IsProtected;
-        ElevateButton.IsEnabled = !busy && _installationSecurity.IsProtected && !_elevationContext.IsElevated;
+        UpdateQuarantineActions();
+        ElevateButton.IsEnabled = !busy && _installationSecurity.CanRemediate && !_elevationContext.IsElevated;
         RefreshInstallationButton.IsEnabled = !busy;
         if (!busy && _closeWhenIdle && !_windowClosed)
         {
             _closeWhenIdle = false;
             Dispatcher.BeginInvoke(new Action(Close));
         }
+    }
+
+    private void QuarantineGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => UpdateQuarantineActions();
+
+    /// <summary>
+    /// 仅在存在选中隔离记录且运行条件满足时启用撤回与清理事件按钮。
+    /// </summary>
+    private void UpdateQuarantineActions()
+    {
+        if (QuarantineGrid is null || RollbackButton is null || DeleteIncidentButton is null) return;
+        bool enabled = !_busy && !_recoveryRequired && !_caseRecoveryUnavailable &&
+            !_remediationClient.HasUnresolvedExecution && _installationSecurity.CanRemediate &&
+            QuarantineGrid.SelectedItem is QuarantineItemViewModel;
+        RollbackButton.IsEnabled = enabled;
+        DeleteIncidentButton.IsEnabled = enabled;
     }
 
     private async Task<bool> EnsureRemediationAvailableAsync()
@@ -873,7 +951,7 @@ public partial class MainWindow : Window
             return false;
         }
         await RefreshInstallationSecurityAsync();
-        if (_installationSecurity.IsProtected)
+        if (_installationSecurity.CanRemediate)
         {
             if (_elevationContext.CanElevateSameUser) return true;
             // Broker plans remain bound to one SID. A different administrator must rescan.
@@ -903,24 +981,48 @@ public partial class MainWindow : Window
 
     private void ApplyInstallationSecurityStatus()
     {
-        InstallationSecurityText.Text = _installationSecurity.IsProtected
-            ? (_elevationContext.IsElevated ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.01") : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.02"))
-            : DisplayText.Format("Ui.xaml.ApplyInstallationSecurityStatus.03", (_installationSecurity.MessageText.Display));
-        ElevationHintText.Text = !_installationSecurity.IsProtected
-            ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.04")
-            : _elevationContext.IsElevated
+        if (_installationSecurity.Mode == InstallationTrustMode.Protected)
+        {
+            InstallationSecurityText.Text = _elevationContext.IsElevated
+                ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.01")
+                : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.02");
+            ElevationHintText.Text = _elevationContext.IsElevated
                 ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.05")
                 : _elevationContext.CanElevateSameUser
                     ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.06")
                     : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.07");
+            InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#027A48"));
+            string tooltip = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.12");
+            RollbackButton.ToolTip = tooltip;
+            DeleteIncidentButton.ToolTip = tooltip;
+        }
+        else if (_installationSecurity.Mode == InstallationTrustMode.Portable)
+        {
+            InstallationSecurityText.Text = _elevationContext.IsElevated
+                ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableElevated")
+                : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableStandard");
+            ElevationHintText.Text = _elevationContext.IsElevated
+                ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.05")
+                : _elevationContext.CanElevateSameUser
+                    ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableHintCanElevate")
+                    : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableHintStandard");
+            InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B54708"));
+            string tooltip = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableTooltip");
+            RollbackButton.ToolTip = tooltip;
+            DeleteIncidentButton.ToolTip = tooltip;
+        }
+        else
+        {
+            InstallationSecurityText.Text = DisplayText.Format("Ui.xaml.ApplyInstallationSecurityStatus.03", (_installationSecurity.MessageText.Display));
+            ElevationHintText.Text = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.04");
+            InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B54708"));
+            string tooltip = _installationSecurity.MessageText.Display;
+            RollbackButton.ToolTip = tooltip;
+            DeleteIncidentButton.ToolTip = tooltip;
+        }
         ElevateButton.Content = _elevationContext.IsElevated ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.08") : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.09");
         ElevateButton.ToolTip = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.10");
         RefreshInstallationButton.ToolTip = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.11");
-        InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(
-            _installationSecurity.IsProtected ? "#027A48" : "#B54708"));
-        string tooltip = _installationSecurity.IsProtected ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.12") : _installationSecurity.MessageText.Display;
-        RollbackButton.ToolTip = tooltip;
-        DeleteIncidentButton.ToolTip = tooltip;
         SetBusy(_busy);
     }
 
@@ -930,7 +1032,7 @@ public partial class MainWindow : Window
         SetBusy(true);
         try
         {
-            _installationSecurity = await Task.Run(() => InstallationSecurity.Evaluate());
+            _installationSecurity = await Task.Run(() => InstallationSecurity.Evaluate(depth: InstallationVerificationDepth.Fast));
             _elevationContext = ElevationContext.Read();
             ApplyInstallationSecurityStatus();
         }

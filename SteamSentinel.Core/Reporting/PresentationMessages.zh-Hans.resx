@@ -3205,7 +3205,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.DeleteIncident_Click.03" xml:space="preserve">
-    <value>这会永久删除已全部回滚事件的记录及残留备份，无法通过本工具恢复。管理员组件会再次检查事件状态。是否继续？</value>
+    <value>这会直接永久删除所选隔离事件的记录与隔离副本（不会将其还原到原路径），操作无法撤销。管理员组件将再次确认并执行删除。是否继续？</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.DeleteIncident_Click.04" xml:space="preserve">
@@ -3318,6 +3318,26 @@ DER SHA-256：{3}
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.12" xml:space="preserve">
     <value>管理员处置可用</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableElevated" xml:space="preserve">
+    <value>便携模式完整性已通过（管理员窗口）。当前目录不受 Program Files 权限保护，建议使用安装包安装。</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableStandard" xml:space="preserve">
+    <value>便携模式完整性已通过（普通权限窗口）。组件哈希与 SHA256SUMS.txt 一致，但目录缺少 Program Files 写入保护。</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintCanElevate" xml:space="preserve">
+    <value>便携模式下处置会在确认风险后请求 Windows UAC 授权，建议改用安装包安装至受保护目录。</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintStandard" xml:space="preserve">
+    <value>当前为便携模式。如需处置，请打开管理员窗口并输入管理员凭据后重新扫描。</value>
+    <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
+  </data>
+  <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableTooltip" xml:space="preserve">
+    <value>便携模式管理员处置可用（已核验 SHA256SUMS.txt，目录无 Program Files 只读 ACL 保护）</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.RefreshInstallation_Click.02" xml:space="preserve">
@@ -4627,6 +4647,10 @@ DER SHA-256：{3}
     <value>请先保存工作。关闭进程可能中断游戏；隔离不会立即永久删除。</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
+  <data name="Ui.RemediationPreviewWindow.PortableRiskNotice" xml:space="preserve">
+    <value>风险提示：当前正从便携目录运行（非 Program Files 受保护安装）。虽然已完成 SHA256SUMS.txt 完整性校验，但普通账户可修改当前目录，请仅在完全信任当前运行目录时继续提权处置。</value>
+    <comment>Display only: Dialogs/RemediationPreviewWindow.xaml.cs</comment>
+  </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.004" xml:space="preserve">
     <value>本次将执行</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
@@ -5012,11 +5036,11 @@ DER SHA-256：{3}
     <comment>Backend display descriptor; source text is preserved and never used to infer authorization.</comment>
   </data>
   <data name="Backend.Broker.BrokerEngine.EnsureIncidentDeletionAllowed.01" xml:space="preserve">
-    <value>该事件仍有活动隔离记录。当前 Broker 不接受可由普通进程伪造的“干净复扫”作为永久删除授权；</value>
+    <value>该隔离事件记录不完整或无效，已拒绝永久删除；</value>
     <comment>Backend display descriptor; source text is preserved and never used to infer authorization.</comment>
   </data>
   <data name="Backend.Broker.BrokerEngine.EnsureIncidentDeletionAllowed.02" xml:space="preserve">
-    <value>请保留隔离，不要为了删除事件而回滚可疑样本。仅所有记录原本就已安全回滚的空事件可以清理。</value>
+    <value>请保留现有隔离条目并核对清单元数据。</value>
     <comment>Backend display descriptor; source text is preserved and never used to infer authorization.</comment>
   </data>
   <data name="Backend.Broker.BrokerEngine.RestoreFileAsync.01" xml:space="preserve">
@@ -5249,10 +5273,10 @@ DER SHA-256：{3}
 </value>
   </data>
   <data name="Backend.Broker.Program.BuildConfirmationMessage.02" xml:space="preserve">
-    <value>此操作无法撤销。Broker 仅允许清理所有记录均已回滚、已无活动隔离内容的事件；</value>
+    <value>此操作无法撤销，将直接永久清除当前事件记录及其隔离备份。</value>
   </data>
   <data name="Backend.Broker.Program.BuildConfirmationMessage.03" xml:space="preserve">
-    <value>不要为了删除事件而回滚可疑样本。如有疑问，请选择“否”并保留隔离。
+    <value>本操作不会将隔离样本还原回原路径。如有疑问，请选择“否”并保留隔离。
 
 是否继续？</value>
   </data>
@@ -9986,7 +10010,7 @@ DER SHA-256：{3}
     <value>会话读取已取消；现有字段仅为部分观察，不能认定新启动或新登录。</value>
   </data>
   <data name="Backend.Core.WindowsCaseSessionReader.ReadCore.09" xml:space="preserve">
-    <value> 启动证据来自现存 System/Kernel-General 12 事件；日志缺失或重置不推定新启动。仅证明会话变化，不证明整机已清除。</value>
+    <value> 启动证据来自现存 System/Kernel-General 12 或 Kernel-Boot 27（BootType 0/1）事件；日志缺失或重置不推定新启动。仅证明会话变化，不证明整机已清除。</value>
   </data>
   <data name="Backend.Core.WindowsCaseSessionReader.ReadBoot.01" xml:space="preserve">
     <value>没有可读取的系统启动事件，不用当前时间或运行时长猜测新启动。</value>
@@ -10639,6 +10663,9 @@ DER SHA-256：{3}
   <data name="Backend.Core.InstallationSecurity.Protected.01" xml:space="preserve">
     <value>受保护安装与组件完整性校验已通过</value>
   </data>
+  <data name="Backend.Core.InstallationSecurity.Portable.01" xml:space="preserve">
+    <value>便携模式组件完整性校验已通过（非 Program Files 目录，建议使用安装包获得完整权限保护）</value>
+  </data>
   <data name="Backend.Core.InstallationSecurity.Evaluate.01" xml:space="preserve">
     <value>当前不是 Program Files 受保护安装，扫描可用，管理员处置已关闭</value>
   </data>
@@ -10856,7 +10883,7 @@ DER SHA-256：{3}
     <value>单个关联组超过本批安全上限，未拆开执行：</value>
   </data>
   <data name="Backend.Core.RemediationBatchPlanner.PackActions.01" xml:space="preserve">
-    <value>单个关联组超过 64 个动作，不能拆开执行。</value>
+    <value>单个关联组超过 256 个动作，不能拆开执行。</value>
   </data>
   <data name="Backend.Core.RemediationBatchPlanner.ExecuteAsync.01" xml:space="preserve">
     <value>此批次会话已开始执行，请重新扫描，不能重复提交。</value>
@@ -10937,7 +10964,7 @@ DER SHA-256：{3}
     <value>同一处置目标存在冲突快照，请重新扫描。</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.BuildAsync.04" xml:space="preserve">
-    <value>完整处置计划超过 64 个动作，请按关联组分批处理。</value>
+    <value>完整处置计划超过 256 个动作，请按关联组分批处理。</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.BuildAsync.05" xml:space="preserve">
     <value>阻断恶意程序出站连接</value>
@@ -10946,7 +10973,7 @@ DER SHA-256：{3}
     <value>在 hosts 中阻断已知 C2 域名</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.BuildAsync.07" xml:space="preserve">
-    <value>完整处置计划超过 64 个动作，请按关联组分批处理。</value>
+    <value>完整处置计划超过 256 个动作，请按关联组分批处理。</value>
   </data>
   <data name="Backend.Core.RemediationPlanBuilder.CreateFileActionAsync.01" xml:space="preserve">
     <value>隔离文件</value>
@@ -11984,4 +12011,15 @@ DER SHA-256：{3}
 原因：{2}</value></data>
   <data name="Backend.Core.FileOccupancy.WithProcesses" xml:space="preserve"><value>{0} 占用：{1}</value></data>
   <data name="Backend.Core.FileOccupancy.Append" xml:space="preserve"><value>{0} {1}</value></data>
+  <data name="Ui.Xaml.MainWindow.CaseClearCompletedButton" xml:space="preserve"><value>清理已完成记录</value></data>
+  <data name="Ui.Cases.ClearCompleted.ConfirmTitle" xml:space="preserve"><value>清理记录确认</value></data>
+  <data name="Ui.Cases.ClearCompleted.ConfirmBody" xml:space="preserve"><value>是否清除本地历史中所有已完成的处置记录？包含未决或尚未确认结果的记录会自动保留，隔离区文件不受影响。</value></data>
+  <data name="Ui.Cases.ClearCompleted.Result" xml:space="preserve"><value>已清理 {0} 条已完成记录。</value></data>
+  <data name="Ui.Cases.ClearCompleted.None" xml:space="preserve"><value>当前没有可清理的已完成记录。</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.Banner" xml:space="preserve"><value>上次管理员处置未能收回到最终回执。若你确认管理员窗口已退出且不再等待其结果，可手动将其归档为“结果未知”以解除当前锁定。</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.Button" xml:space="preserve"><value>手动归档为未知结果</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.ConfirmTitle" xml:space="preserve"><value>确认解除未决锁定</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.ConfirmBody" xml:space="preserve"><value>请仅在确认已无管理员组件窗口运行时继续。未决计划将按“结果未知”归档（不会重放，也不会记为成功），以便恢复后续操作。是否继续？</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.ErrorSummary" xml:space="preserve"><value>因上次管理员执行未返回回执，已由用户手动确认归档为结果未知。</value></data>
+  <data name="Ui.Cases.AcknowledgeUnknown.Done" xml:space="preserve"><value>已将该未决记录归档为结果未知并解除限制，建议复核相关目标状态。</value></data>
 </root>

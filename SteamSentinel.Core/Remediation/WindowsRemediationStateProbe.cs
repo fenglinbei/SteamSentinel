@@ -130,13 +130,12 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
                     "$a=@($r|Get-NetFirewallApplicationFilter -ErrorAction Stop);$p=@($r|Get-NetFirewallPortFilter -ErrorAction Stop);" +
                     "$d=@($r|Get-NetFirewallAddressFilter -ErrorAction Stop);$s=@($r|Get-NetFirewallServiceFilter -ErrorAction Stop);" +
                     "$i=@($r|Get-NetFirewallInterfaceFilter -ErrorAction Stop);$t=@($r|Get-NetFirewallInterfaceTypeFilter -ErrorAction Stop);" +
-                    "$f=@(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop);" +
                     "if([string]$r.Enabled -eq 'True' -and [string]$r.Action -eq 'Block' -and [string]$r.Direction -eq 'Outbound' -and [string]$r.Profile -eq 'Any' -and " +
                     "$a.Count -eq 1 -and $a[0].Program -ieq " + Literal(action.Target) + " -and " +
                     "$p.Count -eq 1 -and [string]$p[0].Protocol -eq 'Any' -and [string]$p[0].LocalPort -eq 'Any' -and [string]$p[0].RemotePort -eq 'Any' -and " +
                     "$d.Count -eq 1 -and [string]$d[0].LocalAddress -eq 'Any' -and [string]$d[0].RemoteAddress -eq 'Any' -and " +
                     "$s.Count -eq 1 -and $s[0].Service -eq 'Any' -and $i.Count -eq 1 -and [string]$i[0].InterfaceAlias -eq 'Any' -and " +
-                    "$t.Count -eq 1 -and [string]$t[0].InterfaceType -eq 'Any' -and $f.Count -eq 3 -and @($f|Where-Object {[int]$_.Enabled -ne 1}).Count -eq 0)" +
+                    "$t.Count -eq 1 -and [string]$t[0].InterfaceType -eq 'Any')" +
                     "{'Verified'}else{'ResidualDetected'}", MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.11"), cancellationToken);
             case RemediationActionType.BlockKnownDomains:
                 string hosts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "drivers", "etc", "hosts");

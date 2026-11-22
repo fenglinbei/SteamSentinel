@@ -234,6 +234,8 @@ internal static partial class Program
             finally { configPreview.Close(); }
             using (BrokerConfirmationWindow broker = new(plan, null))
             {
+                Check($"Mode Broker {culture.Name} 默认不将取消设为AcceptButton以防回车误取消",
+                    broker.AcceptButton is null && broker.CancelButton is not null);
                 foreach ((int width, int height) in new[] { (1080, 720), (800, 560) })
                 {
                     broker.ConstrainToWorkingArea(new System.Drawing.Rectangle(0, 0, width, height));

@@ -60,11 +60,10 @@ function Assert-PreviewSourcePathAllowed {
         $normalized -match '^native/[^/]+\.(cpp|h|rc|manifest)$' -or
         $normalized -eq 'scripts/check_localization_resources.py' -or
         $normalized -eq 'installer/ChineseSimplified.isl' -or
-        $normalized -eq 'installer/Initialize-MachineState.ps1' -or
         $normalized -eq 'installer/MachineStateBootstrap.cs' -or
-        $normalized -eq 'installer/Maintain-InstallPayload.ps1' -or
         $normalized -eq 'installer/PayloadMaintenance.cs' -or
-        $normalized -eq 'installer/Verify-WorkerFirewall.ps1' -or
+        $normalized -eq 'installer/SetupHelperMain.cs' -or
+        $normalized -eq 'scripts/build-setup-helper.ps1' -or
         $normalized -match '^\.github/workflows/[^/]+\.(yml|yaml)$'
     if (-not $allowed) {
         throw "Dirty Preview refuses added file outside the source allowlist: $Path"
@@ -635,13 +634,18 @@ try {
             throw 'Inno Setup 6 compiler was not found. Use -SkipInstaller only for a development Preview.'
         }
 
+        $setupHelperPath = Join-Path $workRoot 'setup-helper\SteamSentinel.SetupHelper.exe'
+        $null = & (Join-Path $snapshotRoot 'scripts\build-setup-helper.ps1') -OutputPath $setupHelperPath -SourceRoot $snapshotRoot
+        if ($null -ne $signingProfile) {
+            Sign-ReleaseFiles -Profile $signingProfile -Root (Split-Path -Parent $setupHelperPath) -RelativeFiles @([IO.Path]::GetFileName($setupHelperPath))
+        }
         $installerScript = Join-Path $snapshotRoot 'installer\SteamSentinel.iss'
         $signArgs = @(Get-InnoSigningArguments -Profile $signingProfile)
         if ($null -ne $signingProfile) {
             New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot 'signing-cache\SteamSentinel') | Out-Null
         }
         & $iscc "/DPayloadDir=$packageDir" "/DOutputDir=$stageRoot" "/DAppVersion=$version" `
-            "/DArtifactBaseName=SteamSentinel-$artifactVersion" @signArgs $installerScript
+            "/DArtifactBaseName=SteamSentinel-$artifactVersion" "/DSetupHelperPath=$setupHelperPath" @signArgs $installerScript
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
             throw "Installer compilation failed with exit code $LASTEXITCODE"
         }

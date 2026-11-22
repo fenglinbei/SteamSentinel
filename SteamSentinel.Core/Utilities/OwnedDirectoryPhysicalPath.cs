@@ -82,7 +82,7 @@ public static class OwnedDirectoryPhysicalPath
     {
         if (!GetFileInformationByHandle(handle, out FileInformation information) ||
             (information.Attributes & (uint)FileAttributes.Directory) == 0 ||
-            (information.Attributes & (uint)FileAttributes.ReparsePoint) != 0)
+            ((information.Attributes & (uint)FileAttributes.ReparsePoint) != 0 && Validation.IsRedirectingReparseHandle(handle)))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.OwnedDirectoryPhysicalPath.DirectoryIdentity.01"), sourceText => new IOException(sourceText));
         return information;
     }

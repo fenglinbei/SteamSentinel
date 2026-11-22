@@ -137,7 +137,7 @@ public sealed partial class ContentScanner : IDisposable
             try
             {
                 FileAttributes attributes = File.GetAttributes(directory);
-                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                if ((attributes & FileAttributes.ReparsePoint) != 0 && Validation.IsRedirectingReparsePoint(directory))
                 {
                     AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.04", (directory)), directory, workshopId);
                     continue;

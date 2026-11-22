@@ -5,22 +5,18 @@ namespace SteamSentinel.App.Services;
 
 internal static class IncidentDeletionPolicy
 {
-    // This is a UX precondition, not an attestation. Broker independently refuses active records.
+    /// <summary>
+    /// 评估隔离事件是否具备永久删除的基本数据前提；允许用户经确认直接彻底清除尚未回滚的隔离副本。
+    /// </summary>
     internal static MessageText? RejectionReason(QuarantineManifest incident, ScanReport? report,
         Guid? fullSystemAndContentScanId, DateTimeOffset now, DateTimeOffset currentBoot)
     {
-        if (incident.Records.Any(record => !record.RolledBack))
+        _ = report;
+        _ = fullSystemAndContentScanId;
+        _ = now;
+        _ = currentBoot;
+        if (incident is null || incident.IncidentId == Guid.Empty || incident.Records.Count == 0)
             return MessageText.Create("Backend.Core.IncidentDeletionPolicy.RejectionReason.01");
-        if (currentBoot <= incident.MachineBootTimeUtc.AddMinutes(1))
-            return MessageText.Create("Backend.Core.IncidentDeletionPolicy.RejectionReason.02");
-        if (report is null || report.ScanId != fullSystemAndContentScanId || report.Mode != ScanMode.Full ||
-            report.ExecutionState != ScanExecutionState.Completed ||
-            report.Coverage != ScanCoverage.Complete || report.RootSummaries.Any(root => root.Coverage != ScanCoverage.Complete) ||
-            report.CompletedAtUtc is not { } completed || completed < report.StartedAtUtc || completed > now ||
-            report.StartedAtUtc <= incident.CreatedAtUtc || report.StartedAtUtc < currentBoot || now - completed > TimeSpan.FromHours(24))
-            return MessageText.Create("Backend.Core.IncidentDeletionPolicy.RejectionReason.03");
-        if (report.Findings.Any(finding => finding.IsKnownMalware))
-            return MessageText.Create("Backend.Core.IncidentDeletionPolicy.RejectionReason.04");
         return null;
     }
 }

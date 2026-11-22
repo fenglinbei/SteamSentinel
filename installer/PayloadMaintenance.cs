@@ -46,9 +46,34 @@ public static class SteamSentinelPayloadMaintenance
     };
     static readonly string[] Trusted = { "S-1-5-18", "S-1-5-32-544",
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464" };
-    static readonly HashSet<string> InstallerMetadata = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-        "SHA256SUMS.txt", "unins000.exe", "unins000.dat", "unins000.msg"
-    };
+    static bool IsTrustedSid(string sid, string[] trusted)
+    {
+        if (String.IsNullOrEmpty(sid)) return false;
+        if (Array.IndexOf(trusted, sid) >= 0) return true;
+        if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase)) return false;
+        string[] parts = sid.Split('-');
+        if (parts.Length != 8) return false;
+        uint dummy;
+        for (int i = 4; i <= 6; i++)
+        {
+            if (!UInt32.TryParse(parts[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out dummy))
+                return false;
+        }
+        return parts[7] == "500" || parts[7] == "512" || parts[7] == "519";
+    }
+    sealed class LegacyExpectation
+    {
+        public long Bytes; // -1 表示来源于受保护旧清单差集，按精确 SHA-256 校验
+        public string Sha256;
+    }
+    static bool IsInstallerMetadata(string relativePath)
+    {
+        if (String.Equals(relativePath, "SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase)) return true;
+        if (relativePath.Length != 12 || !relativePath.StartsWith("unins", StringComparison.OrdinalIgnoreCase)) return false;
+        for (int i = 5; i <= 7; i++) if (relativePath[i] < '0' || relativePath[i] > '9') return false;
+        string extension = relativePath.Substring(8).ToLowerInvariant();
+        return extension == ".exe" || extension == ".dat" || extension == ".msg";
+    }
     const uint ReadControl = 0x20000, ReadAttributes = 0x80, GenericRead = 0x80000000, DeleteAccess = 0x10000;
     const uint OpenExisting = 3, OpenReparsePoint = 0x00200000, BackupSemantics = 0x02000000;
     const uint DirectoryAttribute = 0x10, ReparseAttribute = 0x400;
@@ -62,6 +87,8 @@ public static class SteamSentinelPayloadMaintenance
     static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileInfoNative info);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileTagInfo info, uint size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern uint GetFileAttributes(string path);
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -80,7 +107,28 @@ public static class SteamSentinelPayloadMaintenance
         public uint VolumeSerial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
     [StructLayout(LayoutKind.Sequential)]
+    struct FileTagInfo { public uint Attributes, Tag; }
+    [StructLayout(LayoutKind.Sequential)]
     struct Disposition { [MarshalAs(UnmanagedType.U1)] public bool DeleteFile; }
+
+    static bool IsRedirectingTag(uint tag) { return (tag & 0x20000000U) != 0 || tag == 0x8000001BU; }
+    static bool IsRedirectingHandle(SafeFileHandle handle)
+    {
+        FileTagInfo tag;
+        if (!GetFileInformationByHandleEx(handle, 9, out tag, 8)) return true;
+        return (tag.Attributes & ReparseAttribute) != 0 && IsRedirectingTag(tag.Tag);
+    }
+    static bool IsRedirectingPath(string path)
+    {
+        uint attributes = GetFileAttributes(path);
+        if (attributes == 0xFFFFFFFF) return true;
+        if ((attributes & ReparseAttribute) == 0) return false;
+        using (SafeFileHandle handle = CreateFile(path, ReadAttributes, 7, IntPtr.Zero, OpenExisting, OpenReparsePoint | BackupSemantics, IntPtr.Zero))
+        {
+            if (handle.IsInvalid) return true;
+            return IsRedirectingHandle(handle);
+        }
+    }
 
     sealed class HeldFile : IDisposable
     {
@@ -126,7 +174,8 @@ public static class SteamSentinelPayloadMaintenance
     static FileInfoNative CheckIdentity(SafeFileHandle handle, string expected, string relative, bool directory)
     {
         FileInfoNative info;
-        if (!GetFileInformationByHandle(handle, out info) || (info.Attributes & ReparseAttribute) != 0 ||
+        if (!GetFileInformationByHandle(handle, out info) ||
+            ((info.Attributes & ReparseAttribute) != 0 && IsRedirectingHandle(handle)) ||
             ((info.Attributes & DirectoryAttribute) != 0) != directory || (!directory && info.Links != 1))
             throw new MaintenanceException("UnsafePath", relative);
         StringBuilder final = new StringBuilder(32768);
@@ -146,14 +195,14 @@ public static class SteamSentinelPayloadMaintenance
             if (length == 0 || length > 65536) throw new MaintenanceException("UnsafePermissions", relative);
             byte[] bytes = new byte[(int)length]; Marshal.Copy(descriptor, bytes, 0, bytes.Length);
             RawSecurityDescriptor security = new RawSecurityDescriptor(bytes, 0);
-            if (security.Owner == null || Array.IndexOf(trusted, security.Owner.Value) < 0 || security.DiscretionaryAcl == null)
+            if (security.Owner == null || !IsTrustedSid(security.Owner.Value, trusted) || security.DiscretionaryAcl == null)
                 throw new MaintenanceException("UnsafePermissions", relative);
             foreach (GenericAce entry in security.DiscretionaryAcl) {
                 if ((entry.AceFlags & AceFlags.InheritOnly) != 0) continue;
                 QualifiedAce ace = entry as QualifiedAce;
                 if (ace == null) throw new MaintenanceException("UnsafePermissions", relative);
                 if (ace.AceQualifier == AceQualifier.AccessAllowed && (ace.AccessMask & WriteMask) != 0 &&
-                    (ace.IsCallback || Array.IndexOf(trusted, ace.SecurityIdentifier.Value) < 0))
+                    (ace.IsCallback || !IsTrustedSid(ace.SecurityIdentifier.Value, trusted)))
                     throw new MaintenanceException("UnsafePermissions", relative);
             }
         } finally { if (descriptor != IntPtr.Zero) LocalFree(descriptor); }
@@ -231,7 +280,7 @@ public static class SteamSentinelPayloadMaintenance
                 if (!GetFileInformationByHandle(handle, out info))
                     throw PathFailure("UnsafePath", role, path, candidate, "", Marshal.GetLastWin32Error());
                 bool directory = (info.Attributes & DirectoryAttribute) != 0;
-                if ((info.Attributes & ReparseAttribute) != 0 || (!directory && (index < parts.Length - 1 || info.Links != 1)))
+                if (((info.Attributes & ReparseAttribute) != 0 && IsRedirectingHandle(handle)) || (!directory && (index < parts.Length - 1 || info.Links != 1)))
                     throw PathFailure("UnsafePath", role, path, candidate, "", 0);
                 StringBuilder final = new StringBuilder(32768);
                 uint count = GetFinalPathNameByHandle(handle, final, (uint)final.Capacity, 0);
@@ -270,29 +319,77 @@ public static class SteamSentinelPayloadMaintenance
             string text;
             try { text = new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF'); }
             catch (DecoderFallbackException) { throw new MaintenanceException("InvalidManifest", ""); }
-            Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string raw in text.Split('\n')) {
-                string line = raw.EndsWith("\r", StringComparison.Ordinal) ? raw.Substring(0, raw.Length - 1) : raw;
-                if (line.Length == 0) continue;
-                if (line.Length < 67 || line[64] != ' ' || line[65] != '*' || !IsHash(line.Substring(0, 64))) throw new MaintenanceException("InvalidManifest", "");
-                string name = RelativeName(line.Substring(66));
-                if (InstallerMetadata.Contains(name) || result.ContainsKey(name) || result.Count >= MaximumEntries) throw new MaintenanceException("InvalidManifest", name);
-                result.Add(name, line.Substring(0, 64));
-            }
-            if (result.Count == 0) throw new MaintenanceException("InvalidManifest", "");
-            return result;
+            return ParseManifestText(text, false);
         }
         } finally { for (int i = parents.Count - 1; i >= 0; i--) parents[i].Dispose(); }
     }
 
+    static Dictionary<string, string> ParseManifestText(string text, bool legacyContext)
+    {
+        Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string raw in text.Split('\n')) {
+            string line = raw.EndsWith("\r", StringComparison.Ordinal) ? raw.Substring(0, raw.Length - 1) : raw;
+            if (line.Length == 0) continue;
+            if (line.Length < 67 || line[64] != ' ' || (line[65] != '*' && (!legacyContext || line[65] != ' ')) || !IsHash(line.Substring(0, 64)))
+                throw new MaintenanceException(legacyContext ? "LegacyContentMismatch" : "InvalidManifest", legacyContext ? "SHA256SUMS.txt" : "");
+            string name = RelativeName(line.Substring(66).Replace('/', '\\'));
+            if (IsInstallerMetadata(name) || result.ContainsKey(name) || result.Count >= MaximumEntries)
+                throw new MaintenanceException(legacyContext ? "LegacyContentMismatch" : "InvalidManifest", name);
+            result.Add(name, line.Substring(0, 64));
+        }
+        if (result.Count == 0) throw new MaintenanceException(legacyContext ? "LegacyContentMismatch" : "InvalidManifest", "");
+        return result;
+    }
+
+    static Dictionary<string, string> TryReadProtectedInstalledManifest(string root, string incomingManifestHash, string[] trusted, string snapshotOutPath)
+    {
+        string installedManifestPath = System.IO.Path.Combine(root, "SHA256SUMS.txt");
+        if (!File.Exists(installedManifestPath)) return null;
+        using (HeldFile existing = new HeldFile(installedManifestPath, "SHA256SUMS.txt", false, false, false, trusted)) {
+            if (existing.Length <= 0 || existing.Length > 4 * 1024 * 1024)
+                throw new MaintenanceException("LegacyContentMismatch", "SHA256SUMS.txt");
+            if (String.Equals(existing.Hash(), incomingManifestHash, StringComparison.OrdinalIgnoreCase))
+                return null;
+            existing.Stream.Position = 0;
+            byte[] bytes = new byte[(int)existing.Length];
+            int offset = 0;
+            while (offset < bytes.Length) {
+                int n = existing.Stream.Read(bytes, offset, bytes.Length - offset);
+                if (n == 0) throw new MaintenanceException("LegacyContentMismatch", "SHA256SUMS.txt");
+                offset += n;
+            }
+            if (!String.IsNullOrEmpty(snapshotOutPath)) {
+                string snapshotFull = FullLocal(snapshotOutPath, "<previous-manifest-snapshot>");
+                List<HeldFile> snapshotParents = new List<HeldFile>();
+                try {
+                    string[] snapshotTrust = new string[trusted.Length + 1];
+                    Array.Copy(trusted, snapshotTrust, trusted.Length);
+                    snapshotTrust[trusted.Length] = WindowsIdentity.GetCurrent().User.Value;
+                    PinAncestors(System.IO.Path.GetDirectoryName(snapshotFull), snapshotParents, snapshotTrust, false);
+                    File.WriteAllBytes(snapshotFull, bytes);
+                } finally { for (int i = snapshotParents.Count - 1; i >= 0; i--) snapshotParents[i].Dispose(); }
+            }
+            string text;
+            try { text = new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF'); }
+            catch (DecoderFallbackException) { throw new MaintenanceException("LegacyContentMismatch", "SHA256SUMS.txt"); }
+            return ParseManifestText(text, true);
+        }
+    }
+
     public static string[] Run(string mode, string incomingManifestPath, string expectedManifestSha256)
+    {
+        return Run(mode, incomingManifestPath, expectedManifestSha256, null, null, null);
+    }
+
+    public static string[] Run(string mode, string incomingManifestPath, string expectedManifestSha256,
+        string previousManifestPath, string expectedPreviousManifestSha256, string snapshotPreviousManifestOutPath)
     {
         using (WindowsIdentity identity = WindowsIdentity.GetCurrent()) {
             if (!Environment.Is64BitProcess || !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
                 throw new MaintenanceException("AccessDenied", "<installer>");
             string parent = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             return RunCore(mode, System.IO.Path.Combine(parent, "SteamSentinel"), incomingManifestPath,
-                expectedManifestSha256, Catalog, Trusted, null);
+                expectedManifestSha256, Catalog, Trusted, null, previousManifestPath, expectedPreviousManifestSha256, snapshotPreviousManifestOutPath);
         }
     }
 
@@ -300,29 +397,69 @@ public static class SteamSentinelPayloadMaintenance
     public static string[] RunForTest(string mode, string root, string incomingManifestPath, string expectedManifestSha256,
         LegacyEntry[] approvedCatalog, Action beforeRetireRecheck)
     {
+        return RunForTestWithPrevious(mode, root, incomingManifestPath, expectedManifestSha256, approvedCatalog, beforeRetireRecheck, null, null, null);
+    }
+
+    public static string[] RunForTestWithPrevious(string mode, string root, string incomingManifestPath, string expectedManifestSha256,
+        LegacyEntry[] approvedCatalog, Action beforeRetireRecheck,
+        string previousManifestPath, string expectedPreviousManifestSha256, string snapshotPreviousManifestOutPath)
+    {
         string full = FullLocal(root, "<test-root>"), temp = FullLocal(System.IO.Path.GetTempPath(), "<test-temp>").TrimEnd('\\') + "\\";
         if (!full.StartsWith(temp, StringComparison.OrdinalIgnoreCase) || full.Length <= temp.Length) throw new MaintenanceException("UnsafePath", "<test-root>");
         List<string> trust = new List<string>(Trusted); trust.Add(WindowsIdentity.GetCurrent().User.Value);
-        return RunCore(mode, full, incomingManifestPath, expectedManifestSha256, approvedCatalog, trust.ToArray(), beforeRetireRecheck);
+        return RunCore(mode, full, incomingManifestPath, expectedManifestSha256, approvedCatalog, trust.ToArray(), beforeRetireRecheck,
+            previousManifestPath, expectedPreviousManifestSha256, snapshotPreviousManifestOutPath);
     }
     public static LegacyEntry[] GetCatalogForTest() { return (LegacyEntry[])Catalog.Clone(); }
 #endif
 
-    static string[] RunCore(string mode, string root, string manifestPath, string manifestHash,
-        LegacyEntry[] catalog, string[] trusted, Action beforeRetireRecheck)
+    static void AddExpectation(Dictionary<string, List<LegacyExpectation>> legacy, string relative, long bytes, string sha256)
     {
-        if (mode != "Preflight" && mode != "Retire" && mode != "Verify") throw new MaintenanceException("InvalidManifest", "<mode>");
+        List<LegacyExpectation> list;
+        if (!legacy.TryGetValue(relative, out list)) { list = new List<LegacyExpectation>(); legacy.Add(relative, list); }
+        list.Add(new LegacyExpectation { Bytes = bytes, Sha256 = sha256 });
+    }
+
+    static LegacyExpectation MatchLegacy(HeldFile file, List<LegacyExpectation> candidates)
+    {
+        string actualHash = file.Hash();
+        foreach (LegacyExpectation candidate in candidates) {
+            if ((candidate.Bytes < 0 || file.Length == candidate.Bytes) &&
+                String.Equals(actualHash, candidate.Sha256, StringComparison.OrdinalIgnoreCase))
+                return candidate;
+        }
+        return null;
+    }
+
+    static string[] RunCore(string mode, string root, string manifestPath, string manifestHash,
+        LegacyEntry[] catalog, string[] trusted, Action beforeRetireRecheck,
+        string previousManifestPath, string expectedPreviousManifestSha256, string snapshotPreviousManifestOutPath)
+    {
+        bool retireMode = mode == "Retire" || mode == "RetireAndVerify";
+        bool verifyMode = mode == "Verify" || mode == "RetireAndVerify";
+        if (mode != "Preflight" && !retireMode && !verifyMode) throw new MaintenanceException("InvalidManifest", "<mode>");
         root = FullLocal(root, "<installation-path>");
         List<string> inputTrust = new List<string>(Trusted); inputTrust.Add(WindowsIdentity.GetCurrent().User.Value);
         Dictionary<string, string> manifest = LoadManifest(manifestPath, manifestHash, inputTrust.ToArray());
-        Dictionary<string, LegacyEntry> legacy = new Dictionary<string, LegacyEntry>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<LegacyExpectation>> legacy = new Dictionary<string, List<LegacyExpectation>>(StringComparer.OrdinalIgnoreCase);
         foreach (LegacyEntry entry in catalog) {
             string relative = RelativeName(entry.RelativePath);
-            if (entry.Bytes < 0 || !IsHash(entry.Sha256) || legacy.ContainsKey(relative)) throw new MaintenanceException("InvalidManifest", relative);
-            legacy.Add(relative, entry);
+            if (entry.Bytes < 0 || !IsHash(entry.Sha256)) throw new MaintenanceException("InvalidManifest", relative);
+            AddExpectation(legacy, relative, entry.Bytes, entry.Sha256);
+        }
+        if (!String.IsNullOrEmpty(previousManifestPath) || !String.IsNullOrEmpty(expectedPreviousManifestSha256)) {
+            if (String.IsNullOrEmpty(previousManifestPath) || !IsHash(expectedPreviousManifestSha256))
+                throw new MaintenanceException("InvalidManifest", "<previous-manifest>");
+            Dictionary<string, string> previous = LoadManifest(previousManifestPath, expectedPreviousManifestSha256, inputTrust.ToArray());
+            foreach (KeyValuePair<string, string> kv in previous) {
+                if (!manifest.ContainsKey(kv.Key) && !IsInstallerMetadata(kv.Key))
+                    AddExpectation(legacy, kv.Key, -1, kv.Value);
+            }
         }
         string parent = System.IO.Path.GetDirectoryName(root);
-        List<HeldFile> held = new List<HeldFile>(); List<HeldFile> retired = new List<HeldFile>(); List<string> log = new List<string>();
+        List<HeldFile> held = new List<HeldFile>(); List<HeldFile> retired = new List<HeldFile>();
+        Dictionary<string, LegacyExpectation> matchedRetired = new Dictionary<string, LegacyExpectation>(StringComparer.OrdinalIgnoreCase);
+        List<string> log = new List<string>();
         try {
             PinAncestors(parent, held, trusted, false);
             held.Add(new HeldFile(parent, "<parent>", true, false, false, trusted));
@@ -333,8 +470,18 @@ public static class SteamSentinelPayloadMaintenance
                 if (mode != "Preflight") throw new MaintenanceException("InstallationMissing", "");
                 return new[] { "Preflight: no existing application payload." };
             }
-            if ((rootAttributes & ReparseAttribute) != 0 || (rootAttributes & DirectoryAttribute) == 0)
+            if (((rootAttributes & ReparseAttribute) != 0 && IsRedirectingPath(root)) || (rootAttributes & DirectoryAttribute) == 0)
                 throw new MaintenanceException("UnsafePath", "");
+            if (mode != "Verify") {
+                Dictionary<string, string> installedPrevious = TryReadProtectedInstalledManifest(
+                    root, manifestHash, trusted, mode == "Preflight" ? snapshotPreviousManifestOutPath : null);
+                if (installedPrevious != null) {
+                    foreach (KeyValuePair<string, string> kv in installedPrevious) {
+                        if (!manifest.ContainsKey(kv.Key) && !IsInstallerMetadata(kv.Key))
+                            AddExpectation(legacy, kv.Key, -1, kv.Value);
+                    }
+                }
+            }
             Queue<string> pending = new Queue<string>(); pending.Enqueue(root);
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase); long total = 0; int entries = 0;
             while (pending.Count != 0) {
@@ -345,45 +492,53 @@ public static class SteamSentinelPayloadMaintenance
                     if (++entries > MaximumEntries || !path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)) throw new MaintenanceException("UnsafePath", "<inventory>");
                     string relative = RelativeName(path.Substring(root.Length + 1));
                     FileAttributes attributes = File.GetAttributes(path);
-                    if ((attributes & FileAttributes.ReparsePoint) != 0) throw new MaintenanceException("UnsafePath", relative);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0 && IsRedirectingPath(path)) throw new MaintenanceException("UnsafePath", relative);
                     if ((attributes & FileAttributes.Directory) != 0) { pending.Enqueue(path); continue; }
-                    bool incoming = manifest.ContainsKey(relative), metadata = InstallerMetadata.Contains(relative);
+                    bool incoming = manifest.ContainsKey(relative), metadata = IsInstallerMetadata(relative);
                     bool obsolete = !incoming && !metadata && legacy.ContainsKey(relative);
                     if (!incoming && !metadata && (!obsolete || mode == "Verify")) throw new MaintenanceException("UnknownFile", relative);
                     bool installedManifest = String.Equals(relative, "SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase);
-                    HeldFile file = new HeldFile(path, relative, false, metadata && !installedManifest, obsolete && mode == "Retire", trusted); held.Add(file);
+                    HeldFile file = new HeldFile(path, relative, false, metadata && !installedManifest, obsolete && retireMode, trusted); held.Add(file);
                     total += file.Length;
                     if (file.Length > MaximumFileBytes || total > MaximumTreeBytes) throw new MaintenanceException("UnsafePath", relative);
                     seen.Add(relative);
                     if (obsolete) {
-                        LegacyEntry expected = legacy[relative];
-                        if (file.Length != expected.Bytes || !String.Equals(file.Hash(), expected.Sha256, StringComparison.OrdinalIgnoreCase))
-                            throw new MaintenanceException("LegacyContentMismatch", relative);
+                        LegacyExpectation matched = MatchLegacy(file, legacy[relative]);
+                        if (matched == null) throw new MaintenanceException("LegacyContentMismatch", relative);
                         retired.Add(file);
+                        matchedRetired[relative] = matched;
                     } else if (incoming && mode != "Preflight" && !String.Equals(file.Hash(), manifest[relative], StringComparison.OrdinalIgnoreCase))
                         throw new MaintenanceException("NewPayloadMismatch", relative);
                     if (installedManifest && mode != "Preflight" && !String.Equals(file.Hash(), manifestHash, StringComparison.OrdinalIgnoreCase))
                         throw new MaintenanceException("NewPayloadMismatch", relative);
                 }
             }
-            if (mode != "Preflight") {
+            if (verifyMode) {
                 foreach (string path in manifest.Keys) if (!seen.Contains(path)) throw new MaintenanceException("NewPayloadMissing", path);
                 if (!seen.Contains("SHA256SUMS.txt")) throw new MaintenanceException("NewPayloadMissing", "SHA256SUMS.txt");
             }
-            if (mode == "Retire") {
+            if (retireMode) {
                 if (beforeRetireRecheck != null) beforeRetireRecheck();
                 // Validate every target and parent again before the first deletion. Content-changing handles
                 // and renames are denied while held; unexpected ACL changes are rejected here.
                 foreach (HeldFile item in held) item.Recheck(trusted);
                 foreach (HeldFile file in retired) {
-                    LegacyEntry expected = legacy[file.Relative];
+                    LegacyExpectation expected = matchedRetired[file.Relative];
                     if (!String.Equals(file.Hash(), expected.Sha256, StringComparison.OrdinalIgnoreCase)) throw new MaintenanceException("FileChanged", file.Relative);
                 }
                 foreach (HeldFile file in retired) {
                     Disposition disposition = new Disposition { DeleteFile = true };
                     if (!SetFileInformationByHandle(file.Handle, 4, ref disposition, (uint)Marshal.SizeOf(typeof(Disposition))))
                         throw new MaintenanceException("DeleteFailed", file.Relative);
-                    log.Add("Retired: " + file.Relative + " SHA256=" + legacy[file.Relative].Sha256);
+                    log.Add("Retired: " + file.Relative + " SHA256=" + matchedRetired[file.Relative].Sha256);
+                }
+                if (mode == "RetireAndVerify") {
+                    // Dispose retired file handles now so delete-pending entries vanish before final existence verification.
+                    foreach (HeldFile file in retired) file.Dispose();
+                    foreach (HeldFile file in retired) {
+                        if (File.Exists(file.Path) || Directory.Exists(file.Path))
+                            throw new MaintenanceException("DeleteFailed", file.Relative);
+                    }
                 }
             }
             log.Add(mode + ": verified " + manifest.Count + " incoming payload paths; retirement entries=" + retired.Count + ".");

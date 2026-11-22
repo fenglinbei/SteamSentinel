@@ -145,7 +145,7 @@ internal static partial class Program
         rejected = false;
         try
         {
-            await new RemediationPlanBuilder(new()).BuildAsync(Enumerable.Range(0, 65).Select(i => new Finding
+            await new RemediationPlanBuilder(new()).BuildAsync(Enumerable.Range(0, RemediationLimits.MaximumActionsPerPlan + 1).Select(i => new Finding
             {
                 Target = "inert",
                 RegistryHive = "HKCU",
@@ -157,7 +157,7 @@ internal static partial class Program
             }), false);
         }
         catch (InvalidDataException ex) { rejected = ex.Message.Contains("请按关联组分批处理"); }
-        Check("超过64动作整体拒绝而非截断关联链", rejected);
+        Check($"超过{RemediationLimits.MaximumActionsPerPlan}动作整体拒绝而非截断关联链", rejected);
 
         await File.WriteAllTextAsync(payload, "new inert snapshot");
         rejected = false;

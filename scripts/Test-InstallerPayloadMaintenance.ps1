@@ -250,7 +250,36 @@ try{
   $f=Fixture 'verify-obsolete';$p=AddLegacy $f;$h=Hash $p;$null=Reject {RunCore $f 'Verify'} @('UnknownFile','NewPayloadMismatch');AssertUnchanged $p $h
  }
  Test 'Only precise Inno metadata names are accepted without trusting a wildcard' {
-  $f=Fixture 'metadata';foreach($name in @('unins000.exe','unins000.dat','unins000.msg')){WriteBytes (Join-Path $f.root $name) (Bytes ('inert '+$name))};$null=RunCore $f 'Verify';$p=Join-Path $f.root 'unins001.exe';WriteBytes $p (Bytes 'unexpected second uninstaller');$h=Hash $p;$null=Reject {RunCore $f 'Verify'} @('UnknownFile');AssertUnchanged $p $h
+  $f=Fixture 'metadata';foreach($name in @('unins000.exe','unins000.dat','unins000.msg','unins001.exe','unins001.dat','unins001.msg')){WriteBytes (Join-Path $f.root $name) (Bytes ('inert '+$name))};$null=RunCore $f 'Verify'
+  foreach($bad in @('unins001a.exe','unins000.tmp')){$p=Join-Path $f.root $bad;WriteBytes $p (Bytes 'unexpected file');$h=Hash $p;$null=Reject {RunCore $f 'Verify'} @('UnknownFile');AssertUnchanged $p $h}
+ }
+ Test 'Protected previous manifest diff dynamically retires obsolete files via RetireAndVerify' {
+  $f=Fixture 'dynamic-diff';$a=Join-Path $f.root 'zh-Hans\legacy-old.dll';$b=Join-Path $f.root 'old-helper.exe';WriteBytes $a (Bytes 'old localized binary');WriteBytes $b (Bytes 'old helper bytes')
+  $oldManifest=(Hash (Join-Path $f.root 'current.dll'))+' *current.dll'+"`r`n"+(Hash (Join-Path $f.root 'docs\guide.txt'))+' *docs\guide.txt'+"`r`n"+(Hash $a)+' *zh-Hans\legacy-old.dll'+"`r`n"+(Hash $b)+' *old-helper.exe'+"`r`n"
+  WriteBytes (Join-Path $f.root 'SHA256SUMS.txt') (Bytes $oldManifest)
+  $prevSnap=Join-Path $f.base 'prev-snapshot.txt';$hCurrent=Hash (Join-Path $f.root 'current.dll')
+  $null=[SteamSentinelPayloadMaintenance]::RunForTestWithPrevious('Preflight',$f.root,$f.manifest,$f.manifestHash,[LegacyEntry[]]@(),$null,$null,$null,$prevSnap)
+  Check ((Test-Path -LiteralPath $a)-and(Test-Path -LiteralPath $b)-and(Test-Path -LiteralPath $prevSnap)) 'Preflight removed files or failed to snapshot old manifest.'
+  [IO.File]::Copy($f.manifest,(Join-Path $f.root 'SHA256SUMS.txt'),$true)
+  $null=[SteamSentinelPayloadMaintenance]::RunForTestWithPrevious('RetireAndVerify',$f.root,$f.manifest,$f.manifestHash,[LegacyEntry[]]@(),$null,$prevSnap,(Hash $prevSnap),$null)
+  Check (-not(Test-Path -LiteralPath $a)-and-not(Test-Path -LiteralPath $b)) 'Dynamic diff files were not retired.'
+  AssertUnchanged (Join-Path $f.root 'current.dll') $hCurrent
+ }
+ Test 'Dynamic previous manifest diff rejects modified obsolete bytes' {
+  $f=Fixture 'dynamic-diff-tamper';$a=Join-Path $f.root 'legacy-old.dll';WriteBytes $a (Bytes 'expected old bytes')
+  $oldManifest=(Hash (Join-Path $f.root 'current.dll'))+' *current.dll'+"`r`n"+(Hash (Join-Path $f.root 'docs\guide.txt'))+' *docs\guide.txt'+"`r`n"+(Hash $a)+' *legacy-old.dll'+"`r`n"
+  WriteBytes (Join-Path $f.root 'SHA256SUMS.txt') (Bytes $oldManifest);$prevSnap=Join-Path $f.base 'prev-snapshot.txt'
+  $null=[SteamSentinelPayloadMaintenance]::RunForTestWithPrevious('Preflight',$f.root,$f.manifest,$f.manifestHash,[LegacyEntry[]]@(),$null,$null,$null,$prevSnap)
+  [IO.File]::Copy($f.manifest,(Join-Path $f.root 'SHA256SUMS.txt'),$true);WriteBytes $a (Bytes 'tampered old bytes');$tamperedHash=Hash $a
+  $null=Reject {[SteamSentinelPayloadMaintenance]::RunForTestWithPrevious('RetireAndVerify',$f.root,$f.manifest,$f.manifestHash,[LegacyEntry[]]@(),$null,$prevSnap,(Hash $prevSnap),$null)} @('LegacyContentMismatch')
+  AssertUnchanged $a $tamperedHash
+ }
+ Test 'RetireAndVerify preserves and refuses files absent from both incoming and previous manifests' {
+  $f=Fixture 'dynamic-diff-unknown';$extra=Join-Path $f.root 'stray-addon.dll';WriteBytes $extra (Bytes 'unlisted stray file');$hExtra=Hash $extra
+  $prevSnap=Join-Path $f.base 'prev-snapshot.txt';[IO.File]::Copy((Join-Path $f.root 'SHA256SUMS.txt'),$prevSnap)
+  [IO.File]::Copy($f.manifest,(Join-Path $f.root 'SHA256SUMS.txt'),$true)
+  $null=Reject {[SteamSentinelPayloadMaintenance]::RunForTestWithPrevious('RetireAndVerify',$f.root,$f.manifest,$f.manifestHash,[LegacyEntry[]]@(),$null,$prevSnap,(Hash $prevSnap),$null)} @('UnknownFile')
+  AssertUnchanged $extra $hExtra
  }
 }finally{
  $clock.Stop();$failed=@($results.ToArray()|Where-Object{-not$_.passed}).Count;$passed=$results.Count-$failed

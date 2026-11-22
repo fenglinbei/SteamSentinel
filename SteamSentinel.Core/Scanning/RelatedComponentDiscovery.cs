@@ -428,7 +428,7 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                 }
             }
             foreach (var incomplete in inaccessible) Check("related.process_read", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.62"), incomplete.Key,
-                MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.63", (incomplete.Value), (incomplete.Key)));
+                MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.63", (incomplete.Value), (incomplete.Key)), required: false);
             if (hostCandidates.Count > limits.MaximumHosts) Check("related.host_count", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.64"), DiagnosticReadStatus.LimitReached,
                 MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.65", (hostCandidates.Count), (limits.MaximumHosts)));
             foreach (var selection in hostCandidates.OrderByDescending(p => p.Priority).ThenBy(p => p.Process.ProcessId).Take(limits.MaximumHosts))
@@ -454,7 +454,7 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
                 if (host.Status != DiagnosticReadStatus.Complete || process.StartedAtUtc is null || string.IsNullOrWhiteSpace(process.ImagePath))
                 { Check("related.host_identity", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.68"), host.Status == DiagnosticReadStatus.Complete ? DiagnosticReadStatus.NotChecked : host.Status, host.DetailText, host.Id); continue; }
                 if (process.CommandLine is null || process.WorkingDirectory is null)
-                    Check("related.host_command", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.69"), DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.70"), host.Id);
+                    Check("related.host_command", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.69"), DiagnosticReadStatus.NotChecked, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.70"), host.Id, required: false);
                 RelatedModuleRead modules;
                 try { modules = _source.ReadModules(process, limits.MaximumModulesPerHost, token); }
                 catch (Exception ex) when (IsReadException(ex)) { modules = new(StatusFor(ex), MessageExceptions.Describe(ex), false, []); }

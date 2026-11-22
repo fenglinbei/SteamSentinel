@@ -92,13 +92,44 @@ std::string RandomNonce() {
     return result.str();
 }
 
+bool IsRedirectingReparseTag(DWORD tag) {
+    return (tag & 0x20000000u) != 0 || tag == 0x8000001Bu;
+}
+
+bool IsRedirectingReparseHandle(HANDLE file) {
+    FILE_ATTRIBUTE_TAG_INFO tagInfo{};
+    if (!GetFileInformationByHandleEx(file, FileAttributeTagInfo, &tagInfo, sizeof(tagInfo)))
+        return true;
+    return (tagInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && IsRedirectingReparseTag(tagInfo.ReparseTag);
+}
+
+bool IsRedirectingReparsePath(const std::wstring& path) {
+    DWORD attributes = GetFileAttributesW(FileSystemPath(path).c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return true;
+    if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
+    Handle handle(CreateFileW(FileSystemPath(path).c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+    if (!handle.valid()) return true;
+    return IsRedirectingReparseHandle(handle.value);
+}
+
+bool IsAllowedInnoUninstaller(const std::wstring& child) {
+    if (child.size() != 12) return false;
+    if (!Equals(child.substr(0, 5), L"unins") || !Equals(child.substr(8, 4), L".exe")) return false;
+    for (size_t i = 5; i <= 7; ++i)
+        if (child[i] < L'0' || child[i] > L'9') return false;
+    return true;
+}
+
 void RejectReparsePath(const std::wstring& path) {
     // Inspect every existing path component, including parents of the package.
     for (size_t index = 3; index <= path.size(); ++index) {
         if (index != path.size() && path[index] != L'\\' && path[index] != L'/') continue;
         std::wstring part = path.substr(0, index);
         DWORD attributes = GetFileAttributesW(FileSystemPath(part).c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        if (attributes == INVALID_FILE_ATTRIBUTES ||
+            ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && IsRedirectingReparsePath(part)))
             throw std::runtime_error("Missing or redirected package path: " + Utf8(part));
     }
 }
@@ -109,7 +140,8 @@ Handle OpenRead(const std::wstring& path) {
         FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, nullptr));
     if (!file.valid()) throw std::runtime_error(ErrorCode("Cannot read package file"));
     BY_HANDLE_FILE_INFORMATION info{};
-    if (!GetFileInformationByHandle(file.value, &info) || (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+    if (!GetFileInformationByHandle(file.value, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        ((info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && IsRedirectingReparseHandle(file.value)))
         throw std::runtime_error("Package entry is not a regular file.");
     return file;
 }
@@ -181,17 +213,18 @@ void RejectUnlistedCode(const std::wstring& root, const std::wstring& relative, 
         do {
             if (Equals(data.cFileName, L".") || Equals(data.cFileName, L"..")) continue;
             std::wstring child = relative.empty() ? data.cFileName : Join(relative, data.cFileName);
-            if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) throw std::runtime_error("Redirected package entry.");
+            if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && IsRedirectingReparseTag(data.dwReserved0))
+                throw std::runtime_error("Redirected package entry.");
             if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { RejectUnlistedCode(root, child, listed, depth + 1); continue; }
             size_t dot = child.find_last_of(L'.');
             std::wstring extension = dot == std::wstring::npos ? L"" : child.substr(dot);
-            const wchar_t* loadable[] = { L".exe", L".dll", L".com", L".scr", L".cpl", L".ocx", L".sys", L".winmd", L".json", L".config" };
+            const wchar_t* loadable[] = { L".exe", L".dll", L".com", L".scr", L".cpl", L".ocx", L".sys", L".winmd", L".config" };
             bool code = std::any_of(std::begin(loadable), std::end(loadable), [&](auto item) { return Equals(extension, item); });
             std::wstring lower = child;
             std::transform(lower.begin(), lower.end(), lower.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
             code = code || lower.find(L".deps.") != std::wstring::npos || lower.find(L".runtimeconfig.") != std::wstring::npos;
-            // Match InstallationSecurity's sole Inno-created executable exception.
-            if (code && !Listed(listed, child) && !Equals(child, L"unins000.exe"))
+            // Match InstallationSecurity's Inno uninstaller exception (unins000..999.exe at install root).
+            if (code && !Listed(listed, child) && !IsAllowedInnoUninstaller(child))
                 throw std::runtime_error("Unlisted loadable package file: " + Utf8(child));
         } while (FindNextFileW(search, &data));
         if (GetLastError() != ERROR_NO_MORE_FILES) throw std::runtime_error("Package enumeration failed.");
@@ -199,7 +232,7 @@ void RejectUnlistedCode(const std::wstring& root, const std::wstring& relative, 
     FindClose(search);
 }
 
-std::vector<Handle> VerifyPackage(const std::wstring& root, std::ostringstream& report) {
+std::vector<Handle> VerifyPackage(const std::wstring& root, std::ostringstream& report, bool fullHash) {
     std::vector<Handle> locks;
     locks.push_back(OpenRead(Join(root, L"SHA256SUMS.txt")));
     std::string manifest = ReadBounded(locks.back().value, 2 * 1024 * 1024);
@@ -207,6 +240,7 @@ std::vector<Handle> VerifyPackage(const std::wstring& root, std::ostringstream& 
     std::istringstream lines(manifest);
     std::string line;
     std::vector<std::wstring> paths;
+    std::vector<std::string> digests;
     while (std::getline(lines, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
@@ -221,10 +255,8 @@ std::vector<Handle> VerifyPackage(const std::wstring& root, std::ostringstream& 
         std::replace(relative.begin(), relative.end(), L'/', L'\\');
         if (!SafeRelative(relative) || Listed(paths, relative) || Equals(relative, L"SHA256SUMS.txt"))
             throw std::runtime_error("Unsafe or duplicate manifest path.");
-        Handle file = OpenRead(Join(root, relative));
-        if (Hash(file.value) != expected) throw std::runtime_error("Package integrity mismatch: " + Utf8(relative));
-        paths.push_back(relative);
-        locks.push_back(std::move(file));
+        paths.push_back(std::move(relative));
+        digests.push_back(std::move(expected));
     }
     const wchar_t* required[] = {
         L"SteamSentinel.exe", L"SteamSentinel.Broker.exe",
@@ -236,9 +268,29 @@ std::vector<Handle> VerifyPackage(const std::wstring& root, std::ostringstream& 
         L"SteamSentinel.Broker.runtimeconfig.json", L"SteamSentinel.ArchiveWorker.deps.json", L"SteamSentinel.ArchiveWorker.runtimeconfig.json",
         L"coreclr.dll", L"hostfxr.dll", L"hostpolicy.dll", L"System.Private.CoreLib.dll"
     };
-    for (auto path : required) if (!Listed(paths, path)) throw std::runtime_error("Required package file is not in the manifest: " + Utf8(path));
+    std::vector<size_t> requiredIndices;
+    requiredIndices.reserve(std::size(required));
+    for (auto path : required) {
+        auto it = std::find_if(paths.begin(), paths.end(), [&](const std::wstring& entry) { return Equals(entry, path); });
+        if (it == paths.end()) throw std::runtime_error("Required package file is not in the manifest: " + Utf8(path));
+        requiredIndices.push_back(static_cast<size_t>(std::distance(paths.begin(), it)));
+    }
+    if (fullHash) {
+        for (size_t i = 0; i < paths.size(); ++i) {
+            Handle file = OpenRead(Join(root, paths[i]));
+            if (Hash(file.value) != digests[i]) throw std::runtime_error("Package integrity mismatch: " + Utf8(paths[i]));
+            locks.push_back(std::move(file));
+        }
+        report << "ManifestVerified=" << paths.size() << "\n";
+    } else {
+        for (size_t idx : requiredIndices) {
+            Handle file = OpenRead(Join(root, paths[idx]));
+            if (Hash(file.value) != digests[idx]) throw std::runtime_error("Package integrity mismatch: " + Utf8(paths[idx]));
+            locks.push_back(std::move(file));
+        }
+        report << "CoreManifestVerified=" << requiredIndices.size() << "\nManifestEntries=" << paths.size() << "\n";
+    }
     RejectUnlistedCode(root, L"", paths);
-    report << "ManifestVerified=" << paths.size() << "\n";
     return locks;
 }
 
@@ -532,7 +584,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         DWORD revision = 0, revisionBytes = sizeof(revision);
         if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"UBR", RRF_RT_REG_DWORD,
             nullptr, &revision, &revisionBytes) == ERROR_SUCCESS) report << "WindowsUBR=" << revision << "\n";
-        auto packageLocks = VerifyPackage(root, report);
+        auto packageLocks = VerifyPackage(root, report, checkOnly);
         DWORD versionAttributes = GetFileAttributesW(FileSystemPath(Join(root, L"VERSION.txt")).c_str());
         if (versionAttributes != INVALID_FILE_ATTRIBUTES) {
             Handle versionFile = OpenRead(Join(root, L"VERSION.txt"));

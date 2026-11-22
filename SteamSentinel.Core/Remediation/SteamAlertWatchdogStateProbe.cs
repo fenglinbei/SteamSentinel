@@ -9,7 +9,7 @@ namespace SteamSentinel.Core.Remediation;
 
 /// <summary>A read-only observation of an image at an already approved exact path.</summary>
 public sealed record SteamAlertImageObservation(int ProcessId, DateTimeOffset? StartedAtUtc,
-    string? ImagePath, bool Readable, bool Exited = false);
+    string? ImagePath, bool Readable, bool Exited = false, bool IsProtectedSystemProcess = false);
 
 /// <summary>Injection boundary for tests; production never creates or terminates processes here.</summary>
 public interface ISteamAlertWatchdogStateSource
@@ -105,9 +105,8 @@ public sealed class SteamAlertWatchdogStateProbe(ISteamAlertWatchdogStateSource?
             if (snapshot.Status == ScriptHostReadStatus.Exited) continue;
             if (!snapshot.IsReadable)
             {
-                // Enumerators return only interpreter candidates. An unreadable command cannot
-                // establish that the interpreter is unrelated to this approved script.
-                incomplete = true;
+                // 忽略已确认的受保护系统账户或内核保护进程，避免无关 SYSTEM/PPL 进程触发误不完整
+                if (!snapshot.IsProtectedSystemProcess) incomplete = true;
                 continue;
             }
             if (!(handoff ? SteamAlertUpdateHandoff.IsTrustedImagePath(snapshot.ImagePath)
@@ -159,7 +158,7 @@ public sealed class SteamAlertWatchdogStateProbe(ISteamAlertWatchdogStateSource?
         IReadOnlyList<SteamAlertImageObservation> snapshots = _source.ReadImageInstances(path, token);
         if (snapshots.Count > MaximumInstances)
             return State(RemediationVerificationStatus.Unknown, "Watchdog.ReadLimit");
-        bool incomplete = snapshots.Any(item => !item.Exited && !item.Readable);
+        bool incomplete = snapshots.Any(item => !item.Exited && !item.Readable && !item.IsProtectedSystemProcess);
         SteamAlertImageObservation[] matching = snapshots.Where(item => !item.Exited && item.Readable &&
             SamePath(item.ImagePath, path) && !pendingStops.Any(pending => pending.Type == RemediationActionType.StopProcess &&
                 SamePath(pending.Target, path) && string.Equals(pending.ExpectedSha256, expectedHash, StringComparison.OrdinalIgnoreCase) &&
@@ -206,12 +205,19 @@ public sealed class SteamAlertWatchdogStateProbe(ISteamAlertWatchdogStateSource?
                     token.ThrowIfCancellationRequested();
                     try
                     {
-                        _ = process.SafeHandle; // Pin this instance while reading its identity.
-                        if (process.HasExited) continue;
-                        DateTimeOffset started = new(process.StartTime.ToUniversalTime());
-                        string? image = process.MainModule?.FileName;
-                        if (process.HasExited) continue;
-                        observations.Add(new(process.Id, started, image, image is not null));
+                        int pid = process.Id;
+                        if (PowerShellScriptHost.TryReadProcessImage(pid, out string? image, out DateTimeOffset started, out bool exited, out bool protectedSystem))
+                        {
+                            observations.Add(new(pid, started, image, true, false, protectedSystem));
+                        }
+                        else if (exited)
+                        {
+                            observations.Add(new(pid, null, null, false, Exited: true, IsProtectedSystemProcess: protectedSystem));
+                        }
+                        else
+                        {
+                            observations.Add(new(pid, null, null, false, Exited: false, IsProtectedSystemProcess: protectedSystem));
+                        }
                     }
                     catch (ArgumentException) { }
                     catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or UnauthorizedAccessException)

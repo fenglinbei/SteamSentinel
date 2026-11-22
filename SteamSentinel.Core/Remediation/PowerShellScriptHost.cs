@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using SteamSentinel.Core.Utilities;
@@ -23,6 +24,10 @@ public sealed record PowerShellScriptHostSnapshot
     public int? ParentProcessId { get; init; }
     public ScriptHostReadStatus Status { get; init; }
     public string? Error { get; init; }
+    /// <summary>
+    /// 指示因权限受限而无法读取命令行的目标是否为系统服务账户（SYSTEM/LocalService/NetworkService）或受保护内核进程（PPL）。
+    /// </summary>
+    public bool IsProtectedSystemProcess { get; init; }
     public bool IsReadable => Status == ScriptHostReadStatus.Readable && ProcessId > 0 &&
         StartedAtUtc is not null && ImagePath is not null && CommandLine is not null;
 }
@@ -43,6 +48,7 @@ public static class PowerShellScriptHost
     private const uint WaitTimeout = 258;
     private const uint WaitFailed = 0xFFFFFFFF;
     private const int ProcessCommandLineInformation = 60;
+    private const int ProcessProtectionInformation = 61;
 
     public static bool IsTrustedHostPath(string? path) => IsTrustedImagePath(path);
 
@@ -207,7 +213,11 @@ public static class PowerShellScriptHost
         if (!OperatingSystem.IsWindows() || processId <= 0)
             return Failure(processId, ScriptHostReadStatus.Unsupported, "Windows process identity is unavailable.");
         using SafeProcessHandle handle = OpenProcess(QueryLimitedInformation | Synchronize, false, processId);
-        if (handle.IsInvalid) return Win32Failure(processId, Marshal.GetLastWin32Error());
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            return Win32Failure(processId, error, error == 5 && ProbeProtectedSystemProcess(processId));
+        }
         return ReadRaw(handle, processId);
     }
 
@@ -220,21 +230,31 @@ public static class PowerShellScriptHost
             if (GetProcessId(handle) != (uint)processId)
                 return Failure(processId, ScriptHostReadStatus.IdentityChanged, "The handle refers to a different process.");
             if (!TryIdentity(handle, out DateTimeOffset started, out string image, out bool exited))
-                return Win32Failure(processId, Marshal.GetLastWin32Error());
+            {
+                int error = Marshal.GetLastWin32Error();
+                return Win32Failure(processId, error, error == 5 && IsProtectedSystemHandle(handle));
+            }
             if (exited) return Failure(processId, ScriptHostReadStatus.Exited, "The process has exited.");
             PowerShellScriptHostSnapshot observation = new() { ProcessId = processId, StartedAtUtc = started, ImagePath = image };
             string command = ReadCommandLine(handle);
             int? parent = ReadParentProcessId(handle);
             string finalCommand = ReadCommandLine(handle);
             if (!TryIdentity(handle, out DateTimeOffset endedStart, out string endedImage, out exited))
-                return Win32Failure(processId, Marshal.GetLastWin32Error());
+            {
+                int error = Marshal.GetLastWin32Error();
+                return Win32Failure(processId, error, error == 5 && IsProtectedSystemHandle(handle));
+            }
             if (exited) return observation with { Status = ScriptHostReadStatus.Exited, Error = "The process exited during inspection." };
             if (GetProcessId(handle) != (uint)processId || started != endedStart || !image.Equals(endedImage, StringComparison.OrdinalIgnoreCase) ||
                 !command.Equals(finalCommand, StringComparison.Ordinal))
                 return observation with { Status = ScriptHostReadStatus.IdentityChanged, Error = "The process identity or command line changed during inspection." };
             return observation with { CommandLine = command, ParentProcessId = parent, Status = ScriptHostReadStatus.Readable };
         }
-        catch (Win32Exception error) { return Win32Failure(processId, error.NativeErrorCode); }
+        catch (Win32Exception error)
+        {
+            return Win32Failure(processId, error.NativeErrorCode,
+                error.NativeErrorCode == 5 && (IsProtectedSystemHandle(handle) || ProbeProtectedSystemProcess(processId)));
+        }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException or IOException or OverflowException)
         { return Failure(processId, ScriptHostReadStatus.Failed, error.Message); }
     }
@@ -342,9 +362,85 @@ public static class PowerShellScriptHost
         finally { Marshal.FreeHGlobal(buffer); }
     }
 
-    private static PowerShellScriptHostSnapshot Win32Failure(int id, int error) => Failure(id,
-        error == 5 ? ScriptHostReadStatus.AccessDenied : error is 87 or 1168 ? ScriptHostReadStatus.Exited : ScriptHostReadStatus.Failed,
-        new Win32Exception(error).Message);
+    /// <summary>
+    /// 使用只读受限查询句柄安全读取进程映像路径与启动时间，避免受保护系统进程因 Module 枚举或缺乏同步权而误熔断。
+    /// </summary>
+    public static bool TryReadProcessImage(int processId, out string? imagePath, out DateTimeOffset startedAtUtc,
+        out bool exited, out bool isProtectedSystemProcess)
+    {
+        imagePath = null;
+        startedAtUtc = default;
+        exited = false;
+        isProtectedSystemProcess = false;
+        if (!OperatingSystem.IsWindows() || processId <= 0) return false;
+        using SafeProcessHandle handle = OpenProcess(QueryLimitedInformation, false, processId);
+        if (handle.IsInvalid)
+        {
+            int err = Marshal.GetLastWin32Error();
+            if (err is 87 or 1168) { exited = true; return false; }
+            return false;
+        }
+        isProtectedSystemProcess = IsProtectedSystemHandle(handle);
+        if (!GetProcessTimes(handle, out long created, out long exit, out _, out _) ||
+            !GetExitCodeProcess(handle, out uint exitCode))
+        {
+            return false;
+        }
+        if (exit != 0 || exitCode != StillActive)
+        {
+            exited = true;
+            return false;
+        }
+        startedAtUtc = DateTimeOffset.FromFileTime(created).ToUniversalTime();
+        StringBuilder buffer = new(32768);
+        int length = buffer.Capacity;
+        if (!QueryFullProcessImageName(handle, 0, buffer, ref length) || length <= 0) return false;
+        imagePath = buffer.ToString();
+        return true;
+    }
+
+    private static bool ProbeProtectedSystemProcess(int processId)
+    {
+        if (!OperatingSystem.IsWindows() || processId <= 0) return false;
+        using SafeProcessHandle probe = OpenProcess(QueryLimitedInformation, false, processId);
+        return !probe.IsInvalid && IsProtectedSystemHandle(probe);
+    }
+
+    private static bool IsProtectedSystemHandle(SafeProcessHandle handle)
+    {
+        if (handle.IsInvalid || handle.IsClosed) return false;
+        // 检查内核 PPL/Protected 标志位（PS_PROTECTION.Level != 0）
+        if (NtQueryInformationProcess(handle, ProcessProtectionInformation, out byte protection, 1, out int ret) == 0 &&
+            ret >= 1 && (protection & 0x07) != 0)
+        {
+            return true;
+        }
+        // 检查目标进程令牌是否运行于系统服务身份（SYSTEM / LocalService / NetworkService）
+        if (OpenProcessToken(handle, 0x0008, out SafeAccessTokenHandle token))
+        {
+            using (token)
+            {
+                try
+                {
+                    using WindowsIdentity identity = new(token.DangerousGetHandle());
+                    string? sid = identity.User?.Value;
+                    if (sid is "S-1-5-18" or "S-1-5-19" or "S-1-5-20") return true;
+                }
+                catch { }
+            }
+        }
+        return false;
+    }
+
+    private static PowerShellScriptHostSnapshot Win32Failure(int id, int error, bool isProtectedSystemProcess = false) =>
+        new()
+        {
+            ProcessId = id,
+            Status = error == 5 ? ScriptHostReadStatus.AccessDenied : error is 87 or 1168 ? ScriptHostReadStatus.Exited : ScriptHostReadStatus.Failed,
+            Error = new Win32Exception(error).Message,
+            IsProtectedSystemProcess = error == 5 && isProtectedSystemProcess
+        };
+
     private static PowerShellScriptHostSnapshot Failure(int id, ScriptHostReadStatus status, string error) =>
         new() { ProcessId = id, Status = status, Error = error };
 
@@ -368,4 +464,9 @@ public static class PowerShellScriptHost
     private static extern bool QueryFullProcessImageName(SafeProcessHandle handle, int flags, StringBuilder image, ref int length);
     [DllImport("ntdll.dll")]
     private static extern int NtQueryInformationProcess(SafeProcessHandle handle, int informationClass, IntPtr information, int length, out int returnLength);
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(SafeProcessHandle handle, int informationClass, out byte information, int length, out int returnLength);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(SafeProcessHandle processHandle, uint desiredAccess, out SafeAccessTokenHandle tokenHandle);
 }

@@ -9,6 +9,27 @@ namespace SteamSentinel.App.Native;
 
 internal static class RestrictedTokenSecurity
 {
+    /// <summary>
+    /// 从受限令牌中提取 TokenUser 对应的 SID，不修改传入令牌的任何属性。
+    /// </summary>
+    internal static SecurityIdentifier GetTokenUser(SafeAccessTokenHandle token)
+    {
+        GetTokenInformation(token, 1, IntPtr.Zero, 0, out uint size);
+        if (size is 0 or > 65536)
+            throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedTokenSecurity.ConfigureDefaultObjects.01"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
+        IntPtr userInfo = Marshal.AllocHGlobal((int)size);
+        try
+        {
+            if (!GetTokenInformation(token, 1, userInfo, size, out _))
+                throw MessageExceptions.Create(MessageText.Create("Backend.App.RestrictedTokenSecurity.ConfigureDefaultObjects.02"), sourceText => new Win32Exception(Marshal.GetLastWin32Error(), sourceText));
+            return new SecurityIdentifier(Marshal.ReadIntPtr(userInfo));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(userInfo);
+        }
+    }
+
     internal static void ConfigureDefaultObjects(SafeAccessTokenHandle restrictedToken)
     {
         // Only the newly created restricted token is changed. Its user, privileges,

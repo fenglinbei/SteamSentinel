@@ -27,7 +27,8 @@ internal static partial class Program
             Type = RemediationActionType.QuarantineFile,
             Target = executable,
             ExpectedSha256 = SteamAlertWatchdog.ResidentHash,
-            IsKnownMalware = true
+            IsKnownMalware = true,
+            DependsOnActionIds = [firewall.ActionId]
         };
         RemediationAction[] scripts = new[] { ("sa_watch.ps1", SteamAlertWatchdog.WatchdogHash),
             ("sa_updater.ps1", SteamAlertWatchdog.UpdaterHash), ("update.ps1", SteamAlertWatchdog.UpdaterHash),
@@ -36,7 +37,8 @@ internal static partial class Program
                 Type = RemediationActionType.QuarantineFile,
                 Target = Path.Combine(root, "SteamAlertUpdater", item.Item1),
                 ExpectedSha256 = item.Item2,
-                IsKnownMalware = true
+                IsKnownMalware = true,
+                DependsOnActionIds = [firewall.ActionId]
             }).ToArray();
         RemediationAction hosts = new() { Type = RemediationActionType.BlockKnownDomains, Target = "hosts" };
         List<RemediationAction> actions = [.. scripts, quarantine, firewall, hosts];
@@ -239,9 +241,10 @@ internal static partial class Program
             target.ReasonDetails!.StartsWith(ReportExporter.ActionLabel(firewall.Type, DisplayText.Chinese), StringComparison.Ordinal) &&
             RemediationResultPresentation.DescribeTarget(batch, target).Contains(":INERT_FULL_DETAIL_END", StringComparison.Ordinal));
         RemediationAction quarantine = batch.Plans.Single().Actions.Single(action => action.Type == RemediationActionType.QuarantineFile && action.Target == target.Target);
-        Check("Remediation details never remove the firewall or script safety dependencies",
+        Check("Remediation details preserve explicit firewall and script safety dependencies",
             quarantine.DependsOnActionIds.Count == 5 && quarantine.DependsOnActionIds.Contains(firewall.ActionId) &&
             RemediationDependencies.Build(batch.Plans.Single().Actions)[quarantine.ActionId].Count == 5);
+        TestFirewallBestEffortDecoupling(batch.Targets.Single(item => item.Key == "executable").Target);
         RemediationAction[] many = Enumerable.Range(0, 65).Select(index => new RemediationAction
         { Type = RemediationActionType.QuarantineFile, Target = @"C:\Lab\OldRecord\" + index }).ToArray();
         RemediationTargetOutcome manyTarget = new() { Target = "inert legacy aggregate", ActionIds = many.Select(action => action.ActionId).ToList() };
@@ -255,6 +258,106 @@ internal static partial class Program
                 DisplayText.Format("Result.TargetDetailsLimit", RemediationResultPresentation.MaximumTargetDetailActions), StringComparison.Ordinal));
         TestRemediationDependencyAttribution();
         TestRemediationFailureDetailsLargeBatch();
+    }
+
+    private static void TestFirewallBestEffortDecoupling(string executable)
+    {
+        string directory = Path.GetDirectoryName(executable)!;
+        RemediationAction implicitFirewall = new()
+        {
+            Type = RemediationActionType.AddProgramFirewallBlock,
+            Target = executable,
+            ExpectedSha256 = SteamAlertWatchdog.ResidentHash,
+            IsKnownMalware = true
+        };
+        RemediationAction implicitQuarantine = new()
+        {
+            Type = RemediationActionType.QuarantineFile,
+            Target = executable,
+            ExpectedSha256 = SteamAlertWatchdog.ResidentHash,
+            IsKnownMalware = true
+        };
+        RemediationAction[] implicitScripts = new[]
+        {
+            ("sa_watch.ps1", SteamAlertWatchdog.WatchdogHash),
+            ("sa_updater.ps1", SteamAlertWatchdog.UpdaterHash)
+        }.Select(item => new RemediationAction
+        {
+            Type = RemediationActionType.QuarantineFile,
+            Target = Path.Combine(directory, item.Item1),
+            ExpectedSha256 = item.Item2,
+            IsKnownMalware = true
+        }).ToArray();
+        List<RemediationAction> implicitActions = [.. implicitScripts, implicitQuarantine, implicitFirewall];
+        RemediationDependencies.AssignAndOrder(implicitActions);
+        var built = RemediationDependencies.Build(implicitActions);
+        Check("防火墙动作不隐式阻断文件隔离而脚本安全依赖保留",
+            !built[implicitQuarantine.ActionId].Contains(implicitFirewall.ActionId) &&
+            implicitScripts.All(script => built[implicitQuarantine.ActionId].Contains(script.ActionId) &&
+                                          !built[script.ActionId].Contains(implicitFirewall.ActionId)) &&
+            implicitActions.IndexOf(implicitFirewall) < implicitActions.IndexOf(implicitQuarantine));
+
+        RemediationRunResult runResult = new();
+        SteamSentinel.Broker.BrokerActionSequencer.RunAsync(new() { Actions = implicitActions }, runResult, new Dictionary<Guid, string>(),
+            (action, _) => action == implicitFirewall
+                ? Task.FromException<string>(new InvalidOperationException("Inert firewall service disabled"))
+                : Task.FromResult("Inert quarantine succeeded"),
+            (action, outcome, _) =>
+            {
+                outcome.VerificationStatus = action == implicitFirewall
+                    ? RemediationVerificationStatus.Unknown
+                    : RemediationVerificationStatus.NoResidual;
+                return Task.CompletedTask;
+            },
+            _ => Task.CompletedTask).GetAwaiter().GetResult();
+        Check("防火墙失败或超时不跳过后续文件隔离",
+            runResult.Actions.Single(r => r.ActionId == implicitFirewall.ActionId).ExecutionStatus == RemediationExecutionStatus.Failed &&
+            runResult.Actions.Single(r => r.ActionId == implicitQuarantine.ActionId).ExecutionStatus == RemediationExecutionStatus.Succeeded &&
+            implicitScripts.All(s => runResult.Actions.Single(r => r.ActionId == s.ActionId).ExecutionStatus == RemediationExecutionStatus.Succeeded));
+
+        RemediationAction batchTwoAction = new() { Type = RemediationActionType.RepairSteamConfiguration, Target = @"C:\Lab\steam.cfg" };
+        RemediationPlan planOne = new() { Actions = implicitActions };
+        RemediationPlan planTwo = new() { Actions = [batchTwoAction] };
+        RemediationBatchSession session = new() { Plans = [planOne, planTwo] };
+        int executedBatches = 0;
+        RemediationBatchPlanner.ExecuteAsync(session, plan =>
+        {
+            executedBatches++;
+            if (plan.PlanId == planOne.PlanId)
+            {
+                return Task.FromResult(new RemediationRunResult
+                {
+                    PlanId = plan.PlanId,
+                    Disposition = RemediationRunDisposition.Completed,
+                    Success = false,
+                    Errors = ["Inert firewall failure only"],
+                    Actions = plan.Actions.Select(a => new RemediationActionResult
+                    {
+                        ActionId = a.ActionId,
+                        Type = a.Type,
+                        Target = a.Target,
+                        Success = a != implicitFirewall,
+                        ExecutionStatus = a == implicitFirewall ? RemediationExecutionStatus.Failed : RemediationExecutionStatus.Succeeded,
+                        VerificationStatus = a == implicitFirewall ? RemediationVerificationStatus.Unknown : RemediationVerificationStatus.NoResidual
+                    }).ToList()
+                });
+            }
+            return Task.FromResult(new RemediationRunResult
+            {
+                PlanId = plan.PlanId,
+                Disposition = RemediationRunDisposition.Completed,
+                Success = true,
+                VerificationStatus = RemediationVerificationStatus.Verified,
+                Actions = [new()
+                {
+                    ActionId = batchTwoAction.ActionId, Type = batchTwoAction.Type, Target = batchTwoAction.Target,
+                    Success = true, ExecutionStatus = RemediationExecutionStatus.Succeeded, VerificationStatus = RemediationVerificationStatus.Verified
+                }]
+            });
+        }).GetAwaiter().GetResult();
+        Check("批次仅防火墙失败时继续执行后续批次恢复",
+            executedBatches == 2 && session.InterruptionReasonCode is null && session.Results.Count == 2 &&
+            session.Results[1].Actions.Single().ExecutionStatus == RemediationExecutionStatus.Succeeded);
     }
 
     private static void TestRemediationDependencyAttribution()

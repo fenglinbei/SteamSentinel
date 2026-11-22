@@ -87,8 +87,13 @@ internal static partial class Program
         Finding[] many = Enumerable.Range(0, 70).Select(i => FindingFor(Path.Combine(directory, $"part-{i}.dat"))).ToArray();
         foreach (Finding f in many) File.Copy(file, f.Target);
         RemediationBatchSession packed = await new RemediationBatchPlanner(new()).PrepareAsync(many, new() { Findings = many.ToList() }, false);
-        Check("0.1.16 七十个目标自动拆批且无遗漏", packed.Plans.Count == 2 && packed.Plans.All(p => p.Actions.Count <= 64) &&
+        Check("0.1.16 七十个目标并入单批且无遗漏", packed.Plans.Count == 1 && packed.Plans.All(p => p.Actions.Count <= RemediationLimits.MaximumActionsPerPlan) &&
             packed.Targets.Count == 70 && packed.Targets.All(t => t.ActionIds.Count == 1 && t.MissingActions.Count == 0) && packed.Plans.Sum(p => p.Actions.Count) == 70);
+        Finding[] bulk = Enumerable.Range(0, 270).Select(i => FindingFor(Path.Combine(directory, $"bulk-{i}.dat"))).ToArray();
+        foreach (Finding f in bulk) File.Copy(file, f.Target);
+        RemediationBatchSession packedBulk = await new RemediationBatchPlanner(new()).PrepareAsync(bulk, new() { Findings = bulk.ToList() }, false);
+        Check("0.1.16 二百七十个目标自动拆批且无遗漏", packedBulk.Plans.Count == 2 && packedBulk.Plans.All(p => p.Actions.Count <= RemediationLimits.MaximumActionsPerPlan) &&
+            packedBulk.Targets.Count == 270 && packedBulk.Targets.All(t => t.ActionIds.Count == 1 && t.MissingActions.Count == 0) && packedBulk.Plans.Sum(p => p.Actions.Count) == 270);
         Finding relatedFile = many[0];
         Finding process = new()
         {
@@ -125,20 +130,20 @@ internal static partial class Program
                 VerificationStatus = RemediationVerificationStatus.NoResidual
             }).ToList()
         };
-        await RemediationBatchPlanner.ExecuteAsync(packed, p => { calls++; return Task.FromResult(Success(p)); });
-        Check("0.1.16 全批模拟执行逐项成功且没有运行Broker", calls == 2 && packed.Targets.All(t => t.Status == "已完成") && packed.Results.Count == 2);
+        await RemediationBatchPlanner.ExecuteAsync(packedBulk, p => { calls++; return Task.FromResult(Success(p)); });
+        Check("0.1.16 全批模拟执行逐项成功且没有运行Broker", calls == 2 && packedBulk.Targets.All(t => t.Status == "已完成") && packedBulk.Results.Count == 2);
         bool refused = false;
-        try { await RemediationBatchPlanner.ExecuteAsync(packed, p => Task.FromResult(Success(p))); } catch (InvalidOperationException) { refused = true; }
+        try { await RemediationBatchPlanner.ExecuteAsync(packedBulk, p => Task.FromResult(Success(p))); } catch (InvalidOperationException) { refused = true; }
         Check("0.1.16 同一批次会话禁止重复执行", refused);
 
-        RemediationBatchSession Two() => new() { Plans = [packed.Plans[0], packed.Plans[1]] };
+        RemediationBatchSession Two() => new() { Plans = [packedBulk.Plans[0], packedBulk.Plans[1]] };
         RemediationBatchSession failure = Two(); calls = 0;
         await RemediationBatchPlanner.ExecuteAsync(failure, p => { calls++; return Task.FromResult(new RemediationRunResult { PlanId = p.PlanId, Success = false }); });
         Check("0.1.16 一批失败即暂停后续批次且保留失败记录", calls == 1 && failure.Results.Count == 1 && failure.Interruption is not null);
         RemediationBatchSession cancelled = Two(); calls = 0;
         await RemediationBatchPlanner.ExecuteAsync(cancelled, p => { calls++; throw new OperationCanceledException("cancelled UAC"); });
         Check("0.1.16 UAC取消不继续其他批次", calls == 1 && cancelled.Results.Count == 0 && cancelled.Interruption is not null);
-        RemediationBatchSession expired = new() { Plans = [new() { ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1), Actions = packed.Plans[0].Actions }] };
+        RemediationBatchSession expired = new() { Plans = [new() { ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1), Actions = packedBulk.Plans[0].Actions }] };
         calls = 0;
         await RemediationBatchPlanner.ExecuteAsync(expired, p => { calls++; return Task.FromResult(Success(p)); });
         Check("0.1.16 后续计划过期不静默刷新身份和期限", calls == 0 && expired.Interruption!.Contains("过期"));
@@ -150,7 +155,7 @@ internal static partial class Program
         Check("0.1.16 错配计划结果不采信", wrongResult.Results.Count == 0 && wrongResult.Interruption is not null);
 
         string bundle = Path.Combine(directory, "batch-export.zip");
-        await CaseBundleExporter.ExportAsync(bundle, report, null, null, new(), batches: packed, contentFollowUp: new());
+        await CaseBundleExporter.ExportAsync(bundle, report, null, null, new(), batches: packedBulk, contentFollowUp: new());
         using ZipArchive zip = ZipFile.OpenRead(bundle);
         Check("0.1.16 完整记录含全部批次与两种复查且没有样本", zip.GetEntry("batches.json") is not null &&
             zip.GetEntry("batches/001/result.json") is not null && zip.GetEntry("batches/002/result.json") is not null &&

@@ -121,24 +121,41 @@ internal static partial class Program
 
         QuarantineManifest active = new()
         {
+            IncidentId = Guid.NewGuid(),
             Records = { new QuarantineRecord { ActionId = Guid.NewGuid(), OriginalTarget = "inert", RolledBack = false } }
         };
         Check("0.1.17 新隔离记录默认处于未确认突变状态", !active.Records[0].MutationConfirmed);
-        bool activeDeleteRejected = false;
+        bool activeDeleteAllowed = true;
         try { BrokerEngine.EnsureIncidentDeletionAllowed(active); }
+        catch { activeDeleteAllowed = false; }
+        bool emptyRejected = false;
+        try { BrokerEngine.EnsureIncidentDeletionAllowed(new QuarantineManifest()); }
         catch (InvalidOperationException ex)
         {
-            activeDeleteRejected = ex.Message.Contains("保留隔离", StringComparison.Ordinal) &&
-                                   ex.Message.Contains("不要为了删除", StringComparison.Ordinal);
+            emptyRejected = ex.Message.Contains("不完整或无效", StringComparison.Ordinal);
+        }
+        bool emptyIdRejected = false;
+        try
+        {
+            BrokerEngine.EnsureIncidentDeletionAllowed(new QuarantineManifest
+            {
+                IncidentId = Guid.Empty,
+                Records = { new QuarantineRecord { ActionId = Guid.NewGuid(), OriginalTarget = "inert" } }
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            emptyIdRejected = ex.Message.Contains("不完整或无效", StringComparison.Ordinal);
         }
         QuarantineManifest rolledBack = new()
         {
+            IncidentId = Guid.NewGuid(),
             Records = { new QuarantineRecord { ActionId = Guid.NewGuid(), OriginalTarget = "inert", RolledBack = true } }
         };
         bool rolledBackAllowed = true;
         try { BrokerEngine.EnsureIncidentDeletionAllowed(rolledBack); }
         catch { rolledBackAllowed = false; }
-        Check("0.1.17 Broker 仅清理全部已回滚事件且不诱导恢复可疑样本", activeDeleteRejected && rolledBackAllowed);
+        Check("0.1.17 Broker 允许直接清理未回滚及已回滚的完整隔离事件并拒绝无效清单", activeDeleteAllowed && rolledBackAllowed && emptyRejected && emptyIdRejected);
 
         string deleteConfirmation = SteamSentinel.Broker.Program.BuildConfirmationMessage(new RemediationPlan
         {
@@ -151,7 +168,7 @@ internal static partial class Program
         Check("0.1.17 永久删除使用专属不可撤销确认",
             deleteConfirmation.Contains("永久删除", StringComparison.Ordinal) &&
             deleteConfirmation.Contains("无法撤销", StringComparison.Ordinal) &&
-            deleteConfirmation.Contains("不要为了删除", StringComparison.Ordinal));
+            deleteConfirmation.Contains("不会将隔离样本还原回原路径", StringComparison.Ordinal));
         Check("0.1.17 回滚确认说明重启风险与目录安全拒绝",
             rollbackConfirmation.Contains("可能重新启用", StringComparison.Ordinal) &&
             rollbackConfirmation.Contains("不会自动恢复整目录", StringComparison.Ordinal) &&
@@ -174,17 +191,28 @@ internal static partial class Program
                              !InstallationSecurity.GrantsWrite(rule.FileSystemRights) &&
                              (rule.FileSystemRights & FileSystemRights.ExecuteFile) == 0));
 
-        Check("0.1.17 安装可加载文件白名单覆盖程序集和运行时配置",
+        Check("0.1.17 安装可加载文件白名单覆盖程序集和运行时配置且放行普通 JSON",
             InstallationSecurity.IsLoadablePayloadPath("SteamSentinel.exe") &&
             InstallationSecurity.IsLoadablePayloadPath("lib\\fixture.dll") &&
             InstallationSecurity.IsLoadablePayloadPath("SteamSentinel.deps.json") &&
             InstallationSecurity.IsLoadablePayloadPath("SteamSentinel.runtimeconfig.json") &&
             InstallationSecurity.IsLoadablePayloadPath("SteamSentinel.exe.config") &&
+            !InstallationSecurity.IsLoadablePayloadPath("notes.json") &&
             !InstallationSecurity.IsLoadablePayloadPath("docs\\THREAT-MODEL.md"));
-        Check("0.1.17 仅允许根级固定 Inno 卸载器不在清单中",
+        Check("0.1.17 仅允许根级 Inno 卸载器不在清单中",
             InstallationSecurity.IsAllowedUnlistedInstallFile("unins000.exe") &&
+            InstallationSecurity.IsAllowedUnlistedInstallFile("unins001.exe") &&
+            InstallationSecurity.IsAllowedUnlistedInstallFile("UNINS099.EXE") &&
             !InstallationSecurity.IsAllowedUnlistedInstallFile("tools\\unins000.exe") &&
-            !InstallationSecurity.IsAllowedUnlistedInstallFile("unins001.exe"));
+            !InstallationSecurity.IsAllowedUnlistedInstallFile("tools\\unins001.exe") &&
+            !InstallationSecurity.IsAllowedUnlistedInstallFile("unins001a.exe") &&
+            !InstallationSecurity.IsAllowedUnlistedInstallFile("unins0001.exe"));
+        Check("0.3.6 精准区分路径重定向重解析点与安全系统标签",
+            Validation.IsRedirectingReparseTag(0xA000000Cu) && // Symlink
+            Validation.IsRedirectingReparseTag(0xA0000003u) && // MountPoint / Junction
+            Validation.IsRedirectingReparseTag(0x8000001Bu) && // AppExecLink
+            !Validation.IsRedirectingReparseTag(0x80000017u) && // WOF / CompactOS
+            !Validation.IsRedirectingReparseTag(0x80000013u)); // Deduplication
 
         const string normalSoftwareSddl =
             "O:BAG:SYD:PAI(A;CI;KA;;;CO)(A;CI;KA;;;SY)(A;CI;KA;;;BA)(A;CI;KR;;;BU)(A;CI;KR;;;AC)" +

@@ -1,13 +1,14 @@
 using SteamSentinel.Core.Reporting;
 using System.Security.Principal;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Broker;
 
 internal static class BrokerRequestReader
 {
-    private const long MaximumPlanBytes = 1024 * 1024;
+    private const long MaximumPlanBytes = RemediationLimits.MaximumPlanBytes;
 
     public static async Task<RemediationPlan> ReadAsync(
         string planPath,

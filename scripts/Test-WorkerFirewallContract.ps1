@@ -1,14 +1,37 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 [CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$ResultsPath)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '..\installer\Verify-WorkerFirewall.ps1')
+$repoRoot = Split-Path $PSScriptRoot -Parent
+$helperSources = @(
+    (Join-Path $repoRoot 'installer\SetupHelperMain.cs'),
+    (Join-Path $repoRoot 'installer\PayloadMaintenance.cs'),
+    (Join-Path $repoRoot 'installer\MachineStateBootstrap.cs')
+)
+$compilerParams = New-Object CodeDom.Compiler.CompilerParameters
+$compilerParams.GenerateInMemory = $true
+$compilerParams.TreatWarningsAsErrors = $true
+foreach ($assembly in @('System.dll', 'System.Core.dll', 'System.Web.Extensions.dll')) {
+    $null = $compilerParams.ReferencedAssemblies.Add($assembly)
+}
+$combinedSource = [string[]]@($helperSources | ForEach-Object { [IO.File]::ReadAllText($_, [Text.Encoding]::UTF8).TrimStart([char]0xFEFF) })
+$compiler = New-Object Microsoft.CSharp.CSharpCodeProvider
+try {
+    $compiled = $compiler.CompileAssemblyFromSource($compilerParams, $combinedSource)
+    if ($compiled.Errors.HasErrors) {
+        throw ("SetupHelper test compilation failed: " + ($compiled.Errors | Out-String))
+    }
+}
+finally {
+    $compiler.Dispose()
+}
+
 $tests = [Collections.Generic.List[object]]::new()
 $root = 'C:\Program Files\SteamSentinel'
 $watch = [Diagnostics.Stopwatch]::StartNew()
 function Fixture {
-    foreach ($rule in @(Get-WorkerFirewallContract $root)) {
+    foreach ($rule in @([SteamSentinelWorkerFirewall]::GetContract($root))) {
         [pscustomobject]@{
             Name = $rule.Name; ApplicationName = $rule.ApplicationName; Direction = $rule.Direction
             Enabled = $true; Action = 0; Profiles = 2147483647; Protocol = 256
@@ -22,18 +45,18 @@ function Test([string]$Name, [scriptblock]$Body) {
 }
 function RequireRejected([object[]]$Rules) {
     $rejected = $false
-    try { Assert-WorkerFirewallRules $Rules $root } catch { $rejected = $true }
+    try { [SteamSentinelWorkerFirewall]::AssertRules($Rules, $root) } catch { $rejected = $true }
     if (-not $rejected) { throw 'Unsafe rule fixture was accepted.' }
 }
 Test 'Three exact Worker paths each have both directions' {
-    $contract = @(Get-WorkerFirewallContract $root)
+    $contract = @([SteamSentinelWorkerFirewall]::GetContract($root))
     if ($contract.Count -ne 6 -or @($contract.Name | Select-Object -Unique).Count -ne 6 -or
         @($contract.ApplicationName | Select-Object -Unique).Count -ne 3 -or
         @($contract | Where-Object Direction -eq 1).Count -ne 3 -or @($contract | Where-Object Direction -eq 2).Count -ne 3) {
         throw 'Worker contract does not cover all variants in both directions.'
     }
 }
-Test 'Complete exact block rules pass without accessing the system firewall' { Assert-WorkerFirewallRules @(Fixture) $root }
+Test 'Complete exact block rules pass without accessing the system firewall' { [SteamSentinelWorkerFirewall]::AssertRules(@(Fixture), $root) }
 for ($index = 0; $index -lt 6; $index++) {
     Test "Missing rule $index is rejected" {
         $rules = @(Fixture)
@@ -53,17 +76,20 @@ foreach ($entry in @(
 }
 Test 'Unrelated rules are retained and ignored' {
     $rules = @(Fixture); $extra = (Fixture)[0]; $extra.Name = 'Unrelated administrator rule'
-    Assert-WorkerFirewallRules ($rules + $extra) $root
+    [SteamSentinelWorkerFirewall]::AssertRules(($rules + $extra), $root)
 }
-Test 'Installer creates, removes and verifies every reserved rule' {
-    $installer = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\installer\SteamSentinel.iss') -Raw
-    foreach ($macro in @('WorkerRuleOut', 'WorkerRuleIn', 'WorkerStandardRuleOut', 'WorkerStandardRuleIn', 'WorkerCompatRuleOut', 'WorkerCompatRuleIn')) {
-        if (-not $installer.Contains("RemoveFirewallRuleIfPresent('{#$macro}');") -or
-            -not $installer.Contains("AddAndVerifyFirewallRule('{#$macro}',") -or
-            -not $installer.Contains('name=""{#' + $macro + '}""')) { throw "Missing installer lifecycle action for $macro" }
+Test 'Installer configures firewall via pinned SetupHelper without PowerShell and preserves uninstall cleanup' {
+    $installer = Get-Content -LiteralPath (Join-Path $repoRoot 'installer\SteamSentinel.iss') -Raw
+    if ($installer.Contains('powershell.exe')) { throw 'Installer still invokes PowerShell.' }
+    if (-not $installer.Contains('#define SetupHelperHash GetSHA256OfFile(SetupHelperPath)') -or
+        -not $installer.Contains('GetVerifiedSetupHelper()') -or
+        -not $installer.Contains('firewall --install-root') -or
+        -not $installer.Contains('CloseApplicationsFilter=*.exe,*.dll')) {
+        throw 'Missing pinned SetupHelper firewall lifecycle or all-host in-use checks.'
     }
-    if (-not $installer.Contains("GetSHA256OfFile(VerifyScript), '{#WorkerFirewallScriptHash}'") -or
-        -not $installer.Contains('CloseApplicationsFilter=*.exe,*.dll')) { throw 'Missing verification or all-host in-use checks.' }
+    foreach ($macro in @('WorkerRuleOut', 'WorkerRuleIn', 'WorkerStandardRuleOut', 'WorkerStandardRuleIn', 'WorkerCompatRuleOut', 'WorkerCompatRuleIn')) {
+        if (-not $installer.Contains('name=""{#' + $macro + '}""')) { throw "Missing uninstall cleanup for $macro" }
+    }
 }
 $watch.Stop()
 $result = [ordered]@{

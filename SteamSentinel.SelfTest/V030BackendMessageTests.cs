@@ -147,7 +147,7 @@ internal static partial class Program
             {
                 string deletion = SteamSentinel.Broker.Program.BuildConfirmationMessage(new() { Actions = [new() { Type = RemediationActionType.DeleteIncident, Target = "inert" }] });
                 string rollback = SteamSentinel.Broker.Program.BuildConfirmationMessage(new() { Actions = [new() { Type = RemediationActionType.RollbackIncident, Target = "inert" }] });
-                Check("后台消息 英语管理员确认保留不可撤销和重新启用提示", deletion.Contains("cannot be undone", StringComparison.Ordinal) && deletion.Contains("Do not restore suspicious samples", StringComparison.Ordinal) && rollback.Contains("reactivate", StringComparison.Ordinal) && rollback.Contains("whole-directory", StringComparison.Ordinal));
+                Check("后台消息 英语管理员确认保留不可撤销和重新启用提示", deletion.Contains("cannot be undone", StringComparison.Ordinal) && deletion.Contains("permanently delete", StringComparison.Ordinal) && deletion.Contains("will not restore quarantined samples", StringComparison.Ordinal) && rollback.Contains("reactivate", StringComparison.Ordinal) && rollback.Contains("whole-directory", StringComparison.Ordinal));
             }
             MessageText detail = MessageText.Create("Backend.Worker.Program.Main.01");
             SteamSentinel.App.Services.WorkerFailureException worker = new(SteamSentinel.App.Services.WorkerStage.Handshake,

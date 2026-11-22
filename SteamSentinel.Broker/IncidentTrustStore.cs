@@ -282,7 +282,7 @@ sourceText));
         bool allowCreatorOwnerForTrustedOwner)
     {
         if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
-            !TrustedRegistryOwners.Contains(owner.Value))
+            !InstallationSecurity.IsTrustedOwnerSid(owner.Value))
         {
             return false;
         }
@@ -301,7 +301,7 @@ sourceText));
             {
                 continue;
             }
-            if (TrustedRegistryOwners.Contains(identity.Value)) continue;
+            if (InstallationSecurity.IsTrustedOwnerSid(identity.Value)) continue;
             // Windows' normal HKLM\SOFTWARE ACL carries a container-inheritable
             // CREATOR OWNER full-control placeholder. It maps to this already-trusted
             // key owner and is safe only for the verified ancestor, never for our index.

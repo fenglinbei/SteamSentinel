@@ -44,7 +44,7 @@ internal sealed class WorkerFailureException : Exception
             ? MessageText.Create("WorkerFailureException.Describe.05")
             : reasonCode == ReasonCodes.AllocationFailed
             ? MessageText.Create("WorkerFailureException.Describe.06")
-            : code == unchecked((int)0xC0000142)
+            : code is unchecked((int)0xC0000142) or unchecked((int)0x80008089)
             ? MessageText.Create("WorkerFailureException.Describe.07")
             : stage == WorkerStage.Preflight
                 ? MessageText.Create("WorkerFailureException.Describe.08")

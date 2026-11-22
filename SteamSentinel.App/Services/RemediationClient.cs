@@ -9,7 +9,7 @@ namespace SteamSentinel.App.Services;
 
 internal sealed class RemediationClient
 {
-    internal const int MaximumWaitSeconds = 300;
+    internal const int MaximumWaitSeconds = 600;
     private readonly Dictionary<Guid, RemediationPlan> _unresolvedPlans = [];
     private readonly Func<RemediationPlan, CancellationToken, Task<RemediationRunResult?>> _readFinished;
 
@@ -20,10 +20,40 @@ internal sealed class RemediationClient
         => _readFinished = readFinished;
     internal bool HasUnresolvedExecution => _unresolvedPlans.Count > 0;
     internal bool IsUnresolved(Guid id) => _unresolvedPlans.ContainsKey(id);
+    internal IReadOnlyList<RemediationPlan> UnresolvedPlans => _unresolvedPlans.Values.ToArray();
     internal void RestoreUnresolvedPlan(RemediationPlan plan)
     {
-        if (plan.PlanId == Guid.Empty || plan.Actions.Count > 64) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.RestoreUnresolvedPlan.01"), sourceText => new InvalidDataException(sourceText));
+        if (plan.PlanId == Guid.Empty || plan.Actions.Count > RemediationLimits.MaximumActionsPerPlan) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.RestoreUnresolvedPlan.01"), sourceText => new InvalidDataException(sourceText));
         _unresolvedPlans.TryAdd(plan.PlanId, plan);
+    }
+
+    /// <summary>
+    /// 在用户明确确认管理员组件已退出且不再等待其回执后，将当前未决计划归档为 ExecutionUnknown 并解除全局门槛。
+    /// 必须先由调用方完成病例持久化再释放对应计划锁定，持久化失败时不释放门槛。
+    /// </summary>
+    internal async Task AcknowledgeUnresolvedPlansAsUnknownAsync(
+        Func<RemediationPlan, RemediationRunResult, Task> persistUnknown,
+        MessageText? reason = null)
+    {
+        ArgumentNullException.ThrowIfNull(persistUnknown);
+        MessageText errorNote = reason ?? MessageText.Create("Ui.Cases.AcknowledgeUnknown.ErrorSummary");
+        foreach (RemediationPlan plan in _unresolvedPlans.Values.ToArray())
+        {
+            RemediationRunResult unknown = new()
+            {
+                PlanId = plan.PlanId,
+                PlanIdentitySha256 = RemediationPlanIdentity.Fingerprint(plan),
+                Success = false,
+                Disposition = RemediationRunDisposition.ExecutionUnknown,
+                CompletedAtUtc = DateTimeOffset.UtcNow,
+                Errors = [errorNote]
+            };
+            ProtectedRemediationResultReader.ValidateFinished(plan, unknown);
+            await persistUnknown(plan, unknown).ConfigureAwait(false);
+            _unresolvedPlans.Remove(plan.PlanId);
+            try { File.Delete(Path.Combine(AppPaths.PlansRoot, $"plan-{plan.PlanId:N}.json")); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     internal async Task<RemediationRunResult?> TryRecoverResultAsync()
@@ -59,13 +89,15 @@ internal sealed class RemediationClient
     }
 
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default,
-        Func<RemediationPlan, CancellationToken, Task>? beforeLaunch = null)
+        Func<RemediationPlan, CancellationToken, Task>? beforeLaunch = null,
+        bool approvedInUi = false)
     {
         if (HasUnresolvedExecution) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.01"), sourceText => new InvalidOperationException(sourceText));
         if (!ElevationContext.Read().CanElevateSameUser)
             throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.02"), sourceText => new UnauthorizedAccessException(sourceText));
-        InstallationSecurityStatus installation = await Task.Run(() => InstallationSecurity.Evaluate(), cancellationToken);
-        if (!installation.IsProtected) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
+        InstallationSecurityStatus installation = await Task.Run(
+            () => InstallationSecurity.Evaluate(depth: InstallationVerificationDepth.Fast), cancellationToken);
+        if (!installation.CanRemediate) throw SteamSentinel.Core.Reporting.MessageExceptions.Create(installation.MessageText, text => new UnauthorizedAccessException(text));
 
         string brokerPath = Path.Combine(AppContext.BaseDirectory, "SteamSentinel.Broker.exe");
         if (!File.Exists(brokerPath)) throw MessageExceptions.Create(MessageText.Create("Backend.App.RemediationClient.ExecuteAsync.03"), sourceText => new FileNotFoundException(sourceText, brokerPath));
@@ -75,6 +107,12 @@ internal sealed class RemediationClient
         string resultPath = Path.Combine(AppPaths.ResultsRoot, $"result-{plan.PlanId:N}.json");
         await JsonFile.WriteAtomicAsync(planPath, plan, cancellationToken);
         string planSha256 = await Hashing.Sha256FileExclusiveAsync(planPath, cancellationToken);
+
+        bool allowUiApprovalPipe = approvedInUi && !plan.Actions.Any(action =>
+            action.Type is RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident);
+        await using UiApprovalServer? approvalServer = allowUiApprovalPipe
+            ? new UiApprovalServer(plan.PlanId, RemediationPlanIdentity.Fingerprint(plan))
+            : null;
 
         ProcessStartInfo startInfo = new()
         {
@@ -89,6 +127,11 @@ internal sealed class RemediationClient
         startInfo.ArgumentList.Add(planSha256);
         startInfo.ArgumentList.Add("--ui-language");
         startInfo.ArgumentList.Add(DisplayText.ApplicationCulture.TwoLetterISOLanguageName == "zh" ? "zh-Hans" : "en");
+        if (approvalServer is not null)
+        {
+            startInfo.ArgumentList.Add(UiApprovalProtocol.ApprovalPipeArgument);
+            startInfo.ArgumentList.Add(approvalServer.PipeName);
+        }
 
         int brokerExitCode;
         bool started = false;

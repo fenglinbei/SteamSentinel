@@ -47,6 +47,9 @@ internal static partial class Program
             ("所有用户写入", trusted + "(A;;FW;;;WD)", false),
             ("任意直接账户写入", trusted + "(A;;FW;;;S-1-5-21-1-2-3-1001)", false),
             ("任意自定义组写入", trusted + "(A;;FW;;;S-1-5-21-1-2-3-2001)", false),
+            ("内置 Administrator RID (-500)", trusted + "(A;;FW;;;S-1-5-21-1-2-3-500)", true),
+            ("域管理员组 RID (-512)", trusted + "(A;;FW;;;S-1-5-21-1-2-3-512)", true),
+            ("企业管理员组 RID (-519)", trusted + "(A;;FW;;;S-1-5-21-1-2-3-519)", true),
             ("非受信任所有者", "O:S-1-5-21-1-2-3-1001G:BAD:P(A;;FA;;;BA)", false),
             ("空 DACL 拒绝访问不是任意写入", "O:BAG:BAD:P", true),
             ("NULL DACL 任意访问不通过", "O:BAG:BAD:NO_ACCESS_CONTROL", false)
@@ -58,6 +61,46 @@ internal static partial class Program
             InstallationSecurityStatus status = InstallationSecurity.CheckSecurityDescriptor(acl, "fixture");
             Check("安装 ACL：" + name, status.IsProtected == allowed && before.SequenceEqual(acl.GetSecurityDescriptorBinaryForm()));
         }
+
+        string portableRoot = Path.Combine(root, "v017-portable");
+        Directory.CreateDirectory(Path.Combine(portableRoot, "zh-Hans"));
+        string[] portableComponents =
+        [
+            "SteamSentinel.exe", "SteamSentinel.Broker.exe", "SteamSentinel.ArchiveWorker.exe",
+            "SteamSentinel.dll", "SteamSentinel.Core.dll", "SteamSentinel.Broker.dll", "SteamSentinel.ArchiveWorker.dll",
+            "SteamSentinel.deps.json", "SteamSentinel.runtimeconfig.json",
+            "SteamSentinel.Broker.deps.json", "SteamSentinel.Broker.runtimeconfig.json",
+            "SteamSentinel.ArchiveWorker.deps.json", "SteamSentinel.ArchiveWorker.runtimeconfig.json",
+            @"zh-Hans\SteamSentinel.Core.resources.dll"
+        ];
+        List<string> manifestLines = [];
+        foreach (string component in portableComponents)
+        {
+            string path = Path.Combine(portableRoot, component);
+            await File.WriteAllTextAsync(path, "inert portable component: " + component);
+            manifestLines.Add($"{await Hashing.Sha256FileExclusiveAsync(path)} *{component}");
+        }
+        await File.WriteAllTextAsync(Path.Combine(portableRoot, "SHA256SUMS.txt"), string.Join("\n", manifestLines) + "\n");
+        InstallationSecurityStatus portableFast = InstallationSecurity.Evaluate(portableRoot, InstallationVerificationDepth.Fast);
+        InstallationSecurityStatus portableFull = InstallationSecurity.Evaluate(portableRoot, InstallationVerificationDepth.Full);
+        Check("便携目录完整性通过后返回 Portable 并允许处置但不伪装 Program Files 受保护",
+            portableFast.Mode == InstallationTrustMode.Portable && portableFast.CanRemediate && !portableFast.IsProtected &&
+            portableFull.Mode == InstallationTrustMode.Portable && portableFull.CanRemediate && !portableFull.IsProtected);
+
+        await File.WriteAllTextAsync(Path.Combine(portableRoot, "notes.json"), "{\"portable\":true}");
+        Check("普通 JSON 数据文件不触发未列出代码误拒",
+            InstallationSecurity.Evaluate(portableRoot, InstallationVerificationDepth.Fast).Mode == InstallationTrustMode.Portable);
+
+        string rogueDll = Path.Combine(portableRoot, "rogue.dll");
+        await File.WriteAllTextAsync(rogueDll, "unlisted dll");
+        Check("便携目录出现未列出可加载 DLL 仍拒绝处置",
+            InstallationSecurity.Evaluate(portableRoot, InstallationVerificationDepth.Fast) is { Mode: InstallationTrustMode.Unsafe, CanRemediate: false });
+        File.Delete(rogueDll);
+
+        string coreDll = Path.Combine(portableRoot, "SteamSentinel.Core.dll");
+        await File.AppendAllTextAsync(coreDll, "tampered");
+        Check("便携目录核心文件哈希不匹配退回 Unsafe",
+            InstallationSecurity.Evaluate(portableRoot, InstallationVerificationDepth.Fast) is { Mode: InstallationTrustMode.Unsafe, CanRemediate: false });
 
         string sums = Path.Combine(root, "v017-SHA256SUMS.txt"), hash = new('A', 64);
         await File.WriteAllTextAsync(sums, $"{hash} *SteamSentinel.dll\n{hash} *zh-Hans/fixture.resources.dll\n");
@@ -136,8 +179,20 @@ internal static partial class Program
             UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, context);
             Check(name, Button("ElevateButton").IsEnabled == enabled && Button("RemediateButton").IsEnabled && Hint().Contains(hint, StringComparison.Ordinal));
         }
+        UiPreview.ApplyAccessState(window,
+            InstallationSecurityStatus.Portable(SteamSentinel.Core.Reporting.MessageText.Create("Backend.Core.InstallationSecurity.Portable.01")),
+            new(false, true));
+        SteamSentinel.App.Dialogs.RemediationPreviewWindow portablePreview = new(new RemediationPlan(), isPortableInstallation: true);
+        try
+        {
+            Check("便携模式允许扫描、处置与提权并显示风险提示", Button("ElevateButton").IsEnabled && Button("RemediateButton").IsEnabled &&
+                ((TextBlock)window.FindName("InstallationSecurityText")).Text ==
+                SteamSentinel.Core.Reporting.DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableStandard") &&
+                portablePreview.NoticeText.Contains(SteamSentinel.Core.Reporting.DisplayText.Get("Ui.RemediationPreviewWindow.PortableRiskNotice"), StringComparison.Ordinal));
+        }
+        finally { portablePreview.Close(); }
         UiPreview.ApplyAccessState(window, new(false, "inert unsafe ACL"), new(false, true));
-        Check("便携或不安全安装保留扫描但禁用处置与提权", !Button("ElevateButton").IsEnabled && !Button("RemediateButton").IsEnabled &&
+        Check("不安全安装保留扫描但禁用处置与提权", !Button("ElevateButton").IsEnabled && !Button("RemediateButton").IsEnabled &&
             !Button("RollbackButton").IsEnabled && !Button("DeleteIncidentButton").IsEnabled && Button("QuickScanButton").IsEnabled && Button("ExportButton").IsEnabled);
         UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, new(false, true));
         Check("重新检查刷新处置状态且保留报告与选择", Button("RemediateButton").IsEnabled && window.Findings.Count == 1 &&

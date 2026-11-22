@@ -125,7 +125,8 @@ public static class FileScopeSafety
 
     public static void ValidateHandlePath(SafeFileHandle handle, string path, bool directory = false)
     {
-        if (!GetFileInformationByHandle(handle, out HandleInfo info) || (info.FileAttributes & 0x400) != 0 ||
+        if (!GetFileInformationByHandle(handle, out HandleInfo info) ||
+            ((info.FileAttributes & 0x400) != 0 && Validation.IsRedirectingReparseHandle(handle)) ||
             ((info.FileAttributes & 0x10) != 0) != directory)
             throw MessageExceptions.Create(MessageText.Create("Scope.RedirectedPath"), text => new UnauthorizedAccessException(text));
         char[] buffer = new char[32768];
