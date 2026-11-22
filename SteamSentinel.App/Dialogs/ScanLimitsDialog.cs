@@ -20,6 +20,8 @@ internal sealed class ScanLimitsDialog : Window
     private ScanMode _active = ScanMode.Quick;
     private bool _switching;
     private bool _rendering;
+    private Expander? _advancedExpander;
+    private bool _advancedExpanded;
     internal ScanLimitSettings Settings { get; }
     private static IEnumerable<ScanLimitDefinition> VisibleFields => ScanLimitSettings.Fields.Where(definition =>
         ScanEnhancements.AmsiAvailable || definition.Key != nameof(ScanOptions.MaximumAmsiBytes));
@@ -28,7 +30,7 @@ internal sealed class ScanLimitsDialog : Window
     {
         Settings = JsonSerializer.Deserialize<ScanLimitSettings>(JsonSerializer.Serialize(current))!;
         Title = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.01");
-        Width = 850; Height = 740; MinWidth = 520; MinHeight = 380;
+        Width = 640; Height = 460; MinWidth = 500; MinHeight = 360;
         MaxWidth = SystemParameters.WorkArea.Width; MaxHeight = SystemParameters.WorkArea.Height;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         FontFamily = new("Microsoft YaHei UI"); FontSize = 12;
@@ -131,6 +133,7 @@ internal sealed class ScanLimitsDialog : Window
         System.Windows.Automation.AutomationProperties.SetName(performance, DisplayText.Get("Resource.PerformanceLabel"));
         _rows.Children.Add(performance);
         _rows.Children.Add(new TextBlock { Text = DisplayText.Get("Resource.PerformanceHint"), TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 16) });
+        StackPanel advancedRows = new() { Margin = new(0, 8, 0, 0) };
         foreach (ScanLimitDefinition field in VisibleFields)
         {
             StackPanel row = new() { Margin = new(0, 0, 12, 12) };
@@ -151,8 +154,19 @@ internal sealed class ScanLimitsDialog : Window
             TextBlock unit = new() { Text = field.Unit, VerticalAlignment = VerticalAlignment.Center, Margin = new(8, 0, 0, 0) };
             Grid.SetColumn(unit, 2); line.Children.Add(unit); row.Children.Add(line);
             row.Children.Add(new TextBlock { Text = DisplayText.Format("Ui.ScanLimitsDialog.RenderRows.01", (field.Default(_active)), (field.Unit), (field.Consequence)), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, Margin = new(0, 4, 0, 0) });
-            _rows.Children.Add(row);
+            advancedRows.Children.Add(row);
         }
+        _advancedExpander = new Expander
+        {
+            Name = "AdvancedLimitsExpander",
+            Header = DisplayText.Format("Ui.P2C.AdvancedLimitsHeader", VisibleFields.Count()),
+            IsExpanded = _advancedExpanded,
+            Content = advancedRows,
+            Margin = new(0, 4, 0, 8)
+        };
+        _advancedExpander.Expanded += (_, _) => _advancedExpanded = true;
+        _advancedExpander.Collapsed += (_, _) => _advancedExpanded = false;
+        _rows.Children.Add(_advancedExpander);
         _preset.SelectedIndex = Settings.DetectPreset(_active);
         _presetHint.Text = ScanLimitSettings.PresetDescription(_preset.SelectedIndex);
         _rendering = false;
@@ -175,7 +189,16 @@ internal sealed class ScanLimitsDialog : Window
                 if (value != field.Default(_active)) values.Add(field.Key, value);
             }
             catch (InvalidDataException ex)
-            { _error.Text = ex.Message; input.BringIntoView(); input.Focus(); input.SelectAll(); return false; }
+            {
+                _error.Text = ex.Message;
+                if (_advancedExpander is not null)
+                {
+                    _advancedExpanded = true;
+                    _advancedExpander.IsExpanded = true;
+                    UpdateLayout();
+                }
+                input.BringIntoView(); input.Focus(); input.SelectAll(); return false;
+            }
         }
         if (_active == ScanMode.Quick) Settings.Quick = values; else Settings.Full = values;
         _error.Text = string.Empty;

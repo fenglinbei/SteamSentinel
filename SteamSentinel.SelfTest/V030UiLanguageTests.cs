@@ -102,6 +102,12 @@ internal static partial class Program
                     collected.AddRange(UiLayoutHarness.Descendants<FrameworkElement>(layout.Root)
                         .SelectMany(x => new[] { AutomationProperties.GetName(x), AutomationProperties.GetHelpText(x) }));
                 }
+                Expander optionsExpander = (Expander)window.FindName("ScanOptionsExpander");
+                CheckBox advancedTabsCheck = (CheckBox)window.FindName("ShowAdvancedTabsCheckBox");
+                bool wasOptionsExpanded = optionsExpander.IsExpanded;
+                optionsExpander.IsExpanded = true;
+                advancedTabsCheck.IsChecked = true;
+                layout.Refresh();
                 for (int tab = 0; tab < mainTabs.Items.Count; tab++)
                 {
                     mainTabs.SelectedIndex = tab; layout.Refresh();
@@ -122,6 +128,9 @@ internal static partial class Program
                     for (int page = 0; page < results.Items.Count; page++)
                     { results.SelectedIndex = page; layout.Refresh(); Collect(); }
                 }
+                advancedTabsCheck.IsChecked = false;
+                optionsExpander.IsExpanded = wasOptionsExpanded;
+                layout.Refresh();
                 Check("双语UI 全部初始页签及辅助功能文案无遗漏资源或中文",
                     selectedAutonyms.Count > 0 && collected.Count > 150 && !collected.Any(Untranslated));
             }

@@ -2780,7 +2780,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ScanSettings_Click.01" xml:space="preserve">
-    <value>扫描限制设置</value>
+    <value>扫描设置</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ScanSettings_Click.02" xml:space="preserve">
@@ -4047,7 +4047,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.013" xml:space="preserve">
-    <value>扫描限制设置</value>
+    <value>扫描设置</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.014" xml:space="preserve">
@@ -12023,4 +12023,12 @@ DER SHA-256：{3}
   <data name="Steam.RecoveryGuide.UntrustedSteamBinary" xml:space="preserve"><value>1. 警告：检测到至少一个 steam.exe 未通过 Valve 官方数字签名校验或文件缺失（{0}），请勿直接启动未通过校验的可执行文件。</value></data>
   <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. 若 Steam 仍无法正常打开、界面空白/报错，或主程序签名异常，请前往 Steam 官网下载官方 SteamSetup.exe 覆盖安装到原目录（不会删除 steamapps 游戏库），完成后再用 SteamSentinel 复扫确认。</value></data>
   <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>本工具不会自动修改 Steam 二进制或运行外部安装器，请按上述步骤安全恢复后复扫。</value></data>
+  <data name="Ui.P2C.AggressiveBadge" xml:space="preserve"><value>激进模式</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>显示高级诊断页签（代理/组件/病例/容器）</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>默认只显示风险、未检查内容与处置结果三个核心页签；排障时可勾选展开代理与证书、组件关联、病例复验及容器检查页。</value></data>
+  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>发现 {0} 项可处理风险：请核对已勾选项后，点击右下角“预览并处置所选项”。</value></data>
+  <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>发现 {0} 项需人工确认的线索：请点击表格行查看原因，不确定时可先导出报告。</value></data>
+  <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>本次扫描未覆盖全部内容，暂未发现风险：可切到“未检查内容”查看或补查跳过项。</value></data>
+  <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>扫描完成，未发现已知假红信或恶意风险，当前所选 Steam 与本地范围正常。</value></data>
+  <data name="Ui.P2C.AdvancedLimitsHeader" xml:space="preserve"><value>高级自定义预算（{0} 项专家参数，通常无需调整）</value></data>
 </root>

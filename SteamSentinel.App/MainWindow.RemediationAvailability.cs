@@ -128,6 +128,7 @@ public partial class MainWindow
                     break;
                 case RemediationAvailabilityAction.ViewRecords:
                     MainTabs.SelectedIndex = 0;
+                    UpdateAdvancedTabsVisibility(CasesTab);
                     ResultTabs.SelectedItem = CasesTab;
                     break;
             }

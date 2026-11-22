@@ -115,17 +115,31 @@ internal static partial class Program
                     using UiLayoutHarness layout = new(window, width, height);
                     SetTrustProxyUiReport(window, report);
                     UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, new(false, true));
+                    Expander options = (Expander)window.FindName("ScanOptionsExpander");
+                    ScrollViewer optionsScroll = (ScrollViewer)window.FindName("ScanOptionsScroll");
                     ComboBox mode = (ComboBox)window.FindName("RemediationModeComboBox");
+                    FrameworkElement badge = (FrameworkElement)window.FindName("AggressiveModeBadge");
                     Button selectAll = TrustProxyUiButton(window, "SelectAllButton");
+                    options.IsExpanded = true;
                     layout.Refresh();
+                    mode.BringIntoView();
+                    layout.Refresh();
+                    DpiScale dpi = VisualTreeHelper.GetDpi(mode);
+                    for (int step = 0; step < 2 && !layout.IsFullyVisible(mode); step++)
+                    {
+                        optionsScroll.ScrollToVerticalOffset(optionsScroll.VerticalOffset + 1 / dpi.DpiScaleY);
+                        layout.Refresh();
+                    }
                     Check($"Mode UI {culture.Name}/{width} defaults conservative without changing evidence",
                         window.CurrentRemediationMode == RemediationMode.Conservative && mode.SelectedIndex == 0 &&
+                        badge.Visibility == Visibility.Collapsed &&
                         window.Findings[0].IsSelected && !window.Findings[1].CanSelect && !window.Findings[2].CanSelect);
                     if (output is not null) layout.Save($"mode-conservative-{culture.Name}-{width}x{height}", output);
                     mode.SelectedIndex = 1;
                     layout.Refresh();
                     Check($"Mode UI {culture.Name}/{width} aggressive clears all selections and adds eligible risk only",
-                        window.CurrentRemediationMode == RemediationMode.Aggressive && window.Findings.All(item => !item.IsSelected) &&
+                        window.CurrentRemediationMode == RemediationMode.Aggressive && badge.Visibility == Visibility.Visible &&
+                        window.Findings.All(item => !item.IsSelected) &&
                         window.Findings[1].CanSelect && window.Findings[1].UserSelectedRisk && !window.Findings[2].CanSelect &&
                         window.Findings[1].Score == 90 && !window.Findings[1].Finding.IsKnownMalware &&
                         window.Findings[1].HandlingLabel.Contains(DisplayText.Get("RemediationMode.RiskLabel"), StringComparison.Ordinal) &&
@@ -144,6 +158,7 @@ internal static partial class Program
                     mode.SelectedIndex = 0;
                     layout.Refresh();
                     Check($"Mode UI {culture.Name}/{width} returning conservative clears selections and removes risk eligibility",
+                        badge.Visibility == Visibility.Collapsed &&
                         window.Findings.All(item => !item.IsSelected) && !window.Findings[1].CanSelect);
                 }
                 finally { CloseSummaryFixture(window); }

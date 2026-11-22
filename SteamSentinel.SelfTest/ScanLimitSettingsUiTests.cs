@@ -16,8 +16,12 @@ internal static partial class Program
             using UiLayoutHarness layout = new(dialog, width, height);
             ComboBox preset = UiLayoutHarness.Descendants<ComboBox>(layout.Root).Single(c => c.Items.Count == 6);
             ComboBox mode = UiLayoutHarness.Descendants<ComboBox>(layout.Root).Single(c => c.Items.Count == 2);
-            Check($"扫描设置UI {width} 默认中档并提供完整六项", preset.SelectedIndex == 2 && preset.Items.Cast<string>().SequenceEqual(ScanLimitSettings.Presets));
-            Check($"扫描设置UI {width} 温和启用AMSI后完整展示全部额度项", ScanEnhancements.AmsiAvailable &&
+            Expander advanced = UiLayoutHarness.Descendants<Expander>(layout.Root).Single(e => e.Name == "AdvancedLimitsExpander");
+            Check($"扫描设置UI {width} 默认中档并默认折叠32项高级预算",
+                preset.SelectedIndex == 2 && preset.Items.Cast<string>().SequenceEqual(ScanLimitSettings.Presets) &&
+                !advanced.IsExpanded && UiLayoutHarness.Descendants<TextBox>(layout.Root).All(tb => !tb.IsVisible));
+            advanced.IsExpanded = true; layout.Refresh();
+            Check($"扫描设置UI {width} 温和启用AMSI后展开展示全部额度项", ScanEnhancements.AmsiAvailable &&
                 UiLayoutHarness.Descendants<TextBox>(layout.Root).Count() == ScanLimitSettings.Fields.Count);
             preset.SelectedIndex = 4; layout.Refresh();
             decimal highAmsiLimit = dialog.Settings.Quick[nameof(ScanOptions.MaximumAmsiBytes)];
@@ -42,6 +46,15 @@ internal static partial class Program
             Button reset = UiLayoutHarness.Descendants<Button>(layout.Root).Single(b => b.Name == "ResetLimitsButton");
             reset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); layout.Refresh();
             Check($"扫描设置UI {width} 恢复默认回中档", preset.SelectedIndex == 2 && dialog.Settings.Full.Count == 0);
+
+            TextBox hiddenInvalid = UiLayoutHarness.Descendants<TextBox>(layout.Root).First();
+            hiddenInvalid.Text = "bad";
+            advanced = UiLayoutHarness.Descendants<Expander>(layout.Root).Single(e => e.Name == "AdvancedLimitsExpander");
+            advanced.IsExpanded = false; layout.Refresh();
+            save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); layout.Refresh();
+            Check($"扫描设置UI {width} 折叠状态下非法输入保存时自动展开定位错误",
+                advanced.IsExpanded && dialog.DialogResult is not true &&
+                UiLayoutHarness.Descendants<TextBox>(layout.Root).First().IsVisible);
         }
     }
 }

@@ -1143,6 +1143,10 @@ internal static partial class Program
                 TestV016Dialog();
                 Console.WriteLine($"UI_DISPATCHER_PASS={_passed};FAIL={Failures.Count}");
                 return Failures.Count == 0 ? 0 : 1;
+            case "--p2c-ui-tests" when args.Length == 1:
+                RunP2CUiSuite();
+                Console.WriteLine($"P2C_UI_PASS={_passed};FAIL={Failures.Count}");
+                return Failures.Count == 0 ? 0 : 1;
             case "--corpus" when args.Length == 3:
                 return await CorpusRegression.RunAsync(args[1], args[2]);
             case "--corpus-batch" when args.Length == 3:

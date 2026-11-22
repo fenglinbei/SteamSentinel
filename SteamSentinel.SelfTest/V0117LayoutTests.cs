@@ -287,6 +287,7 @@ internal static partial class Program
         TestRemediationFailureDetailsUi(output);
         TestV020ContainerUi(output);
         TestV0119PasswordUi(output);
+        TestP2CUiSimplification(output);
     }
 
     private static void TestV0119TableAndButtonConsistency(string? output)
@@ -369,7 +370,7 @@ internal static partial class Program
 internal static class UiLayoutFixtures
 {
     internal static readonly (int Width, int Height)[] Viewports = [(1148, 780), (1024, 650), (900, 580), (800, 500), (784, 460)];
-    internal static readonly string[] ScanButtons = ["QuickScanButton", "FullScanButton", "FileScanButton", "FolderScanButton", "RetryPasswordsButton", "CancelScanButton"];
+    internal static readonly string[] ScanButtons = ["QuickScanButton", "FullScanButton", "FileScanButton", "FolderScanButton", "ScanSettingsButton"];
     internal static readonly string[] ResultButtons = ["SelectAllButton", "ClearSelectionButton", "ExportButton", "ReviewFindingButton", "OccupancyButton", "RemediateButton"];
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     internal static readonly string LongPath = @"C:\Users\界面测试用户\Desktop\仅用于布局验证的无害示例资料\" +

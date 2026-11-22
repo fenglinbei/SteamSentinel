@@ -41,16 +41,19 @@ public partial class MainWindow
         ContainerActionsBar.Margin = shortViewport ? new Thickness(0, 3, 0, 2) : new Thickness(0, 5, 0, 4);
         // On very short windows, operations and expanded panels take priority over branding.
         UpdateCompactHeader();
-        MainTabs.Margin = shortViewport ? new Thickness(6, 4, 6, 4) : new Thickness(12, 8, 12, 8);
-        ScanPage.Margin = new Thickness(shortViewport ? 6 : 10);
-        ScanControlsCard.Padding = shortViewport ? new Thickness(8, 4, 8, 4) : new Thickness(10, 8, 10, 8);
+        MainTabs.Margin = shortViewport ? new Thickness(6, 2, 6, 2) : new Thickness(12, 8, 12, 8);
+        ScanPage.Margin = shortViewport ? new Thickness(6, 2, 6, 2) : new Thickness(10);
+        ScanControlsCard.Padding = shortViewport ? new Thickness(8, 2, 8, 2) : new Thickness(10, 8, 10, 8);
         ScanOptionsContainer.Margin = new Thickness(0, shortViewport ? 2 : 5, 0, 0);
         InstallationControls.Margin = new Thickness(0, shortViewport ? 2 : 5, 0, 0);
         // The mode selector makes this line slightly taller than plain summary text.
         // Reuse its outer spacing on short viewports so a full result row still fits.
-        ScanProgressSummary.Margin = new Thickness(0, shortViewport ? 1 : 7, 0, shortViewport ? 1 : 7);
-        FindingDetailCard.Margin = new Thickness(0, shortViewport ? 3 : 7, 0, 0);
-        SelectionActionsBar.Margin = new Thickness(0, shortViewport ? 4 : 8, 0, 0);
+        ScanProgressSummary.Margin = new Thickness(0, shortViewport ? 0 : 7, 0, shortViewport ? 1 : 7);
+        ScanVerdictBanner.Margin = shortViewport ? new Thickness(0, 1, 0, 0) : new Thickness(0, 5, 0, 0);
+        ScanVerdictBanner.Padding = shortViewport ? new Thickness(6, 1, 6, 1) : new Thickness(8, 5, 8, 5);
+        ScanVerdictText.FontSize = shortViewport ? 11 : 12;
+        FindingDetailCard.Margin = new Thickness(0, shortViewport ? 1 : 7, 0, 0);
+        SelectionActionsBar.Margin = new Thickness(0, shortViewport ? 2 : 8, 0, 0);
         // Collapse optional evidence on entering a short viewport, not on every
         // layout pass. The user may still open it without hiding the action bar.
         if (_compactLayout != compact)
@@ -92,7 +95,8 @@ public partial class MainWindow
         // cannot make a 23-DIP control visible inside a 17-DIP viewport.
         double minimum = optional == ScanOptionsScroll
             ? new Control[] { WorkshopScopeComboBox, DownloadLocationsCheckBox, ExecutionHistoryCheckBox,
-                ArchiveCheckBox, AmsiCheckBox, DeepSignatureCheckBox, DomainBlockCheckBox }
+                ArchiveCheckBox, AmsiCheckBox, DeepSignatureCheckBox, DomainBlockCheckBox,
+                RemediationModeComboBox, ShowAdvancedTabsCheckBox }
                 .Max(control => control.DesiredSize.Height)
             : FindingDetailScroll.FontSize * 1.5;
         minimum = Math.Ceiling(minimum * scale) / scale + 1 / scale;
@@ -148,8 +152,15 @@ public partial class MainWindow
         bool needsRoom = MainTabs.SelectedIndex == 0 && (ActivityPanel.Visibility == Visibility.Visible ||
             ReferenceFindings?.Count > 0 || ScanOptionsExpander.IsExpanded ||
             FindingDetailCard.Visibility == Visibility.Visible && FindingDetailCard.IsExpanded);
-        HeaderCard.Visibility = WindowLayout.ActualHeight is > 0 and < 540 && needsRoom
-            ? Visibility.Collapsed : Visibility.Visible;
+        bool compactShort = WindowLayout.ActualHeight is > 0 and < 540 && needsRoom;
+        HeaderCard.Visibility = compactShort ? Visibility.Collapsed : Visibility.Visible;
+        if (ScanVerdictBanner is not null)
+        {
+            bool onFindingsTab = MainTabs.SelectedIndex == 0 && (ResultTabs is null || ResultTabs.SelectedIndex == 0);
+            bool showVerdict = _hasScanVerdict && onFindingsTab &&
+                ActivityPanel.Visibility != Visibility.Visible && !compactShort;
+            ScanVerdictBanner.Visibility = showVerdict ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private void WindowLayout_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateCompactHeader();

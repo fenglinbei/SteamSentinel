@@ -60,6 +60,8 @@ internal static partial class Program
                     using UiLayoutHarness layout = new(window, width, height);
                     SetTrustProxyUiReport(window, fixture);
                     UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, new(false, true));
+                    ((CheckBox)window.FindName("ShowAdvancedTabsCheckBox")).IsChecked = true;
+                    layout.Refresh();
                     TabControl tabs = (TabControl)window.FindName("ResultTabs");
                     Check($"0.2容器UI {width}x{height} 原六页索引保留且容器页追加为6", tabs.Items.Count == 7 &&
                         ReferenceEquals(tabs.Items[3], window.FindName("TrustProxyTab")) && ReferenceEquals(tabs.Items[4], window.FindName("RelatedComponentsTab")) &&

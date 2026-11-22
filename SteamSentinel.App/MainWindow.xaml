@@ -87,9 +87,29 @@
                                 <Button x:Name="FullScanButton" Content="{ui:Text Ui.Xaml.MainWindow.009}" Click="FullScan_Click" />
                                 <Button x:Name="FileScanButton" Content="{ui:Text Ui.Xaml.MainWindow.010}" Click="FileScan_Click" />
                                 <Button x:Name="FolderScanButton" Content="{ui:Text Ui.Xaml.MainWindow.011}" Click="FolderScan_Click" />
-                                <Button x:Name="RetryPasswordsButton" Content="{ui:Text Ui.Xaml.MainWindow.012}" IsEnabled="False" Click="RetryPasswords_Click" />
+                                <Button x:Name="RetryPasswordsButton" Content="{ui:Text Ui.Xaml.MainWindow.012}" IsEnabled="False" Click="RetryPasswords_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
                                 <Button x:Name="ScanSettingsButton" Content="{ui:Text Ui.Xaml.MainWindow.013}" Click="ScanSettings_Click" />
-                                <Button x:Name="CancelScanButton" Content="{ui:Text Ui.Xaml.MainWindow.014}" IsEnabled="False" Click="CancelScan_Click" />
+                                <Button x:Name="CancelScanButton" Content="{ui:Text Ui.Xaml.MainWindow.014}" IsEnabled="False" Click="CancelScan_Click">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
                             </WrapPanel>
                             <StackPanel x:Name="ScanOptionsContainer" Grid.Row="1" Margin="0,5,0,0">
                             <Expander x:Name="ScanOptionsExpander" Header="{ui:Text Ui.Xaml.MainWindow.015}" Expanded="ScanOptions_Expanded">
@@ -103,10 +123,23 @@
                                 <ComboBox x:Name="WorkshopScopeComboBox" AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.019}" DisplayMemberPath="Label" SelectedValuePath="AppId" MinWidth="160" MaxWidth="250" Margin="0,0,18,8" ToolTip="{ui:Text Ui.Xaml.MainWindow.020}" />
                                 <CheckBox x:Name="DownloadLocationsCheckBox" Margin="0,0,18,8" Content="{ui:Text Ui.Xaml.MainWindow.021}" ToolTip="{ui:Text Ui.Xaml.MainWindow.022}" Checked="ScopeOptions_Changed" Unchecked="ScopeOptions_Changed" />
                                 <CheckBox x:Name="ExecutionHistoryCheckBox" Margin="0,0,18,8" Content="{ui:Text Ui.Xaml.MainWindow.023}" ToolTip="{ui:Text Ui.Xaml.MainWindow.024}" />
-                                <CheckBox x:Name="ArchiveCheckBox" IsChecked="True" Margin="0,0,22,0" Content="{ui:Text Ui.Xaml.MainWindow.025}" />
-                                <CheckBox x:Name="AmsiCheckBox" IsChecked="False" IsEnabled="True" Visibility="Visible" Margin="0,0,22,0" Content="{ui:Text Ui.Xaml.MainWindow.026}" />
-                                <CheckBox x:Name="DeepSignatureCheckBox" IsChecked="True" Margin="0,0,22,0" Content="{ui:Text Ui.Xaml.MainWindow.027}" ToolTip="{ui:Text Ui.Xaml.MainWindow.028}" />
-                                <CheckBox x:Name="DomainBlockCheckBox" IsChecked="True" Content="{ui:Text Ui.Xaml.MainWindow.029}" />
+                                <CheckBox x:Name="ArchiveCheckBox" IsChecked="True" Margin="0,0,22,6" Content="{ui:Text Ui.Xaml.MainWindow.025}" />
+                                <CheckBox x:Name="AmsiCheckBox" IsChecked="False" IsEnabled="True" Visibility="Visible" Margin="0,0,22,6" Content="{ui:Text Ui.Xaml.MainWindow.026}" />
+                                <CheckBox x:Name="DeepSignatureCheckBox" IsChecked="True" Margin="0,0,22,6" Content="{ui:Text Ui.Xaml.MainWindow.027}" ToolTip="{ui:Text Ui.Xaml.MainWindow.028}" />
+                                <CheckBox x:Name="DomainBlockCheckBox" IsChecked="True" Margin="0,0,18,6" Content="{ui:Text Ui.Xaml.MainWindow.029}" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,18,6" VerticalAlignment="Center">
+                                    <TextBlock Text="{ui:Text RemediationMode.Label}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <ComboBox x:Name="RemediationModeComboBox" Width="126" SelectedIndex="0"
+                                              SelectionChanged="RemediationMode_SelectionChanged"
+                                              AutomationProperties.Name="{ui:Text RemediationMode.Label}"
+                                              ToolTip="{ui:Text RemediationMode.ConservativeDescription}">
+                                        <ComboBoxItem Content="{ui:Text RemediationMode.Conservative}" />
+                                        <ComboBoxItem Content="{ui:Text RemediationMode.Aggressive}" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <CheckBox x:Name="ShowAdvancedTabsCheckBox" IsChecked="False" Margin="0,0,18,6" VerticalAlignment="Center"
+                                          Content="{ui:Text Ui.P2C.ShowAdvancedTabs}" ToolTip="{ui:Text Ui.P2C.ShowAdvancedTabsTip}"
+                                          Checked="AdvancedTabs_Changed" Unchecked="AdvancedTabs_Changed" />
                             </WrapPanel>
                             </StackPanel>
                             </ScrollViewer>
@@ -130,7 +163,7 @@
                     </Border>
 
                     <Grid x:Name="ScanProgressSummary" Grid.Row="1" Margin="0,7,0,7">
-                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -142,19 +175,18 @@
                         <ProgressBar x:Name="ScanProgressBar" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,1,0,0" Height="3" IsIndeterminate="False" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock x:Name="FindingCountText" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.034}" />
-                            <StackPanel Orientation="Horizontal" Margin="14,0,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="{ui:Text RemediationMode.Label}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                <ComboBox x:Name="RemediationModeComboBox" Width="126" SelectedIndex="0"
-                                          SelectionChanged="RemediationMode_SelectionChanged"
-                                          AutomationProperties.Name="{ui:Text RemediationMode.Label}"
-                                          ToolTip="{ui:Text RemediationMode.ConservativeDescription}">
-                                    <ComboBoxItem Content="{ui:Text RemediationMode.Conservative}" />
-                                    <ComboBoxItem Content="{ui:Text RemediationMode.Aggressive}" />
-                                </ComboBox>
-                            </StackPanel>
+                            <Border x:Name="AggressiveModeBadge" Visibility="Collapsed" Margin="10,0,0,0" Padding="7,2"
+                                    CornerRadius="8" Background="#FEF3C7" BorderBrush="#F59E0B" BorderThickness="1" VerticalAlignment="Center">
+                                <TextBlock Foreground="#92400E" FontSize="11" FontWeight="SemiBold" Text="{ui:Text Ui.P2C.AggressiveBadge}" />
+                            </Border>
                         </StackPanel>
                         <TextBlock x:Name="FindingHandlingSummaryText" Visibility="Collapsed" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#475467"
                                    Text="{ui:Text Ui.Xaml.MainWindow.035}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        <Border x:Name="ScanVerdictBanner" Grid.Row="3" Grid.ColumnSpan="2" Visibility="Collapsed"
+                                Margin="0,5,0,0" Padding="8,5" CornerRadius="6" BorderThickness="1">
+                            <TextBlock x:Name="ScanVerdictText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        </Border>
                     </Grid>
 
                     <TabControl Grid.Row="2" x:Name="ResultTabs" SelectionChanged="ResultTabs_SelectionChanged">
@@ -267,7 +299,7 @@
                             </DataGrid>
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="TrustProxyTab" Header="{ui:Text Ui.Xaml.MainWindow.055}">
+                    <TabItem x:Name="TrustProxyTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.055}">
                         <Grid x:Name="TrustProxyPage" Margin="8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <Grid>
@@ -285,7 +317,7 @@
                                      Text="{ui:Text Ui.Xaml.MainWindow.061}" />
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="RelatedComponentsTab" Header="{ui:Text Ui.Xaml.MainWindow.062}">
+                    <TabItem x:Name="RelatedComponentsTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.062}">
                         <Grid x:Name="RelatedComponentsPage" Margin="8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <TextBlock x:Name="RelatedComponentsStatusText" Text="{ui:Text Ui.Xaml.MainWindow.063}" FontWeight="SemiBold"
@@ -299,7 +331,7 @@
                                      Text="{ui:Text Ui.Xaml.MainWindow.066}" />
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="CasesTab" Header="{ui:Text Ui.Xaml.MainWindow.067}">
+                    <TabItem x:Name="CasesTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.067}">
                         <Grid Margin="8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <Grid>
@@ -323,7 +355,7 @@
                                      AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.073}" Text="{ui:Text Ui.Xaml.MainWindow.074}"/>
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="ContainerTab" Header="{ui:Text Ui.Xaml.MainWindow.075}">
+                    <TabItem x:Name="ContainerTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.075}">
                         <Grid x:Name="ContainerPage" Margin="8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <TextBlock x:Name="ContainerStatusText" Text="{ui:Text Ui.Xaml.MainWindow.076}" FontWeight="SemiBold"

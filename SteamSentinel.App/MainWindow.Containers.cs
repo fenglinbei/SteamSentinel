@@ -106,6 +106,7 @@ public partial class MainWindow
             recoveryDirectory, AmsiCheckBox.IsChecked == true, DeepSignatureCheckBox.IsChecked == true);
         ArchiveCheckBox.IsChecked = true;
         await StartScanAsync(ScanMode.Custom, options.CustomRoots, suppliedContentOptions: options, contentRunner: runner);
+        UpdateAdvancedTabsVisibility(ContainerTab);
         ResultTabs.SelectedItem = ContainerTab;
         if (_lastReport is not null)
             FooterText.Text = recoveryDirectory is null

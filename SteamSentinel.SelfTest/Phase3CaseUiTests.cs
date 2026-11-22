@@ -26,6 +26,8 @@ internal static partial class Program
                 using UiLayoutHarness layout = new(window, width, height);
                 string viewport = $"{width}x{height}";
                 SetTrustProxyUiReport(window, new() { CompletedAtUtc = DateTimeOffset.UtcNow });
+                ((CheckBox)window.FindName("ShowAdvancedTabsCheckBox")).IsChecked = true;
+                layout.Refresh();
                 TabControl tabs = (TabControl)window.FindName("ResultTabs");
                 tabs.SelectedIndex = 5;
                 RemediationCaseRecord record = Phase3CaseUiFixture(CaseReverificationState.SessionUnknown);

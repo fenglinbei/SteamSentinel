@@ -71,6 +71,8 @@ internal static partial class Program
                         TrustProxyUiText(window, "DetailDescriptionText").Text.Contains("phase2-candidate", StringComparison.Ordinal));
                     if (output is not null) layout.Save("related-components-finding-" + viewport, output);
 
+                    ((CheckBox)window.FindName("ShowAdvancedTabsCheckBox")).IsChecked = true;
+                    layout.Refresh();
                     TabControl tabs = (TabControl)window.FindName("ResultTabs");
                     tabs.SelectedIndex = 4;
                     layout.Refresh();

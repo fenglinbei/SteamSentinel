@@ -38,6 +38,30 @@ public partial class MainWindow : Window
     private string? _scanSettingsLoadError;
     private bool _recoveryRequired;
     private Guid? _lastFullSystemAndContentScanId;
+    private bool _hasScanVerdict;
+    private bool _trustProxyTabRevealed;
+    private bool _casesTabRevealed;
+    private bool _containerTabRevealed;
+
+    private static readonly Brush VerdictActionableBackground = FreezeBrush(0xFE, 0xF3, 0xF2);
+    private static readonly Brush VerdictActionableBorder = FreezeBrush(0xFE, 0xCD, 0xCA);
+    private static readonly Brush VerdictActionableForeground = FreezeBrush(0xB4, 0x23, 0x18);
+    private static readonly Brush VerdictReviewBackground = FreezeBrush(0xFF, 0xFA, 0xEB);
+    private static readonly Brush VerdictReviewBorder = FreezeBrush(0xFE, 0xDF, 0x89);
+    private static readonly Brush VerdictReviewForeground = FreezeBrush(0xB5, 0x47, 0x08);
+    private static readonly Brush VerdictIncompleteBackground = FreezeBrush(0xF2, 0xF4, 0xF7);
+    private static readonly Brush VerdictIncompleteBorder = FreezeBrush(0xD0, 0xD5, 0xDD);
+    private static readonly Brush VerdictIncompleteForeground = FreezeBrush(0x34, 0x40, 0x54);
+    private static readonly Brush VerdictCleanBackground = FreezeBrush(0xEC, 0xFD, 0xF3);
+    private static readonly Brush VerdictCleanBorder = FreezeBrush(0xAB, 0xEF, 0xC6);
+    private static readonly Brush VerdictCleanForeground = FreezeBrush(0x06, 0x76, 0x47);
+
+    private static Brush FreezeBrush(byte r, byte g, byte b)
+    {
+        SolidColorBrush brush = new(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
 
     public MainWindow()
     {
@@ -160,6 +184,7 @@ public partial class MainWindow : Window
             CoverageGrid_SelectionChanged(CoverageGrid, e);
         }
         UpdateFindingActions();
+        UpdateCompactHeader();
     }
 
     internal static List<string> CoverageTargets(CoverageGroup group) => group.Entries.Select(i => i.Target)
@@ -218,6 +243,8 @@ public partial class MainWindow : Window
         Func<ScanOptions, IProgress<ScanProgress>, CancellationToken, Task<ScanReport>>? contentRunner = null)
     {
         if (_busy) return;
+        _hasScanVerdict = false;
+        ScanVerdictBanner.Visibility = Visibility.Collapsed;
         SetBusy(true);
         ShowActivity(ActivityPhase.Scanning);
         Findings.Clear();
@@ -587,6 +614,64 @@ public partial class MainWindow : Window
             ? string.Empty : DisplayText.Get("FindingPriority.Incomplete");
         ScanProgressBar.Value = 100;
         FooterText.Text = DisplayText.Format("Ui.xaml.UpdateSummary.28", (report.Metrics.FilesVisited), (report.Metrics.WorkshopItemsVisited), (report.Metrics.ArchiveEntriesVisited), (ReportExporter.CoverageLabel(report.Coverage)));
+        UpdateScanVerdictBanner(report, confirmed, suspicious, explicitContentUnchecked, handling);
+    }
+
+    private void AdvancedTabs_Changed(object sender, RoutedEventArgs e) => UpdateAdvancedTabsVisibility();
+
+    /// <summary>按上下文与用户显式开关控制专家诊断页签的显示与安全回退。</summary>
+    internal void UpdateAdvancedTabsVisibility(TabItem? revealTab = null)
+    {
+        if (TrustProxyTab is null || RelatedComponentsTab is null || CasesTab is null || ContainerTab is null) return;
+        if (ReferenceEquals(revealTab, TrustProxyTab)) _trustProxyTabRevealed = true;
+        else if (ReferenceEquals(revealTab, CasesTab)) _casesTabRevealed = true;
+        else if (ReferenceEquals(revealTab, ContainerTab)) _containerTabRevealed = true;
+        bool showAll = ShowAdvancedTabsCheckBox?.IsChecked == true;
+        bool showCases = showAll || _casesTabRevealed || _remediationClient.HasUnresolvedExecution || _recoveryRequired || _hasEndedUnknownExecution;
+        TrustProxyTab.Visibility = showAll || _trustProxyTabRevealed ? Visibility.Visible : Visibility.Collapsed;
+        RelatedComponentsTab.Visibility = showAll ? Visibility.Visible : Visibility.Collapsed;
+        CasesTab.Visibility = showCases ? Visibility.Visible : Visibility.Collapsed;
+        ContainerTab.Visibility = showAll || _containerTabRevealed ? Visibility.Visible : Visibility.Collapsed;
+        if (ResultTabs?.SelectedItem is TabItem selected && selected.Visibility != Visibility.Visible)
+            ResultTabs.SelectedIndex = 0;
+    }
+
+    private void UpdateScanVerdictBanner(ScanReport report, bool confirmed, bool suspicious, bool explicitContentUnchecked, FindingHandlingCounts handling)
+    {
+        if (ScanVerdictBanner is null || ScanVerdictText is null) return;
+        _hasScanVerdict = true;
+        if (confirmed || handling.SelectableCount > 0)
+        {
+            int count = Math.Max(handling.SelectableCount, report.Findings.Count(f => f.IsKnownMalware));
+            ScanVerdictBanner.Background = VerdictActionableBackground;
+            ScanVerdictBanner.BorderBrush = VerdictActionableBorder;
+            ScanVerdictText.Foreground = VerdictActionableForeground;
+            ScanVerdictText.Text = DisplayText.Format("Ui.P2C.Verdict.Actionable", count);
+        }
+        else if (suspicious || handling.AttentionCount > 0)
+        {
+            int count = Math.Max(handling.AttentionCount, report.Findings.Count(f => f.Category != FindingCategory.Coverage && f.Severity >= FindingSeverity.Medium));
+            ScanVerdictBanner.Background = VerdictReviewBackground;
+            ScanVerdictBanner.BorderBrush = VerdictReviewBorder;
+            ScanVerdictText.Foreground = VerdictReviewForeground;
+            ScanVerdictText.Text = DisplayText.Format("Ui.P2C.Verdict.Review", count);
+        }
+        else if (report.ExecutionState is ScanExecutionState.Failed or ScanExecutionState.Cancelled ||
+            report.Coverage != ScanCoverage.Complete || explicitContentUnchecked)
+        {
+            ScanVerdictBanner.Background = VerdictIncompleteBackground;
+            ScanVerdictBanner.BorderBrush = VerdictIncompleteBorder;
+            ScanVerdictText.Foreground = VerdictIncompleteForeground;
+            ScanVerdictText.Text = DisplayText.Get("Ui.P2C.Verdict.Incomplete");
+        }
+        else
+        {
+            ScanVerdictBanner.Background = VerdictCleanBackground;
+            ScanVerdictBanner.BorderBrush = VerdictCleanBorder;
+            ScanVerdictText.Foreground = VerdictCleanForeground;
+            ScanVerdictText.Text = DisplayText.Get("Ui.P2C.Verdict.Clean");
+        }
+        UpdateCompactHeader();
     }
 
     private void FindingsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)

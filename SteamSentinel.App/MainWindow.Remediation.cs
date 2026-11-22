@@ -22,6 +22,8 @@ public partial class MainWindow
     private void RemediationMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (RemediationModeComboBox is null || FindingsGrid is null || _busy) return;
+        if (AggressiveModeBadge is not null)
+            AggressiveModeBadge.Visibility = CurrentRemediationMode == RemediationMode.Aggressive ? Visibility.Visible : Visibility.Collapsed;
         RemediationModeComboBox.ToolTip = RemediationModePresentation.Description(CurrentRemediationMode);
         if (_lastReport is null) return;
         string? selectedId = SelectedFinding?.Finding.Id;

@@ -23,7 +23,11 @@ public partial class MainWindow
         if (!Dispatcher.CheckAccess()) { Dispatcher.Invoke(() => ObserveFinishedRemediation(result)); return; }
         if (result.CompletedAtUtc is { } completed && (_lastRemediationCompletedAtUtc is null || completed > _lastRemediationCompletedAtUtc))
             _lastRemediationCompletedAtUtc = completed;
-        if (result.Disposition == RemediationRunDisposition.ExecutionUnknown) _hasEndedUnknownExecution = true;
+        if (result.Disposition == RemediationRunDisposition.ExecutionUnknown)
+        {
+            _hasEndedUnknownExecution = true;
+            UpdateAdvancedTabsVisibility();
+        }
         InvalidateStaleRemediationReport(_lastReport);
     }
 
@@ -76,6 +80,7 @@ public partial class MainWindow
         bool hasUnresolved = _remediationClient.HasUnresolvedExecution;
         UnresolvedExecutionBanner.Visibility = hasUnresolved ? Visibility.Visible : Visibility.Collapsed;
         CaseAcknowledgeUnknownButton.IsEnabled = !_busy && hasUnresolved;
+        UpdateAdvancedTabsVisibility(hasUnresolved ? CasesTab : null);
     }
 
     /// <summary>

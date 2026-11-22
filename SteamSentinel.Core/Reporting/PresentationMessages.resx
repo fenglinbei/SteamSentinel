@@ -2780,7 +2780,7 @@ Verification summary: {3}</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ScanSettings_Click.01" xml:space="preserve">
-    <value>Scan limits</value>
+    <value>Scan settings</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ScanSettings_Click.02" xml:space="preserve">
@@ -4047,7 +4047,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.013" xml:space="preserve">
-    <value>Scan limits</value>
+    <value>Scan settings</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.014" xml:space="preserve">
@@ -12023,4 +12023,12 @@ Reason: {2}</value></data>
   <data name="Steam.RecoveryGuide.UntrustedSteamBinary" xml:space="preserve"><value>1. Warning: One or more steam.exe binaries failed Valve Authenticode verification or are missing ({0}). Do not launch unverified executables directly.</value></data>
   <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. If Steam fails to open, shows a blank/broken UI, or has unverified binaries, download and run the official SteamSetup.exe installer over the existing Steam folder (your steamapps game library will stay intact), then rescan.</value></data>
   <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>SteamSentinel never patches Steam binaries or executes external installers automatically; perform and verify the recovery steps above.</value></data>
+  <data name="Ui.P2C.AggressiveBadge" xml:space="preserve"><value>Aggressive mode</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>Show advanced diagnostic tabs (proxy/components/cases/containers)</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>By default only Findings, Coverage, and Remediation results are shown. Check this to reveal Proxy &amp; Certificates, Component Associations, Case Reverification, and Container Analysis tabs.</value></data>
+  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>Found {0} actionable risk item(s): review checked items and click Preview and remediate selected.</value></data>
+  <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>Found {0} item(s) requiring manual review: select a row for details or export a report before acting.</value></data>
+  <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>Scan did not cover all items and found no risks so far: open the Coverage tab to review or recheck skipped items.</value></data>
+  <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>Scan complete: no known fake-alert or malware risks were found in the checked Steam and local scope.</value></data>
+  <data name="Ui.P2C.AdvancedLimitsHeader" xml:space="preserve"><value>Advanced custom budgets ({0} expert parameters, rarely needed)</value></data>
 </root>

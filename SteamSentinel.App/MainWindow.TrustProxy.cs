@@ -43,6 +43,7 @@ public partial class MainWindow
             : RemediationAvailabilityText(availability.State);
         UpdateRemediationAvailabilityPresentation(availability);
         SelectAllButton.IsEnabled = !_busy && !_reportNeedsRefresh && available;
+        if (ClearSelectionButton is not null) ClearSelectionButton.IsEnabled = !_busy && selectedCount > 0;
         SelectAllButton.ToolTip = !available ? DisplayText.Get("FindingPriority.NoSelectablePriority")
             : _busy ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.11")
             : _reportNeedsRefresh ? DisplayText.Get("Ui.TrustProxy.UpdateRemediationEligibility.12") : DisplayText.Format("Ui.TrustProxy.UpdateRemediationEligibility.13", (priorityCounts.SelectableCount));
@@ -79,6 +80,7 @@ public partial class MainWindow
         DateTimeOffset started = DateTimeOffset.UtcNow;
         SetBusy(true);
         ShowActivity(ActivityPhase.Inspecting, DisplayText.Get("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.01"));
+        UpdateAdvancedTabsVisibility(TrustProxyTab);
         ResultTabs.SelectedItem = TrustProxyTab;
         TrustProxyStatusText.Text = DisplayText.Get("Ui.TrustProxy.RunTrustProxyDiagnosticsAsync.02");
         _scanCancellation = new CancellationTokenSource();
@@ -143,6 +145,7 @@ public partial class MainWindow
         _lastFullSystemAndContentScanId = null;
         PopulateFindings(_lastReport);
         UpdateSummary(_lastReport);
+        UpdateAdvancedTabsVisibility(TrustProxyTab);
         ResultTabs.SelectedItem = TrustProxyTab;
         FooterText.Text = DisplayText.Get("Ui.TrustProxy.ApplyTrustProxyDiagnosticReport.01");
     }
