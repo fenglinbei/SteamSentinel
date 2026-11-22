@@ -262,6 +262,7 @@ internal static partial class Program
         new("V0117Security", false, false, 10, (r, _) => TestV0117SecurityAsync(r)),
         new("V0117ReleaseEngineering", false, false, 10, (_, _) => { TestV0117ReleaseEngineering(); return Task.CompletedTask; }),
         new("PlanBuilder", false, false, 5, (r, rules) => TestPlanBuilderAsync(r, rules)),
+        new("DeepRemediation", false, false, 10, (r, rules) => TestDeepRemediationAsync(r, rules)),
         new("V030RemediationScope", false, false, 5, (_, _) => { TestV030RemediationScope(); return Task.CompletedTask; }),
         new("V032CoreScope", false, false, 5, (r, _) => TestV032CoreScopeAsync(r)),
         new("SteamAlert", false, false, 10, (r, _) => TestSteamAlertAsync(r)),

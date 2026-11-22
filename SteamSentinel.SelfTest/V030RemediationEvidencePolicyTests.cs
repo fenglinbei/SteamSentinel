@@ -98,6 +98,9 @@ internal static partial class Program
         }
         Check("0.3.0 家族复核项不会被共享策略升级", !RemediationEvidencePolicy.CanRemediate(new()
         { RuleId = "VPET-FAMILY-STRUCTURE", CanRemediate = false, Score = 90 }));
+        Check("0.3.0 强指纹升级的家族宿主与结构窃密宿主保持可处置资格",
+            RemediationEvidencePolicy.CanRemediate(new() { RuleId = "VPET-FAMILY-STRUCTURE", CanRemediate = true, Score = 90 }) &&
+            RemediationEvidencePolicy.CanRemediate(new() { RuleId = "STRUCT-RANDOM-PYTHON-STEALER-HOST", CanRemediate = true, Score = 95 }));
 
         Finding excessive = new()
         {

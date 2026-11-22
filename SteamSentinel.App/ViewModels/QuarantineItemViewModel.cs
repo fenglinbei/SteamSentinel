@@ -1,9 +1,10 @@
+using System.ComponentModel;
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 
 namespace SteamSentinel.App.ViewModels;
 
-public sealed class QuarantineItemViewModel
+public sealed class QuarantineItemViewModel : INotifyPropertyChanged
 {
     public required QuarantineManifest Manifest { get; init; }
     public required string ManifestPath { get; init; }
@@ -21,4 +22,10 @@ public sealed class QuarantineItemViewModel
             return currentBoot > Manifest.MachineBootTimeUtc.AddMinutes(1);
         }
     }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>通知隔离列表行在语言切换时重读状态显示文本。</summary>
+    internal void RefreshLocalizedText() =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(string.Empty));
 }

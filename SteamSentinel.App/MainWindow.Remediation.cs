@@ -16,6 +16,8 @@ public partial class MainWindow
     private RemediationBatchSession? _caseBatch;
     private ScanReport? _caseContentFollowUp;
 
+    // 处置模式切换入口已从普通用户界面隐藏（默认锁定保守模式），正常流程不会展示 AggressiveModeBadge；
+    // 保留此属性与回调以兼容后端策略与内部 UI 回归测试显式切换 SelectedIndex = 1 的校验路径。
     internal RemediationMode CurrentRemediationMode => RemediationModeComboBox?.SelectedIndex == 1
         ? RemediationMode.Aggressive : RemediationMode.Conservative;
 
@@ -98,6 +100,7 @@ public partial class MainWindow
             if (batch.Plans.Count == 0)
             {
                 HeaderStatusText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.07"); HeaderDetailText.Text = batch.Summary;
+                UpdateHeaderStatusTone(HeaderStatusTone.Warning);
                 MessageBox.Show(this, batch.Summary + DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.08"), DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.09"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -128,13 +131,16 @@ public partial class MainWindow
             {
                 HeaderStatusText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.12");
                 HeaderDetailText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.13");
+                UpdateHeaderStatusTone(HeaderStatusTone.Warning);
                 return;
             }
             await RunBatchFollowUpAsync(batch, original);
             if (_closeWhenIdle) return;
             string guidance = SteamSentinel.Core.Steam.SteamRecoveryGuide.BuildGuidance(_findingScopeLayout, batch, original);
-            HeaderStatusText.Text = batch.InterruptionReasonCode is not null || batch.Targets.Any(t => t.State != RemediationTargetState.Completed) ? DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.14") : DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.15");
+            bool incompleteBatch = batch.InterruptionReasonCode is not null || batch.Targets.Any(t => t.State != RemediationTargetState.Completed);
+            HeaderStatusText.Text = incompleteBatch ? DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.14") : DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.15");
             HeaderDetailText.Text = batch.Summary;
+            UpdateHeaderStatusTone(incompleteBatch ? HeaderStatusTone.Warning : HeaderStatusTone.Success);
             string details = HeaderDetailText.Text + "\n" + batch.InterruptionText.Display + "\n" + BatchFollowUpText.Text + guidance;
             if (batch.Results.SelectMany(r => r.Actions).Any(a => a.Success &&
                 a.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory &&
@@ -146,11 +152,16 @@ public partial class MainWindow
             FooterText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.18");
             await RefreshQuarantineItemsAsync();
         }
-        catch (OperationCanceledException) { HeaderStatusText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.19"); }
+        catch (OperationCanceledException)
+        {
+            HeaderStatusText.Text = DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.19");
+            UpdateHeaderStatusTone(HeaderStatusTone.Warning);
+        }
         catch (Exception ex)
         {
             AppErrorLog.Write("BatchRemediation", ex);
             HeaderStatusText.Text = _operationCommitted ? DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.20") : DisplayText.Get("Remediation.ExecuteSelectedRemediationAsync.21");
+            UpdateHeaderStatusTone(HeaderStatusTone.Warning);
             if (!_closeWhenIdle) MessageBox.Show(this, SteamSentinel.Core.Reporting.MessageExceptions.Display(ex), HeaderStatusText.Text, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally

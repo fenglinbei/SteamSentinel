@@ -1,6 +1,8 @@
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Steam;
+using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
 
@@ -57,31 +59,48 @@ public sealed partial class ContentScanner
         engine.Status = ContainerStageStatus.Complete;
         engine.DetailText = MessageText.Create("Backend.Core.ContentScanner.VPetFamily.ScanVPetFamilyAsync.04", (evidence.ReasonCode), (evidence.Role), (evidence.DecoderId)) +
             (evidence.DerivedSha256 is null ? MessageText.Create("Backend.Core.ContentScanner.VPetFamily.ScanVPetFamilyAsync.05") : MessageText.Create("Backend.Core.ContentScanner.VPetFamily.ScanVPetFamilyAsync.06", (evidence.DerivedSha256))) + string.Join(", ", evidence.Signals);
-        bool recognized = evidence.Signals.Contains("VPET-KNOWN-CODE-SECTION") || evidence.Signals.Contains("VPET-WRAPPER-THREADED-SIDECAR") ||
+        bool strongStructure = HasStrongVPetStructureSignal(evidence);
+        bool recognized = strongStructure ||
             evidence.Signals.Contains("VPET-KNOWN-DOMAIN") && evidence.Signals.Any(s => s is "VPET-UI-ROUTES-AND-PX-BLOCK" or "VPET-CREDENTIAL-READ-AND-UPLOAD");
         if (recognized) AddVPetReview(context, node, engine.DetailText);
     }
 
+    // 仅当封装或代码节完整匹配、且命中高置信二进制结构指纹（而非仅解码字符串与域名）时才允许升级宿主隔离
+    internal static bool HasStrongVPetStructureSignal(VPetFamilyEvidence? evidence) =>
+        evidence is { Status: VPetFamilyStatus.CodeMatched or VPetFamilyStatus.Decoded } &&
+        (evidence.Signals.Contains("VPET-KNOWN-CODE-SECTION") || evidence.Signals.Contains("VPET-WRAPPER-THREADED-SIDECAR"));
+
+    internal Finding? CreateVPetFamilyFinding(ContainerScanNode node, VPetFamilyEvidence? evidence, MessageText detail, string? workshopId = null)
+    {
+        if (_rules.KnownHashes.Any(rule => rule.Malware && rule.Sha256.Equals(node.Sha256, StringComparison.OrdinalIgnoreCase)))
+            return null;
+        bool remediableHost = HasStrongVPetStructureSignal(evidence) &&
+            ContentDiscovery.IsLocalSafePath(node.OriginalTarget) &&
+            File.Exists(node.OriginalTarget) &&
+            Validation.IsHexSha256(node.OriginalTargetSha256);
+        return new Finding
+        {
+            RuleId = "VPET-FAMILY-STRUCTURE",
+            Category = FindingCategory.File,
+            Severity = FindingSeverity.High,
+            Score = 90,
+            TitleText = MessageText.Create("Backend.Core.ContentScanner.VPetFamily.AddVPetReview.01"),
+            DescriptionText = MessageText.Create("Backend.Core.ContentScanner.VPetFamily.AddVPetReview.02"),
+            Target = node.OriginalTarget,
+            Sha256 = node.Sha256,
+            TargetSha256 = node.OriginalTargetSha256,
+            ContentPath = node.DisplayPath,
+            WorkshopId = workshopId,
+            EvidenceText = detail,
+            IsKnownMalware = false,
+            CanRemediate = remediableHost,
+            SuggestedActions = remediableHost ? [SuggestedActionKind.QuarantineFile] : [SuggestedActionKind.ReviewOnly]
+        };
+    }
+
     private void AddVPetReview(ContainerContext context, ContainerScanNode node, MessageText detail)
     {
-        if (!_rules.KnownHashes.Any(rule => rule.Malware && rule.Sha256.Equals(node.Sha256, StringComparison.OrdinalIgnoreCase)))
-            context.Report.Findings.Add(new()
-            {
-                RuleId = "VPET-FAMILY-STRUCTURE",
-                Category = FindingCategory.File,
-                Severity = FindingSeverity.High,
-                Score = 90,
-                TitleText = MessageText.Create("Backend.Core.ContentScanner.VPetFamily.AddVPetReview.01"),
-                DescriptionText = MessageText.Create("Backend.Core.ContentScanner.VPetFamily.AddVPetReview.02"),
-                Target = node.OriginalTarget,
-                Sha256 = node.Sha256,
-                TargetSha256 = node.OriginalTargetSha256,
-                ContentPath = node.DisplayPath,
-                WorkshopId = context.WorkshopId,
-                EvidenceText = detail,
-                IsKnownMalware = false,
-                CanRemediate = false,
-                SuggestedActions = [SuggestedActionKind.ReviewOnly]
-            });
+        if (CreateVPetFamilyFinding(node, node.VPetFamily, detail, context.WorkshopId) is { } finding)
+            context.Report.Findings.Add(finding);
     }
 }

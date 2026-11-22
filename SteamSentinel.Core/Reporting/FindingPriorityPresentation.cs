@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 
@@ -41,25 +44,157 @@ public static class FindingPriorityPresentation
             }
         }
 
+        bool hasNetworkOrCertificateAlert = HasNetworkOrCertificateAlert(report);
         bool[] candidates = new bool[report.Findings.Count];
         HashSet<string> blocked = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> blockedRawTargets = new(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < report.Findings.Count; i++)
         {
             Finding finding = report.Findings[i];
             candidates[i] = !string.IsNullOrWhiteSpace(finding.Id) && idCounts[finding.Id] == 1 &&
-                IsPlainMismatch(finding, formats);
-            // Another observation on this physical file/container prevents treating the
-            // format difference as an isolated reference item, including an inspection gap.
-            if (!candidates[i] && groups.Find(finding.Target, finding.ContentPath, finding.RelatedFilePath) is { } group)
-                blocked.Add(group);
+                (IsPlainMismatch(finding, formats) || IsExtendedReference(finding, report, hasNetworkOrCertificateAlert));
+            // 同一物理路径/容器或同一非路径目标存在任何非折叠发现（含覆盖缺口）时，禁止折叠该目标上的参考提示项
+            if (!candidates[i])
+            {
+                if (groups.Find(finding.Target, finding.ContentPath, finding.RelatedFilePath) is { } group)
+                    blocked.Add(group);
+                else if (!string.IsNullOrWhiteSpace(finding.Target))
+                    blockedRawTargets.Add(finding.Target.Trim());
+            }
         }
         for (int i = 0; i < report.Findings.Count; i++)
         {
+            if (!candidates[i]) continue;
             Finding finding = report.Findings[i];
-            if (candidates[i] && groups.Find(finding.Target, finding.ContentPath, finding.RelatedFilePath) is { } group &&
-                !blocked.Contains(group)) result.Add(finding.Id);
+            if (groups.Find(finding.Target, finding.ContentPath, finding.RelatedFilePath) is { } group)
+            {
+                if (!blocked.Contains(group)) result.Add(finding.Id);
+            }
+            else if (string.IsNullOrWhiteSpace(finding.Target) || !blockedRawTargets.Contains(finding.Target.Trim()))
+            {
+                result.Add(finding.Id);
+            }
         }
         return result;
+    }
+
+    private static bool HasNetworkOrCertificateAlert(ScanReport report) =>
+        report.Findings.Any(finding =>
+            finding.RuleId == "CERTIFICATE-NAME-REVIEW" ||
+            finding.Category is FindingCategory.Network or FindingCategory.Certificate &&
+            (finding.IsKnownMalware || finding.CanRemediate || finding.Severity >= FindingSeverity.High));
+
+    private static bool IsExtendedReference(Finding finding, ScanReport report, bool hasNetworkOrCertificateAlert)
+    {
+        if (finding.Category == FindingCategory.Coverage ||
+            finding.IsKnownMalware || finding.CanRemediate || finding.UserSelectedRisk ||
+            finding.HandlingReason is FindingHandlingReason.IncompleteInspection or FindingHandlingReason.PrerequisiteNotMet or FindingHandlingReason.UnsupportedAction ||
+            finding.SuggestedActions.Any(action => action is not (SuggestedActionKind.None or SuggestedActionKind.ReviewOnly)))
+            return false;
+
+        return finding.RuleId switch
+        {
+            "NETWORK-C2-BLOCKED" or "STEAM-MOD-MILLENNIUM" or "WORKSHOP-PROJECT-METADATA" or "ASSOCIATION-HOST-SIGNATURE" =>
+                finding.Severity < FindingSeverity.High,
+            "INSTALLER-STRUCTURE" =>
+                finding.Severity < FindingSeverity.Medium && finding.ReasonCode is null,
+            "CONTENT-SUSPICIOUS-STRINGS" =>
+                finding.Severity == FindingSeverity.Information,
+            "NETWORK-PROXY-PRESENT" =>
+                finding.Severity == FindingSeverity.Information &&
+                !hasNetworkOrCertificateAlert &&
+                IsLoopbackProxyTarget(finding.Target) &&
+                !HasLinkedPacObservation(finding, report),
+            _ => false
+        };
+    }
+
+    private static bool HasLinkedPacObservation(Finding finding, ScanReport report)
+    {
+        if (report.TrustProxyDiagnostics is not { } diagnostics || finding.DiagnosticObservationIds.Count == 0)
+            return false;
+        return diagnostics.Proxies.Any(proxy =>
+            finding.DiagnosticObservationIds.Contains(proxy.Id, StringComparer.Ordinal) &&
+            !string.IsNullOrWhiteSpace(proxy.AutoConfigUrl));
+    }
+
+    /// <summary>
+    /// 仅匹配纯本地环回代理主机端口（如 127.0.0.1:7897、localhost:7890、[::1]:7890 或分协议 http=127.0.0.1:7890;https=127.0.0.1:7890），
+    /// 严格排除任何含协议头的 PAC URL（如 http://.../proxy.pac）及任何非环回远端地址。
+    /// </summary>
+    internal static bool IsLoopbackProxyTarget(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target) || target.Length > 1024) return false;
+        if (target.Contains("://", StringComparison.Ordinal) ||
+            target.IndexOfAny(['/', '\\', '?', '#', '@']) >= 0)
+            return false;
+
+        string[] segments = target.Split(';', StringSplitOptions.TrimEntries);
+        if (segments.Length == 0) return false;
+        foreach (string rawSegment in segments)
+        {
+            if (string.IsNullOrEmpty(rawSegment)) return false;
+            ReadOnlySpan<char> endpoint = rawSegment.AsSpan();
+            int equals = endpoint.IndexOf('=');
+            if (equals >= 0)
+            {
+                ReadOnlySpan<char> scheme = endpoint[..equals].Trim();
+                if (!IsSupportedProxySchemePrefix(scheme)) return false;
+                endpoint = endpoint[(equals + 1)..].Trim();
+            }
+            if (!IsSingleLoopbackHostPort(endpoint)) return false;
+        }
+        return true;
+    }
+
+    private static bool IsSupportedProxySchemePrefix(ReadOnlySpan<char> scheme) =>
+        scheme.Equals("http", StringComparison.OrdinalIgnoreCase) ||
+        scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ||
+        scheme.Equals("socks", StringComparison.OrdinalIgnoreCase) ||
+        scheme.Equals("socks4", StringComparison.OrdinalIgnoreCase) ||
+        scheme.Equals("socks5", StringComparison.OrdinalIgnoreCase) ||
+        scheme.Equals("ftp", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSingleLoopbackHostPort(ReadOnlySpan<char> endpoint)
+    {
+        if (endpoint.IsEmpty) return false;
+        foreach (char ch in endpoint)
+            if (char.IsWhiteSpace(ch) || char.IsControl(ch)) return false;
+
+        ReadOnlySpan<char> host;
+        ReadOnlySpan<char> portSpan;
+        if (endpoint[0] == '[')
+        {
+            int close = endpoint.IndexOf(']');
+            if (close <= 1 || close + 2 > endpoint.Length || endpoint[close + 1] != ':') return false;
+            host = endpoint[1..close];
+            portSpan = endpoint[(close + 2)..];
+            if (!IPAddress.TryParse(host, out IPAddress? ipv6) ||
+                ipv6.AddressFamily != AddressFamily.InterNetworkV6 ||
+                !IPAddress.IsLoopback(ipv6))
+                return false;
+        }
+        else
+        {
+            int colon = endpoint.LastIndexOf(':');
+            if (colon <= 0 || colon + 1 >= endpoint.Length || endpoint[..colon].IndexOf(':') >= 0) return false;
+            host = endpoint[..colon];
+            portSpan = endpoint[(colon + 1)..];
+            if (!host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IPAddress.TryParse(host, out IPAddress? ipv4) ||
+                    ipv4.AddressFamily != AddressFamily.InterNetwork ||
+                    !IPAddress.IsLoopback(ipv4) ||
+                    !host.Equals(ipv4.ToString(), StringComparison.Ordinal))
+                    return false;
+            }
+        }
+
+        if (portSpan.Length is < 1 or > 5) return false;
+        foreach (char digit in portSpan)
+            if (!char.IsAsciiDigit(digit)) return false;
+        return int.TryParse(portSpan, NumberStyles.None, CultureInfo.InvariantCulture, out int port) &&
+            port is >= 1 and <= 65535;
     }
 
     private static bool IsPlainMismatch(Finding finding, Dictionary<string, FormatEvidence> formats)

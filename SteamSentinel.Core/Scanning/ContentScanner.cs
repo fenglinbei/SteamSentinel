@@ -24,6 +24,7 @@ public sealed partial class ContentScanner : IDisposable
     private ScanReport? _archiveBudgetReport;
     private ArchiveBudget _archiveBudget = new();
     private string? _coverageRoot;
+    private long _lastProgressTick;
     internal Action<ScanReport>? Checkpoint { get; set; }
 
     public ContentScanner(RuleSet rules) : this(rules, () => new AmsiScanner()) { }
@@ -110,10 +111,23 @@ public sealed partial class ContentScanner : IDisposable
         if (!ContentDiscovery.IsLocalSafePath(fullRoot))
         { AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.02", (fullRoot)), fullRoot, workshopId, reasonCode: ReasonCodes.UnsafePath); return; }
         ArchiveBudget archiveBudget = GetArchiveBudget(report);
+        _lastProgressTick = 0;
         if (File.Exists(fullRoot))
         {
+            progress?.Report(new ScanProgress(
+                MessageText.Create("Backend.Core.ContentScanner.ProgressStage"),
+                fullRoot,
+                0,
+                1,
+                MessageText.Create("Backend.Core.ContentScanner.ProgressDetail", report.Metrics.FilesVisited)));
             await ScanFileAsync(fullRoot, fullRoot, fullRoot, report, options, passwordProvider, progress,
                 cancellationToken, 0, workshopId, projectType, archiveBudget);
+            progress?.Report(new ScanProgress(
+                MessageText.Create("Backend.Core.ContentScanner.ProgressStage"),
+                fullRoot,
+                1,
+                1,
+                MessageText.Create("Backend.Core.ContentScanner.ProgressDetail", report.Metrics.FilesVisited)));
             Checkpoint?.Invoke(report);
             return;
         }
@@ -124,14 +138,55 @@ public sealed partial class ContentScanner : IDisposable
             return;
         }
 
-        Stack<string> pending = new();
-        pending.Push(fullRoot);
+        Stack<(string Directory, string? TopBucket)> pending = new();
+        pending.Push((fullRoot, null));
+        Dictionary<string, int> bucketPendingCounts = new(StringComparer.OrdinalIgnoreCase);
+        long topTotal = 0;
+        long topDone = 0;
+        long maxReportedUnits = 0;
+        long rootFilesVisitedAtStart = report.Metrics.FilesVisited;
+        bool initializedTopBuckets = false;
+
+        void ReportProgressIfDue(string currentItem, bool force = false)
+        {
+            if (progress is null) return;
+            long now = Environment.TickCount64;
+            if (!force && _lastProgressTick != 0 && now - _lastProgressTick < 120) return;
+            _lastProgressTick = now;
+            if (topTotal > 0)
+            {
+                long deltaFiles = Math.Max(0, report.Metrics.FilesVisited - rootFilesVisitedAtStart);
+                double subProgress = topDone < topTotal ? Math.Min(0.85, deltaFiles / 600.0) : 0;
+                long raw = Math.Clamp((long)Math.Round(((topDone + subProgress) / topTotal) * 1000.0), 0, 1000);
+                if (raw < maxReportedUnits) raw = maxReportedUnits;
+                else maxReportedUnits = raw;
+                progress.Report(new ScanProgress(
+                    MessageText.Create("Backend.Core.ContentScanner.ProgressStage"),
+                    currentItem,
+                    raw,
+                    1000,
+                    MessageText.Create("Backend.Core.ContentScanner.ProgressDetail", report.Metrics.FilesVisited)));
+            }
+            else
+            {
+                progress.Report(new ScanProgress(
+                    MessageText.Create("Backend.Core.ContentScanner.ProgressStage"),
+                    currentItem,
+                    report.Metrics.FilesVisited,
+                    null,
+                    MessageText.Create("Backend.Core.ContentScanner.ProgressDetail", report.Metrics.FilesVisited)));
+            }
+        }
 
         while (pending.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string directory = pending.Pop();
-            if (IsExcluded(directory, options.ExcludedRoots)) continue;
+            (string directory, string? topBucket) = pending.Pop();
+            if (IsExcluded(directory, options.ExcludedRoots))
+            {
+                CompleteBucketNode(topBucket);
+                continue;
+            }
 
             try
             {
@@ -139,9 +194,11 @@ public sealed partial class ContentScanner : IDisposable
                 if ((attributes & FileAttributes.ReparsePoint) != 0 && Validation.IsRedirectingReparsePoint(directory))
                 {
                     AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.04", (directory)), directory, workshopId);
+                    CompleteBucketNode(topBucket);
                     continue;
                 }
 
+                List<string> immediateSubdirs = [];
                 foreach (string child in Directory.EnumerateDirectories(directory))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -149,14 +206,49 @@ public sealed partial class ContentScanner : IDisposable
                     if (++archiveBudget.DirectoryEntries > options.MaximumFiles &&
                         !ScanResourceSession.Allow("MaximumFiles", archiveBudget.DirectoryEntries, archiveBudget.DirectoryEntries - 1, known: false))
                     { AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.05"), fullRoot, workshopId, "SCAN-COUNT-LIMIT"); return; }
-                    pending.Push(child);
+                    immediateSubdirs.Add(child);
                 }
+
+                bool collectingTop = !initializedTopBuckets && string.Equals(directory, fullRoot, StringComparison.OrdinalIgnoreCase);
+                string[]? topFiles = null;
+                if (collectingTop)
+                {
+                    initializedTopBuckets = true;
+                    topFiles = Directory.EnumerateFiles(directory)
+                        .Where(file => !IsExcluded(file, options.ExcludedRoots))
+                        .ToArray();
+                    topTotal = immediateSubdirs.Count + topFiles.Length;
+                    ReportProgressIfDue(directory, force: true);
+                }
+
+                foreach (string child in immediateSubdirs)
+                {
+                    string bucketKey = collectingTop ? child : topBucket ?? child;
+                    if (!IsExcluded(child, options.ExcludedRoots))
+                    {
+                        bucketPendingCounts[bucketKey] = bucketPendingCounts.GetValueOrDefault(bucketKey) + 1;
+                        pending.Push((child, bucketKey));
+                    }
+                    else if (collectingTop)
+                    {
+                        topDone++;
+                    }
+                }
+
                 int parallelism = FileParallelism(options);
-                foreach (string[] group in Directory.EnumerateFiles(directory)
-                    .Where(file => !IsExcluded(file, options.ExcludedRoots))
+                IEnumerable<string> fileSequence = topFiles is not null
+                    ? topFiles
+                    : Directory.EnumerateFiles(directory).Where(file => !IsExcluded(file, options.ExcludedRoots));
+                foreach (string[] group in fileSequence
                     .Chunk(512).SelectMany(chunk => chunk.OrderBy(ContentPriority)).Chunk(parallelism))
                 {
-                    if (await TryScanParallelLeavesAsync(group, report, options, passwordProvider, progress, cancellationToken, workshopId, projectType)) continue;
+                    bool handledParallel = await TryScanParallelLeavesAsync(group, report, options, passwordProvider, progress, cancellationToken, workshopId, projectType);
+                    if (handledParallel)
+                    {
+                        if (collectingTop) topDone += group.Length;
+                        ReportProgressIfDue(group[^1]);
+                        continue;
+                    }
                     foreach (string file in group)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -169,6 +261,8 @@ public sealed partial class ContentScanner : IDisposable
                         }
                         await ScanFileAsync(file, file, file, report, options, passwordProvider, progress,
                             cancellationToken, 0, workshopId, projectType, archiveBudget);
+                        if (collectingTop) topDone++;
+                        ReportProgressIfDue(file);
                         Checkpoint?.Invoke(report);
                     }
                 }
@@ -176,6 +270,32 @@ public sealed partial class ContentScanner : IDisposable
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 AddCoverage(report, MessageText.Create("Backend.Core.ContentScanner.ScanRootCoreAsync.07", (directory), (ex.Message)), directory, workshopId);
+            }
+            finally
+            {
+                CompleteBucketNode(topBucket);
+            }
+        }
+
+        if (topTotal > 0)
+        {
+            topDone = topTotal;
+            maxReportedUnits = 1000;
+            ReportProgressIfDue(fullRoot, force: true);
+        }
+
+        void CompleteBucketNode(string? bucketKey)
+        {
+            if (bucketKey is null) return;
+            if (!bucketPendingCounts.TryGetValue(bucketKey, out int remaining)) return;
+            if (remaining <= 1)
+            {
+                bucketPendingCounts.Remove(bucketKey);
+                topDone++;
+            }
+            else
+            {
+                bucketPendingCounts[bucketKey] = remaining - 1;
             }
         }
     }

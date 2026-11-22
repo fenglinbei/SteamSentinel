@@ -36,11 +36,13 @@ internal static partial class Program
                 Button selectAll = TrustProxyUiButton(window, "SelectAllButton");
                 DataGrid grid = (DataGrid)window.FindName("FindingsGrid");
                 DataGridRow? row = grid.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;
-                Check($"诊断UI {viewport} 信息级PAC仍明确尚未处理且资格可见",
-                    title.Text.Contains(UiExpected("尚未处理", "remain unresolved"), StringComparison.Ordinal) && !title.Text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal) &&
+                CheckBox? pacCheck = row is null ? null : UiLayoutHarness.Descendants<CheckBox>(grid.Columns[0].GetCellContent(row)).FirstOrDefault();
+                Check($"诊断UI {viewport} 信息级PAC仍明确待确认且资格可见且隐藏灰色勾选框",
+                    title.Text.Contains(UiExpected("待确认", "to review"), StringComparison.Ordinal) && !title.Text.Contains(UiExpected("未发现", "no actionable risk found"), StringComparison.Ordinal) &&
                     priorityCounts.Text == DisplayText.Format("FindingPriority.Counts", 1, 0) && layout.IsFullyVisible(priorityCounts) &&
                     priorityCounts.ToolTip?.ToString()?.Contains(UiExpected("待确认 1 项", "Review needed 1"), StringComparison.Ordinal) == true &&
-                    row is not null && layout.IsFullyVisible(row));
+                    row is not null && layout.IsFullyVisible(row) &&
+                    pacCheck is { Visibility: Visibility.Collapsed, IsEnabled: false });
                 Check($"诊断UI {viewport} 零可处理项禁用全选和处理并说明真实原因",
                     !remediate.IsEnabled && !selectAll.IsEnabled &&
                     remediate.ToolTip?.ToString()?.Contains(UiExpected("没有可处理项", "No items are currently actionable"), StringComparison.Ordinal) == true &&
@@ -62,23 +64,43 @@ internal static partial class Program
                 ScanReport completePac = TrustProxyUiReport(TrustProxyUiFinding("complete-pac"));
                 completePac.Coverage = ScanCoverage.Complete;
                 SetTrustProxyUiReport(window, completePac);
-                Check($"诊断UI {viewport} 完整读取PAC也不概括为无需处理",
-                    TrustProxyUiText(window, "HeaderStatusText").Text.Contains(UiExpected("尚未处理", "remain unresolved"), StringComparison.Ordinal));
+                layout.Refresh();
+                DataGridRow? completePacRow = grid.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;
+                CheckBox? completePacCheck = completePacRow is null ? null : UiLayoutHarness.Descendants<CheckBox>(grid.Columns[0].GetCellContent(completePacRow)).FirstOrDefault();
+                Check($"诊断UI {viewport} 完整读取PAC也不概括为无需处理且留在主表无灰勾选框",
+                    TrustProxyUiText(window, "HeaderStatusText").Text.Contains(UiExpected("待确认", "to review"), StringComparison.Ordinal) &&
+                    window.PriorityFindings.Count == 1 && window.ReferenceFindings.Count == 0 &&
+                    completePacCheck is { Visibility: Visibility.Collapsed, IsEnabled: false });
 
+                // 防御性 hosts 阻断规则归入「信息与参考」折叠组，不再留在主表，也不计为待确认或需处理项。
                 ScanReport ordinary = TrustProxyUiReport(new Finding
                 {
                     RuleId = "NETWORK-C2-BLOCKED",
                     Category = FindingCategory.Network,
                     Severity = FindingSeverity.Information,
                     Title = "已知 C2 已在 hosts 中阻断",
+                    Target = @"C:\Windows\System32\drivers\etc\hosts",
                     Evidence = "无害测试：防御性配置，无需删除。",
                     SuggestedActions = [SuggestedActionKind.None]
                 });
                 SetTrustProxyUiReport(window, ordinary);
-                Check($"诊断UI {viewport} 真实普通信息规则不会被算作未能处理",
-                    TrustProxyUiText(window, "HeaderStatusText").Text == UiExpected("已完成部分检查，未发现需处理的风险", "Checks incomplete; no actionable risk found") &&
-                    window.Findings.Single().HandlingLabel == UiExpected("信息提示", "Information") &&
-                    counts.Text.Contains(UiExpected("待确认 0 项", "Review needed 0"), StringComparison.Ordinal) && counts.Text.Contains(UiExpected("普通说明 1 项", "Informational 1"), StringComparison.Ordinal));
+                layout.Refresh();
+                Expander refExpander = (Expander)window.FindName("ReferenceFindingsExpander");
+                Check($"诊断UI {viewport} hosts阻断信息规则自动折叠至信息与参考且不计为待确认",
+                    window.PriorityFindings.Count == 0 && window.ReferenceFindings.Count == 1 &&
+                    refExpander.Visibility == Visibility.Visible && !refExpander.IsExpanded &&
+                    priorityCounts.Text == DisplayText.Format("FindingPriority.Counts", 0, 1) &&
+                    TrustProxyUiText(window, "HeaderStatusText").Text == DisplayText.Get("FindingPriority.Incomplete") &&
+                    window.ReferenceFindings.Single().HandlingLabel == UiExpected("信息提示", "Information") &&
+                    window.ReferenceFindings.Single().Title == "已知 C2 已在 hosts 中阻断" &&
+                    counts.Text.Contains(UiExpected("待确认 0 项", "Review needed 0"), StringComparison.Ordinal));
+                ordinary.Coverage = ScanCoverage.Complete;
+                SetTrustProxyUiReport(window, ordinary);
+                layout.Refresh();
+                Check($"诊断UI {viewport} 完整扫描仅含hosts阻断折叠项时呈纯参考安心态",
+                    TrustProxyUiText(window, "HeaderStatusText").Text == DisplayText.Get("FindingPriority.ReferenceOnly") &&
+                    TrustProxyUiText(window, "ScanVerdictText").Text == DisplayText.Get("Ui.P2C.Verdict.Clean") &&
+                    ((FrameworkElement)window.FindName("FindingDetailCard")).Visibility == Visibility.Collapsed);
 
                 Finding file = new()
                 {

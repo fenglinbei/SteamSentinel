@@ -66,19 +66,27 @@ public partial class MainWindow
         _ => DisplayText.Get("Ui.RemediationAvailability.Ready")
     };
 
+    private static readonly System.Windows.Media.Brush SubtleAvailabilityForeground = FreezeBrush(0x64, 0x74, 0x8B);
+    private static readonly System.Windows.Media.Brush BlockedAvailabilityBackground = FreezeBrush(0xF8, 0xFA, 0xFC);
+    private static readonly System.Windows.Media.Brush BlockedAvailabilityBorder = FreezeBrush(0xCB, 0xD5, 0xE1);
+    private static readonly System.Windows.Media.Brush BlockedAvailabilityForeground = FreezeBrush(0x33, 0x41, 0x55);
+
     private void UpdateRemediationAvailabilityPresentation(RemediationAvailability availability)
     {
         if (RemediationAvailabilityTextBlock is null || RemediationAvailabilityActionButton is null) return;
-        // Routine guidance needs only one text line. While the activity banner is visible,
+        // Routine guidance needs only one subtle text line. While the activity banner is visible,
         // it already explains a busy operation; do not reserve a duplicate footer row.
         // Recovery, rescan and installation blockers keep their full inline explanation/action.
         bool compact = availability.Action == RemediationAvailabilityAction.None;
         RemediationAvailabilityPanel.Tag = ReferenceFindings.Count > 0 && PriorityFindings.Count == 0 &&
             availability.State is RemediationAvailabilityState.NoActionableFindings or RemediationAvailabilityState.ReviewRequired
                 ? "reference-only" : (object)(availability.State == RemediationAvailabilityState.Busy);
-        RemediationAvailabilityPanel.Margin = compact ? new Thickness(0) : new Thickness(0, 4, 0, 0);
-        RemediationAvailabilityPanel.Padding = compact ? new Thickness(0) : new Thickness(8, 5, 8, 5);
+        RemediationAvailabilityPanel.Background = compact ? System.Windows.Media.Brushes.Transparent : BlockedAvailabilityBackground;
+        RemediationAvailabilityPanel.BorderBrush = BlockedAvailabilityBorder;
+        RemediationAvailabilityPanel.Margin = compact ? new Thickness(0, 3, 0, 0) : new Thickness(0, 4, 0, 0);
+        RemediationAvailabilityPanel.Padding = compact ? new Thickness(2, 2, 2, 0) : new Thickness(10, 5, 10, 5);
         RemediationAvailabilityPanel.BorderThickness = new Thickness(compact ? 0 : 1);
+        RemediationAvailabilityTextBlock.Foreground = compact ? SubtleAvailabilityForeground : BlockedAvailabilityForeground;
         RemediationAvailabilityTextBlock.Text = RemediationAvailabilityText(availability.State);
         string label = availability.Action switch
         {

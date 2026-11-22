@@ -366,6 +366,13 @@ public partial class MainWindow
             _persistedCase = null;
             _loadedCase = null;
             await RefreshCaseRecordsAsync();
+            if (!_remediationClient.HasUnresolvedExecution &&
+                !CaseListComboBox.Items.OfType<CaseListItem>().Any(item => item.Summary.State == CaseReverificationState.ExecutionUncertain))
+            {
+                _hasEndedUnknownExecution = false;
+                UpdateAdvancedTabsVisibility();
+                UpdateRemediationEligibility();
+            }
             CaseDetailsText.Text = removed > 0
                 ? DisplayText.Format("Ui.Cases.ClearCompleted.Result", removed)
                 : DisplayText.Get("Ui.Cases.ClearCompleted.None");

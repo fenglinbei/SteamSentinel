@@ -19,6 +19,7 @@ internal sealed class TextDetailsWindow : Window
         MinHeight = 380;
         FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI");
         FontSize = 12;
+        Background = new SolidColorBrush(Color.FromRgb(0xF4, 0xF6, 0xF9));
         UseLayoutRounding = true;
         ResizeMode = ResizeMode.CanResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -33,15 +34,16 @@ internal sealed class TextDetailsWindow : Window
         };
         NameScope.SetNameScope(this, new NameScope());
 
-        Grid layout = new() { Name = "TextDetailsLayout", Margin = new Thickness(12) };
+        Grid layout = new() { Name = "TextDetailsLayout", Margin = new Thickness(14) };
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         TextBlock heading = new()
         {
             Text = title,
-            FontSize = 18,
+            FontSize = 17,
             FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A)),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 8)
         };
@@ -57,8 +59,9 @@ internal sealed class TextDetailsWindow : Window
             TextWrapping = TextWrapping.Wrap,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Padding = new Thickness(8),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(208, 213, 221)),
+            Padding = new Thickness(10, 8, 10, 8),
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0)),
             BorderThickness = new Thickness(1)
         };
         System.Windows.Automation.AutomationProperties.SetName(details, title + DisplayText.Get("Ui.TextDetailsWindow.Constructor.01"));
@@ -71,7 +74,7 @@ internal sealed class TextDetailsWindow : Window
         TextBlock copyStatus = new()
         {
             Text = DisplayText.Get("Ui.TextDetailsWindow.Constructor.02"),
-            Foreground = new SolidColorBrush(Color.FromRgb(102, 112, 133)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x64, 0x74, 0x8B)),
             VerticalAlignment = VerticalAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 8, 0)

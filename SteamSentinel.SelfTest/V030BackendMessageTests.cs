@@ -16,7 +16,7 @@ internal static partial class Program
         MessageText produced;
         using (DisplayText.UseCulture(DisplayText.English)) produced = MessageText.Create("Ui.Language.Saved");
         string original = produced.OriginalText;
-        Check("后台消息 来源原文不随生产线程语言变化", original.Contains("下次启动", StringComparison.Ordinal));
+        Check("后台消息 来源原文不随生产线程语言变化", original.Contains("立即生效", StringComparison.Ordinal));
         using (DisplayText.UseCulture(DisplayText.English))
         {
             Finding labelTarget = new() { Category = FindingCategory.Coverage, TargetText = produced };

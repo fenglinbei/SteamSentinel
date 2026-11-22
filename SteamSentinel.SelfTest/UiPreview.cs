@@ -34,6 +34,58 @@ internal static class UiPreview
                     Capture(dialog, name, width, height, output);
                 }
                 MainWindow window = new();
+                ApplyAccessState(window, InstallationSecurityStatus.Protected, new(true, true));
+                Capture(window, "main-idle", 1148, 780, output);
+                ((Expander)window.FindName("ScanOptionsExpander")).IsExpanded = true;
+                Capture(window, "scan-options-expanded-1148x780", 1148, 780, output);
+                ((Expander)window.FindName("ScanOptionsExpander")).IsExpanded = false;
+                // 预览纯「信息与参考」折叠区（hosts 阻断 + 本地环回代理）与安心绿状态
+                MainWindow refWindow = new();
+                ScanReport refReport = new()
+                {
+                    Mode = ScanMode.Full,
+                    Coverage = ScanCoverage.Complete,
+                    StatusSchemaVersion = ScanExecution.SchemaVersion,
+                    ExecutionState = ScanExecutionState.Completed,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    Metrics = new() { FilesVisited = 1280, WorkshopItemsVisited = 42 },
+                    Findings =
+                    [
+                        new()
+                        {
+                            Id = "preview-hosts-blocked",
+                            RuleId = "NETWORK-C2-BLOCKED",
+                            Category = FindingCategory.Network,
+                            Severity = FindingSeverity.Information,
+                            Title = "已知 C2 已在 hosts 中阻断",
+                            Target = @"C:\Windows\System32\drivers\etc\hosts",
+                            Description = "无害界面预览：防御性 hosts 配置，无需处理。",
+                            SuggestedActions = [SuggestedActionKind.None]
+                        },
+                        new()
+                        {
+                            Id = "preview-loopback-proxy",
+                            RuleId = "NETWORK-PROXY-PRESENT",
+                            Category = FindingCategory.Network,
+                            Severity = FindingSeverity.Information,
+                            Score = 5,
+                            TitleText = SteamSentinel.Core.Reporting.MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.07"),
+                            Target = "127.0.0.1:7897",
+                            DescriptionText = SteamSentinel.Core.Reporting.MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.08"),
+                            HandlingReason = FindingHandlingReason.InsufficientEvidence,
+                            HandlingDetailsText = SteamSentinel.Core.Reporting.MessageText.Create("Backend.Core.TrustProxyCorrelator.Apply.12"),
+                            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+                        }
+                    ]
+                };
+                typeof(MainWindow).GetField("_lastReport", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(refWindow, refReport);
+                typeof(MainWindow).GetMethod("PopulateFindings", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(refWindow, [refReport]);
+                typeof(MainWindow).GetMethod("UpdateSummary", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(refWindow, [refReport]);
+                ApplyAccessState(refWindow, InstallationSecurityStatus.Protected, new(true, true));
+                Capture(refWindow, "reference-info-collapsed-1148x780", 1148, 780, output);
+                ((Expander)refWindow.FindName("ReferenceFindingsExpander")).IsExpanded = true;
+                Capture(refWindow, "reference-info-expanded-1148x780", 1148, 780, output);
+                refWindow.Close();
                 ScanReport report = new() { Coverage = ScanCoverage.Partial };
                 report.Findings.Add(new Finding { IsKnownMalware = true, Severity = FindingSeverity.Critical });
                 typeof(MainWindow).GetMethod("UpdateSummary", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [report]);
@@ -171,6 +223,37 @@ internal static class UiPreview
                     ApplyAccessState(accessWindow, status, context);
                     Capture(accessWindow, name, 980, 680, output);
                 }
+                MainWindow scanningStage = new();
+                ApplyAccessState(scanningStage, InstallationSecurityStatus.Protected, new(true, true));
+                using (UiLayoutHarness scanningLayout = new(scanningStage, 1148, 780))
+                {
+                    typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(scanningStage, [true]);
+                    ((TextBlock)scanningStage.FindName("HeaderStatusText")).Text = SteamSentinel.Core.Reporting.DisplayText.Get("Ui.xaml.StartScanAsync.03");
+                    ((TextBlock)scanningStage.FindName("HeaderDetailText")).Text = SteamSentinel.Core.Reporting.DisplayText.Get("Ui.xaml.StartScanAsync.Quick.01");
+                    scanningStage.UpdateHeaderStatusTone(MainWindow.HeaderStatusTone.Scanning);
+                    scanningStage.ShowActivity(MainWindow.ActivityPhase.Scanning);
+                    scanningStage.BeginScanProgressStage(0, 100, reset: true);
+                    scanningStage.ReportScanProgressPercent(new("内容扫描", @"C:\Program Files\Netease\GameViewer\GameViewer.exe", 35, 100, "正在扫描"));
+                    typeof(MainWindow).GetMethod("UpdateProgress", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(scanningStage,
+                        [new ScanProgress("内容扫描 · 正在检查工坊与关联文件", @"C:\Program Files\Netease\GameViewer\GameViewer.exe", 35, 100,
+                            "深度 0；读取 72,946,856，解码 0 字节；临时 0 字节")]);
+                    if (SystemParameters.ClientAreaAnimation)
+                    {
+                        System.Windows.Threading.DispatcherFrame animFrame = new();
+                        System.Windows.Threading.DispatcherTimer animTimer = new(
+                            TimeSpan.FromMilliseconds(260),
+                            System.Windows.Threading.DispatcherPriority.Background,
+                            (_, _) => { animFrame.Continue = false; },
+                            scanningStage.Dispatcher);
+                        animTimer.Start();
+                        System.Windows.Threading.Dispatcher.PushFrame(animFrame);
+                        animTimer.Stop();
+                    }
+                    scanningLayout.Refresh();
+                    scanningLayout.Save("activity-scanning-35", output);
+                }
+                typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(scanningStage, [false]);
+                scanningStage.Close();
                 foreach (MainWindow.ActivityPhase phase in new[] { MainWindow.ActivityPhase.Preparing,
                     MainWindow.ActivityPhase.Confirmation, MainWindow.ActivityPhase.Applying, MainWindow.ActivityPhase.FollowUp, MainWindow.ActivityPhase.ContentFollowUp })
                 {

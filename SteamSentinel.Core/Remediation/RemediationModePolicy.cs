@@ -12,9 +12,10 @@ public static class RemediationModePolicy
 
     public static bool CanRequestQuarantine(Finding finding)
     {
+        // 低危与信息级发现（含带 ReviewOnly 的合法 MOD 或环境提示）一律禁止成为手动隔离目标
         if (finding.Category is not (FindingCategory.File or FindingCategory.Archive or FindingCategory.Process or
                 FindingCategory.Persistence or FindingCategory.Steam or FindingCategory.WallpaperEngine) ||
-            finding.Severity < FindingSeverity.Medium && !finding.SuggestedActions.Contains(SuggestedActionKind.ReviewOnly) ||
+            finding.Severity < FindingSeverity.Medium ||
             finding.HandlingReason is FindingHandlingReason.IncompleteInspection or FindingHandlingReason.PrerequisiteNotMet ||
             !ContentDiscovery.IsLocalSafePath(finding.Target) || Directory.Exists(finding.Target)) return false;
         string? hash = TargetHash(finding);

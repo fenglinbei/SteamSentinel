@@ -22,18 +22,20 @@ internal sealed class ScanResourceDialog : Window
         _proposal = proposal;
         Title = DisplayText.Get("Resource.Title"); Width = 720; Height = 610; MinWidth = 440; MinHeight = 350;
         MaxWidth = SystemParameters.WorkArea.Width; MaxHeight = SystemParameters.WorkArea.Height;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner; Background = Brushes.White;
-        FontFamily = new("Microsoft YaHei UI"); FontSize = 13; UseLayoutRounding = true;
-        DockPanel outer = new() { Margin = new(18) }; Content = outer;
-        WrapPanel actions = new() { HorizontalAlignment = HorizontalAlignment.Right };
+        WindowStartupLocation = WindowStartupLocation.CenterOwner; Background = new SolidColorBrush(Color.FromRgb(0xF4, 0xF6, 0xF9));
+        FontFamily = new("Microsoft YaHei UI, Segoe UI"); FontSize = 12.5; UseLayoutRounding = true;
+        DockPanel outer = new() { Margin = new(16) }; Content = outer;
+        WrapPanel actions = new() { HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 10, 0, 0) };
         DockPanel.SetDock(actions, Dock.Bottom); outer.Children.Add(actions);
-        Button skip = new() { Name = "SkipResourcesButton", Content = DisplayText.Get("Resource.Skip"), Padding = new(12, 7, 12, 7), Margin = new(4), IsCancel = true };
+        Button skip = new() { Name = "SkipResourcesButton", Content = DisplayText.Get("Resource.Skip"), Padding = new(12, 6, 12, 6), Margin = new(0, 0, 6, 0), IsCancel = true };
         skip.Click += (_, _) => { Decision = ResourceDecisionKind.Skip; DialogResult = false; };
         actions.Children.Add(skip);
-        Button stop = new() { Content = DisplayText.Get("Resource.Stop"), Padding = new(12, 7, 12, 7), Margin = new(4) };
+        Button stop = new() { Content = DisplayText.Get("Resource.Stop"), Padding = new(12, 6, 12, 6), Margin = new(0, 0, 6, 0) };
         stop.Click += (_, _) => { Decision = ResourceDecisionKind.Stop; DialogResult = false; };
         actions.Children.Add(stop);
         _approve.Content = DisplayText.Get("Resource.Approve");
+        _approve.Margin = new(0);
+        if (TryFindResource("PrimaryButton") is Style primaryStyle) _approve.Style = primaryStyle;
         _approve.Click += (_, _) =>
         {
             RefreshCapacity();
@@ -42,7 +44,16 @@ internal sealed class ScanResourceDialog : Window
         };
         actions.Children.Add(_approve);
         StackPanel text = new();
-        outer.Children.Add(new ScrollViewer { Content = text, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new(0, 0, 0, 12) });
+        Border card = new()
+        {
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(16),
+            Child = text
+        };
+        outer.Children.Add(new ScrollViewer { Content = card, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         void Paragraph(string value) => text.Children.Add(new TextBlock { Text = value, TextWrapping = TextWrapping.Wrap, Margin = new(0, 5, 0, 7) });
         Paragraph(DisplayText.Get("Resource.Intro"));
         Paragraph(proposal.Request.Target);

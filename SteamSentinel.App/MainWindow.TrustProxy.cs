@@ -21,6 +21,7 @@ public partial class MainWindow
         UpdateSummary(_lastReport);
         HeaderStatusText.Text = cancelled ? DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.01") : DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.02");
         HeaderDetailText.Text = DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.03");
+        UpdateHeaderStatusTone(HeaderStatusTone.Warning);
         ProgressStageText.Text = DisplayText.Get("Ui.TrustProxy.PreserveSystemStageFailure.04");
         ScanProgressBar.Value = 0;
     }

@@ -536,7 +536,7 @@ remediation-case.json 如存在，包含处置前会话与跨启动/登录复验
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:33. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.14" xml:space="preserve">
-    <value>检测到配置线索，但尚不能确认其来源或是否恶意，暂不能自动处理。</value>
+    <value>检测到配置线索，来源尚不能确认；如为自用代理可忽略。</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:34. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.15" xml:space="preserve">
@@ -544,7 +544,7 @@ remediation-case.json 如存在，包含处置前会话与跨启动/登录复验
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:35. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.16" xml:space="preserve">
-    <value>检查代理与证书，或导出诊断记录。</value>
+    <value>确认是否为自用代理，或点击「检查代理与证书」查看详情。</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:36. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.17" xml:space="preserve">
@@ -556,7 +556,7 @@ remediation-case.json 如存在，包含处置前会话与跨启动/登录复验
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:37. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.19" xml:space="preserve">
-    <value>此项为普通说明，没有要求执行处理。</value>
+    <value>状态说明，无需处理。</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:37. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.20" xml:space="preserve">
@@ -2857,15 +2857,15 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.Quick.01" xml:space="preserve">
-    <value>正在快速检查系统状态与所选内容</value>
+    <value>快速检查系统与所选范围</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.Full.01" xml:space="preserve">
-    <value>正在按所选范围和检查选项进行完整内容扫描</value>
+    <value>完整扫描所选范围与压缩包</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.04" xml:space="preserve">
-    <value>正在检查所选文件或目录</value>
+    <value>检查指定文件或目录</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.05" xml:space="preserve">
@@ -2873,7 +2873,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.06" xml:space="preserve">
-    <value>扫描中，处理资格尚待核验</value>
+    <value>扫描中…</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.07" xml:space="preserve">
@@ -2985,11 +2985,11 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.08" xml:space="preserve">
-    <value>有 {0} 项尚未处理</value>
+    <value>有 {0} 项待确认</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.09" xml:space="preserve">
-    <value>待确认 {0} 项，暂不支持 {1} 项，条件未满足 {2} 项；请查看处理状态与原因</value>
+    <value>待确认 {0} · 暂不支持 {1} · 条件未满足 {2}</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.10" xml:space="preserve">
@@ -3045,7 +3045,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.28" xml:space="preserve">
-    <value>文件 {0:N0} · 工坊 {1:N0} · 压缩条目 {2:N0} · 检查状态 {3}</value>
+    <value>文件 {0:N0} · 工坊 {1:N0} · 压缩条目 {2:N0} · {3}</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.FindingsGrid_SelectionChanged.01" xml:space="preserve">
@@ -3248,11 +3248,11 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.01" xml:space="preserve">
-    <value>安装检查通过，当前为管理员窗口。</value>
+    <value>环境正常（管理员权限）</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.02" xml:space="preserve">
-    <value>安装检查通过，当前为普通权限窗口。</value>
+    <value>环境正常（普通权限）</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.03" xml:space="preserve">
@@ -3260,27 +3260,27 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.04" xml:space="preserve">
-    <value>提权不能修复安装环境，请用安装包修复后重新检查。扫描与导出仍可用。</value>
+    <value>请用安装包修复环境后再重新检查；当前仍可只读扫描。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.05" xml:space="preserve">
-    <value>可扫描并处置，执行前仍会请你核对并确认，不会自动清除。</value>
+    <value>可扫描与处置，执行前需核对并确认。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.06" xml:space="preserve">
-    <value>扫描无需提权，处置时会自动请求 Windows 授权。也可先打开管理员窗口。</value>
+    <value>扫描无需提权，处置时自动请求授权。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.07" xml:space="preserve">
-    <value>扫描无需提权，处置需先打开管理员窗口，输入管理员凭据并重新扫描。</value>
+    <value>处置需打开管理员窗口并重新扫描。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.08" xml:space="preserve">
-    <value>已是管理员窗口</value>
+    <value>管理员模式</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.09" xml:space="preserve">
-    <value>打开管理员窗口</value>
+    <value>管理员窗口</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.10" xml:space="preserve">
@@ -3296,19 +3296,19 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableElevated" xml:space="preserve">
-    <value>便携模式完整性已通过（管理员窗口）。当前目录不受 Program Files 权限保护，建议使用安装包安装。</value>
+    <value>便携模式（管理员权限）</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableStandard" xml:space="preserve">
-    <value>便携模式完整性已通过（普通权限窗口）。组件哈希与 SHA256SUMS.txt 一致，但目录缺少 Program Files 写入保护。</value>
+    <value>便携模式（普通权限）</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintCanElevate" xml:space="preserve">
-    <value>便携模式下处置会在确认风险后请求 Windows UAC 授权，建议改用安装包安装至受保护目录。</value>
+    <value>支持扫描与处置（处置时自动请求授权），正式使用建议安装版。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintStandard" xml:space="preserve">
-    <value>当前为便携模式。如需处置，请打开管理员窗口并输入管理员凭据后重新扫描。</value>
+    <value>便携模式处置需打开管理员窗口并重新扫描。</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableTooltip" xml:space="preserve">
@@ -3388,48 +3388,47 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Preparing.02" xml:space="preserve">
-    <value>核对文件、启动入口和关联进程，尚未修改文件，可取消。</value>
+    <value>核对目标与依赖，尚未修改任何文件</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Confirmation.02" xml:space="preserve">
-    <value>等待你在预览窗口确认，尚未开始处置。</value>
+    <value>等待在预览窗口确认</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Applying.02" xml:space="preserve">
-    <value>如出现 Windows 授权请确认，正在等待管理员组件完成操作与验证，请勿关闭窗口或重启。</value>
+    <value>请在 UAC 窗口授权，完成前请勿关闭</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.FollowUp.02" xml:space="preserve">
-    <value>重新读取系统与 Steam 状态，不会再次隔离文件，最长等待约 2 分钟。</value>
+    <value>只读复核系统与 Steam 状态</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.ContentFollowUp.02" xml:space="preserve">
-    <value>沿用原扫描范围和设置，只读检查，最长等待约 2 分钟，可取消，未完成部分可稍后手动复扫。加密内容可能需要重新输入密码。</value>
+    <value>按原范围只读复核，可随时取消</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Scanning.02" xml:space="preserve">
-    <value>范围或压缩内容较大时可能需要更久，可取消，已用时间不是剩余时间。</value>
+    <value>正在检查，可随时取消</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Exporting.02" xml:space="preserve">
-    <value>正在保存记录，完成后会显示保存位置。</value>
+    <value>正在导出诊断报告</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Cancelling.02" xml:space="preserve">
-    <value>等待当前读取结束并释放临时文件，不会开始新的处置。</value>
+    <value>正在停止并清理临时文件</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.02" xml:space="preserve">
-    <value>正在读取信息，请稍候，已用时间不是剩余时间。</value>
+    <value>正在加载环境信息</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.RefreshActivityElapsed.01" xml:space="preserve">
-    <value>本阶段已用 </value>
+    <value>已用 </value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.RefreshActivityElapsed.02" xml:space="preserve">
-    <value>
-本阶段仍未返回结果，动画仅表示界面正在等待，不代表后台一定在持续推进。</value>
+    <value>（正在处理较大项目或等待系统响应）</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.CreateUiProgress.01" xml:space="preserve">
@@ -3895,15 +3894,15 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.02" xml:space="preserve">
-    <value>由你决定扫描预算</value>
+    <value>扫描档位与预算</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.03" xml:space="preserve">
-    <value>设置保存到当前 Windows 用户，下次扫描生效。两种扫描模式分别保存，可随时恢复默认。1 MiB = 1,048,576 字节。</value>
+    <value>按模式分别保存，下次扫描生效。</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.04" xml:space="preserve">
-    <value>调高预算会增加覆盖范围，也可能造成长时间扫描、磁盘占满或内存不足；调低会更早停止，并留下未检查内容。各预算同时生效，请结合报告中的停止原因调整。</value>
+    <value>档位越高覆盖越广，耗时与资源占用也相应增加。</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.05" xml:space="preserve">
@@ -3915,7 +3914,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.07" xml:space="preserve">
-    <value>预算之外仍可能受到文件格式、密码、访问权限、系统资源和组件容量限制；报告会说明未完成原因。</value>
+    <value>加密包、访问权限与系统剩余资源仍可能限制部分检查。</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.08" xml:space="preserve">
@@ -4007,7 +4006,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.003" xml:space="preserve">
-    <value>Steam 工坊 · MOD · 插件安全检查</value>
+    <value>Steam 安全与工坊体检</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.004" xml:space="preserve">
@@ -4031,7 +4030,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.009" xml:space="preserve">
-    <value>完整内容扫描</value>
+    <value>完整扫描</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.010" xml:space="preserve">
@@ -4055,15 +4054,15 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.015" xml:space="preserve">
-    <value>扫描范围与选项 · 仅所选范围，不是全盘检查</value>
+    <value>扫描选项</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.016" xml:space="preserve">
-    <value>快速扫描：Steam 运行状态与本地工坊、MOD、插件；视频先查结构和尾随内容，不是全盘扫描。</value>
+    <value>仅检查所选 Steam 与本地范围，非全盘查杀；档位与上限可在「扫描设置」调整。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.017" xml:space="preserve">
-    <value>快速扫描优先检查关联落点和启动型内容。大小、深度、读取量、时间与临时磁盘等预算可在“扫描限制设置”调整，快速与完整／自选模式分别保存。报告记录本轮实际设置及未完成原因。完整内容扫描只检查所选范围，不是全盘查杀。</value>
+    <value>快速扫描聚焦高危落点与结构检查；如需深入排查请使用完整扫描。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.018" xml:space="preserve">
@@ -4079,7 +4078,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.021" xml:space="preserve">
-    <value>额外检查下载、桌面和临时目录</value>
+    <value>包含下载、桌面与临时目录</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.022" xml:space="preserve">
@@ -4099,7 +4098,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.026" xml:space="preserve">
-    <value>使用本机反恶意软件接口（AMSI）辅助扫描</value>
+    <value>启用本机 AMSI 辅助扫描</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.027" xml:space="preserve">
@@ -4115,7 +4114,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.030" xml:space="preserve">
-    <value>正在检查安装环境…</value>
+    <value>正在检查运行环境…</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.031" xml:space="preserve">
@@ -4171,7 +4170,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.045" xml:space="preserve">
-    <value>尚无扫描结果。这里显示未检查或未完成检查的原因，不计入风险数量。</value>
+    <value>暂无未检查项（按快速策略跳过或受限的内容会汇总于此，不代表存在风险）。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.046" xml:space="preserve">
@@ -4191,11 +4190,11 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.050" xml:space="preserve">
-    <value>尚未生成处置方案，这里会逐项列出已选目标的处理结果。</value>
+    <value>尚无处置记录。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.051" xml:space="preserve">
-    <value>原扫描范围复查与系统复查会分开显示，动作成功不代表全部威胁已清除。</value>
+    <value>处置完成后，将在此逐项显示处理与复查结果。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.052" xml:space="preserve">
@@ -4227,7 +4226,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.059" xml:space="preserve">
-    <value>仅采集本地配置与证书，不下载 PAC、不访问目标地址；读取完整不代表配置安全。</value>
+    <value>只读采集本机代理配置与证书存储，不访问外部网络。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.060" xml:space="preserve">
@@ -4235,7 +4234,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.061" xml:space="preserve">
-    <value>点击“检查代理与证书”后，这里会列出每项采集状态、代理配置来源、证书存储区及证书摘要。已有扫描发现会保留。</value>
+    <value>点击右上角按钮检查本机代理与证书配置。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.062" xml:space="preserve">
@@ -4247,7 +4246,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.064" xml:space="preserve">
-    <value>仅记录路径关系；磁盘文件核验不代表进程内存内容，写入者仍未定位。</value>
+    <value>只读记录组件与宿主路径关系，不改变处置权限。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.065" xml:space="preserve">
@@ -4255,7 +4254,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.066" xml:space="preserve">
-    <value>正常扫描完成关联检查后，这里显示来源、宿主身份、候选原因、受限内容检查与各轮预算。关联记录不会自行生成处理权限。</value>
+    <value>扫描完成后，将在此展示组件关联与宿主信息。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.067" xml:space="preserve">
@@ -4279,7 +4278,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.072" xml:space="preserve">
-    <value>重启或重新登录后，重新打开程序并复验；不会重放旧计划或自动重启。</value>
+    <value>重启或重新登录后可在此执行只读复验。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.073" xml:space="preserve">
@@ -4287,7 +4286,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.074" xml:space="preserve">
-    <value>尚无已保存病例。确认处置后会在本账户保存计划、执行结果和处置前会话身份。</value>
+    <value>尚无历史处置病例。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.075" xml:space="preserve">
@@ -4339,15 +4338,15 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.087" xml:space="preserve">
-    <value>扫描文件或目录后，这里显示每层容器关系、完整性、内容检测和预算。可选择文本并按 Ctrl+C 复制。</value>
+    <value>扫描压缩包或容器后，将在此显示层级与检查记录。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.088" xml:space="preserve">
-    <value>所选项详情 · 完整路径与证据</value>
+    <value>详细信息</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.089" xml:space="preserve">
-    <value>意味着什么</value>
+    <value>说明</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.090" xml:space="preserve">
@@ -4359,7 +4358,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.092" xml:space="preserve">
-    <value>预览并处置所选项</value>
+    <value>预览并处置</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.093" xml:space="preserve">
@@ -4407,7 +4406,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.104" xml:space="preserve">
-    <value>隔离记录由管理员组件核对后才能回滚。当前版本保留仍有活动记录的隔离事件，不提供永久删除；已全部回滚的空事件，需在重启及完整复扫无已知威胁后才能清理。旧版缺少可信索引的事件请保留隔离并人工核对。</value>
+    <value>已隔离项支持核对后回滚；仅已全部回滚且复扫无异常的空记录允许清理。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.105" xml:space="preserve">
@@ -4447,27 +4446,27 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.114" xml:space="preserve">
-    <value>边界与安全</value>
+    <value>关于与安全</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.115" xml:space="preserve">
-    <value>本工具能做什么，不能做什么</value>
+    <value>安全机制与能力边界</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.116" xml:space="preserve">
-    <value>本程序不会运行被扫描的媒体、脚本或可执行文件。压缩内容会在 Low Integrity 受限令牌的独立工作进程中读取，进程先加入单进程 Job Object，再接收扫描路径，并在主程序退出时终止。普通扫描不会请求管理员权限。</value>
+    <value>只读扫描，绝不运行待查文件。压缩包在低权限受限沙箱进程中解析，随主程序退出自动结束；日常扫描无需管理员权限。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.117" xml:space="preserve">
-    <value>只有安装环境与组件完整性检查通过后，才能请求管理员授权。处置时可自动请求 UAC，也可点击“打开管理员窗口”后重新扫描，原窗口与报告会保留。标准账户需提供管理员凭据，工具不会收集密码。管理员处置组件仍会核对请求者、计划 SHA-256、精确路径、文件哈希或目录指纹。</value>
+    <value>仅在安装与组件完整性通过校验后启用处置；执行前会展示完整清单并请求 UAC 授权，所有隔离操作均可回滚。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.118" xml:space="preserve">
-    <value>本程序聚焦 Steam、Wallpaper Engine 与已观察到的假红信链路，可完成一次快速扫描、辨别、隔离和 Steam 恢复。“完整扫描，未发现已知威胁”仍不代表电脑绝对安全。加密内容未解开、格式不受支持、缺少分卷或触发资源限制时，报告会标记为“未完整扫描”。</value>
+    <value>专注排查 Steam、Wallpaper Engine 及假红信链路，不替代全盘杀毒软件；加密或受限跳过项会如实列在「未检查内容」中。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.119" xml:space="preserve">
-    <value>启发式发现会继续保留处置能力，但默认不预选。即使处置显示成功，也只代表本次计划中的目标已处理，不代表整台电脑已经无毒。条件允许时，仍建议再用保持更新的专业杀毒软件进行全盘复核。</value>
+    <value>提示：启发式疑似项默认不预选；处置成功仅代表本次清单已处理，必要时请配合系统或专业杀毒软件复核。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.120" xml:space="preserve">
@@ -4475,7 +4474,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.121" xml:space="preserve">
-    <value>本工具由 fenglinbei 开源，采用 Apache License 2.0。你可以查看源码，并按许可证约定使用、修改和分享。完整条款见安装目录中的 LICENSE，版权及第三方声明见 NOTICE 和 THIRD-PARTY-NOTICES.md。</value>
+    <value>由 fenglinbei 基于 Apache License 2.0 开源。完整条款与第三方声明见安装目录内 LICENSE 与 NOTICE。</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.122" xml:space="preserve">
@@ -4483,7 +4482,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.123" xml:space="preserve">
-    <value>本地运行 · 默认不上传样本或账户数据 · 隔离可回滚</value>
+    <value>仅本地运行 · 不上传数据 · 隔离可回滚</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.001" xml:space="preserve">
@@ -4491,7 +4490,7 @@ DER SHA-256：{3}
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.002" xml:space="preserve">
-    <value>输入密码或跳过；未解开会标记为“未完整扫描”。</value>
+    <value>输入密码以继续检查，或跳过该加密包。</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.003" xml:space="preserve">
@@ -4551,7 +4550,7 @@ DER SHA-256：{3}
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.017" xml:space="preserve">
-    <value>密码仅在本次扫描内存中使用，不破解、不保存。</value>
+    <value>密码仅留存本次扫描内存，不保存、不记录。</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.018" xml:space="preserve">
@@ -4575,11 +4574,11 @@ DER SHA-256：{3}
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.023" xml:space="preserve">
-    <value>候选密码会在所选范围内依次尝试；点击继续时，未加入的输入会追加到列表末尾。</value>
+    <value>候选密码按顺序尝试；点继续时会自动包含当前输入内容。</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.024" xml:space="preserve">
-    <value>查看原因、完整位置与密码使用说明</value>
+    <value>查看压缩包位置与说明</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.025" xml:space="preserve">
@@ -4615,7 +4614,7 @@ DER SHA-256：{3}
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.002" xml:space="preserve">
-    <value>请核对每一项处置动作</value>
+    <value>核对处置清单</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.003" xml:space="preserve">
@@ -4683,11 +4682,11 @@ DER SHA-256：{3}
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.018" xml:space="preserve">
-    <value>在前两页选中条目，可查看完整目标、原因或核对依据。</value>
+    <value>点击清单行可查看完整目标路径与校验依据。</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.019" xml:space="preserve">
-    <value>本方案可能包含已核实的关联启动项、进程和文件。请先保存工作，关闭相关程序可能中断游戏。启发式项仍需你核对，隔离保留回滚记录，不会立即永久删除。</value>
+    <value>处置可能关闭关联进程或清理启动项，请先保存工作。隔离项保留回滚记录，不会立即永久删除。</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.020" xml:space="preserve">
@@ -4719,15 +4718,15 @@ DER SHA-256：{3}
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.NextStartup" xml:space="preserve">
-    <value>下次启动使用的语言</value>
+    <value>界面显示语言</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.StartupHelp" xml:space="preserve">
-    <value>设置仅保存到当前 Windows 用户，下次启动程序生效。保存不会切换当前窗口语言，也不会中断正在进行的扫描或处置。</value>
+    <value>保存后立即切换当前界面语言并记住偏好，无需重启；导出报告时仍可单独选择语言。</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.AutomaticHelp" xml:space="preserve">
-    <value>自动模式使用 Windows 显示语言：中文使用简体中文资源，其他语言使用英文。</value>
+    <value>自动模式将跟随 Windows 显示语言。</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.Save" xml:space="preserve">
@@ -4735,7 +4734,7 @@ DER SHA-256：{3}
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.Saved" xml:space="preserve">
-    <value>语言设置已保存，下次启动程序生效。当前窗口和正在进行的任务保持不变。</value>
+    <value>语言设置已保存并立即生效。</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.SaveFailed" xml:space="preserve">
@@ -4759,7 +4758,7 @@ DER SHA-256：{3}
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Help" xml:space="preserve">
-    <value>选择 Markdown 报告或记录包说明的语言。本次选择不会更改界面语言或已保存设置。</value>
+    <value>选择导出报告的显示语言，不影响当前界面设置。</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Current" xml:space="preserve">
@@ -4767,7 +4766,7 @@ DER SHA-256：{3}
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Originals" xml:space="preserve">
-    <value>JSON 机器字段和原始证据保持不变。旧记录及系统返回的原文保留原语言，不自动翻译。</value>
+    <value>JSON 机器字段与原始证据保持原文不变。</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Cancel" xml:space="preserve">
@@ -6676,7 +6675,7 @@ DER SHA-256：{3}
     <value>服务项包含已知假红信家族指标</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanHosts.01" xml:space="preserve">
-    <value>已知 C2 已在 hosts 中阻断</value>
+    <value>防护已生效：hosts 已阻断已知恶意域名</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanHosts.02" xml:space="preserve">
     <value>防御性配置，无需删除。</value>
@@ -9637,10 +9636,10 @@ DER SHA-256：{3}
     <value>证书离线链检查</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.07" xml:space="preserve">
-    <value>检测到代理配置，需进一步确认</value>
+    <value>检测到本机代理设置</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.08" xml:space="preserve">
-    <value>代理可能来自合法工具或企业网络。这里只记录配置，尚未确认来源、实际请求路径或是否恶意。</value>
+    <value>若正在使用加速器、Clash 等代理工具，通常属于正常设置；若未使用，请点「检查代理与证书」核查来源。</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.09" xml:space="preserve">
     <value>未取得</value>
@@ -9652,7 +9651,7 @@ DER SHA-256：{3}
     <value>未取得</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.12" xml:space="preserve">
-    <value>发现代理配置，但写入来源和实际连接链尚未确认，暂不能自动处理。本次未修改该配置。</value>
+    <value>未修改本机网络配置。</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.13" xml:space="preserve">
     <value>检测到需确认用途的证书名称</value>
@@ -11659,7 +11658,7 @@ DER SHA-256：{3}
     <value>暂时无法检查上次处理的状态，请重试后再继续处理。</value>
   </data>
   <data name="Ui.RemediationAvailability.ScanRequired" xml:space="preserve">
-    <value>请先扫描，再选择需要处理的问题。</value>
+    <value>点击上方「快速扫描」或「完整扫描」开始检查。</value>
   </data>
   <data name="Ui.RemediationAvailability.InstallationUnavailable" xml:space="preserve">
     <value>安装状态尚未通过检查，暂不能处理。请先检查安装。</value>
@@ -11671,10 +11670,10 @@ DER SHA-256：{3}
     <value>上次处理已结束但结果未知，旧记录已保留。重新扫描后可继续处理。</value>
   </data>
   <data name="Ui.RemediationAvailability.EndedUnknownNoActionableFindings" xml:space="preserve">
-    <value>上次处理已结束但结果未知，旧记录已保留。当前没有可处理项。</value>
+    <value>历史存在一次结果未知的处置记录（当前无待处理风险）。</value>
   </data>
   <data name="Ui.RemediationAvailability.Ready" xml:space="preserve">
-    <value>选择需要处理的问题，再核对处理预览。</value>
+    <value>勾选需处理项后点击右侧「预览并处置」。</value>
   </data>
   <data name="Ui.RemediationAvailability.CheckRecovery" xml:space="preserve">
     <value>检查并继续</value>
@@ -11901,14 +11900,15 @@ DER SHA-256：{3}
   <data name="SteamConfig.PreviewIntent" xml:space="preserve"><value>拟执行的修改：{0} 执行前仍会独立复验内容与目标身份。</value></data>
   <data name="SteamConfig.OriginalValue" xml:space="preserve"><value>原值：{0}</value></data>
   <data name="SteamConfig.RepairedValue" xml:space="preserve"><value>预期修后值：{0}</value></data>
-  <data name="FindingPriority.Counts" xml:space="preserve"><value>重点关注 {0:N0} 项 · 参考信息 {1:N0} 项</value></data>
-  <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>参考信息 · 文件格式提示（{0:N0} 项）</value></data>
+  <data name="FindingPriority.Counts" xml:space="preserve"><value>扫描结果 {0:N0} 项 · 信息与参考 {1:N0} 项</value></data>
+  <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>信息与参考（{0:N0} 项）</value></data>
   <data name="FindingPriority.FormatHint" xml:space="preserve"><value>文件格式提示</value></data>
-  <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>仅发现文件格式提示</value></data>
+  <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>未发现需处理的风险，仅有常规提示与参考信息</value></data>
   <data name="Coverage.ExplicitRootsUnchecked.Title" xml:space="preserve"><value>所选路径未执行内容检查</value></data>
   <data name="Coverage.ExplicitRootsUnchecked.Detail" xml:space="preserve"><value>所选路径未读取任何文件，无法判断其中的风险。请按“未检查内容”中的原因调整范围后重试。</value></data>
-  <data name="FindingPriority.Empty" xml:space="preserve"><value>暂无重点关注项目</value></data>
-  <data name="FindingPriority.Incomplete" xml:space="preserve"><value>部分内容未完成检查</value></data>
+  <data name="FindingPriority.Empty" xml:space="preserve"><value>当前没有需要处理的风险；下方已收起常规提示与参考信息。</value></data>
+  <data name="FindingPriority.EmptyNoReference" xml:space="preserve"><value>当前没有需要处理的风险。</value></data>
+  <data name="FindingPriority.Incomplete" xml:space="preserve"><value>部分范围未深度检查</value></data>
   <data name="FindingPriority.Score" xml:space="preserve"><value>规则评分：{0}</value></data>
   <data name="FindingPriority.NoSelectablePriority" xml:space="preserve"><value>暂无可选择的重点项目</value></data>
   <data name="SteamAlert.Watchdog.InvalidHost" xml:space="preserve"><value>脚本宿主身份或命令与已核验的恶意脚本不匹配，请重新扫描。</value></data>
@@ -12024,11 +12024,17 @@ DER SHA-256：{3}
   <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. 若 Steam 仍无法正常打开、界面空白/报错，或主程序签名异常，请前往 Steam 官网下载官方 SteamSetup.exe 覆盖安装到原目录（不会删除 steamapps 游戏库），完成后再用 SteamSentinel 复扫确认。</value></data>
   <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>本工具不会自动修改 Steam 二进制或运行外部安装器，请按上述步骤安全恢复后复扫。</value></data>
   <data name="Ui.P2C.AggressiveBadge" xml:space="preserve"><value>激进模式</value></data>
-  <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>显示高级诊断页签（代理/组件/病例/容器）</value></data>
-  <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>默认只显示风险、未检查内容与处置结果三个核心页签；排障时可勾选展开代理与证书、组件关联、病例复验及容器检查页。</value></data>
-  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>发现 {0} 项可处理风险：请核对已勾选项后，点击右下角“预览并处置所选项”。</value></data>
-  <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>发现 {0} 项需人工确认的线索：请点击表格行查看原因，不确定时可先导出报告。</value></data>
-  <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>本次扫描未覆盖全部内容，暂未发现风险：可切到“未检查内容”查看或补查跳过项。</value></data>
-  <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>扫描完成，未发现已知假红信或恶意风险，当前所选 Steam 与本地范围正常。</value></data>
-  <data name="Ui.P2C.AdvancedLimitsHeader" xml:space="preserve"><value>高级自定义预算（{0} 项专家参数，通常无需调整）</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>显示高级诊断页签</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>默认仅展示核心结果页；排障时可展开代理、组件、病例与容器诊断页。</value></data>
+  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>发现 {0} 项可处置风险 · 核对勾选项后点击「预览并处置」</value></data>
+  <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>未发现已知病毒 · {0} 项配置或线索待确认（自用加速器/代理可忽略）</value></data>
+  <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>暂未发现已知病毒 · 部分范围按策略未深度检查（深度排查请点「完整扫描」）</value></data>
+  <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>未发现已知假红信或恶意风险 · 所选范围正常</value></data>
+  <data name="Ui.P2C.AdvancedLimitsHeader" xml:space="preserve"><value>高级参数（{0} 项）</value></data>
+  <data name="Ui.About.Card.Safety" xml:space="preserve"><value>本地隔离与安全执行</value></data>
+  <data name="Ui.About.Card.Scope" xml:space="preserve"><value>检查范围与能力边界</value></data>
+  <data name="Ui.About.Card.License" xml:space="preserve"><value>开源与许可</value></data>
+  <data name="Backend.Core.ContentScanner.ProgressStage" xml:space="preserve"><value>内容扫描</value></data>
+  <data name="Backend.Core.ContentScanner.ProgressDetail" xml:space="preserve"><value>已检查 {0:N0} 个文件</value></data>
+  <data name="Ui.xaml.UpdateProgress.WithTotal" xml:space="preserve"><value>扫描进度 {0}% · {1}</value></data>
 </root>

@@ -1,13 +1,22 @@
 using System.Buffers.Binary;
 using System.IO;
+using System.IO.Compression;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
+using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Rules;
 using SteamSentinel.Core.Scanning;
+using SteamSentinel.Core.Steam;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.SelfTest;
@@ -17,6 +26,7 @@ internal static partial class Program
     private static async Task TestV030Step4Async(string root)
     {
         await TestV030FamilyBoundsAsync(root);
+        await TestV030StrongStructureRemediationAsync(root);
         TestV030ComponentLinks();
         await TestV030SteamUiAsync(root);
     }
@@ -204,4 +214,222 @@ internal static partial class Program
         }
     }
     private static void V030U32(byte[] bytes, int offset, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(offset), value);
+
+    // 验证强二进制结构指纹（VPET-KNOWN-CODE-SECTION / VPET-WRAPPER-THREADED-SIDECAR）在具备安全本地物理文件与外层哈希时升级为可隔离链路
+    private static async Task TestV030StrongStructureRemediationAsync(string root)
+    {
+        string directory = Path.Combine(root, "v030-strong-remediation-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+
+        string codeHostPath = Path.Combine(directory, "code-matched-inert.dll");
+        await File.WriteAllTextAsync(codeHostPath, "Inert code-section host placeholder; never executed.");
+        string codeHostHash = await Hashing.Sha256FileAsync(codeHostPath);
+
+        string archivePath = Path.Combine(directory, "code-matched-bundle.zip");
+        using (ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            using Stream entry = archive.CreateEntry("native/loader.dll").Open();
+            entry.Write("Inert archive member placeholder."u8);
+        }
+        string archiveOuterHash = await Hashing.Sha256FileAsync(archivePath);
+        string innerMemberHash = new('D', 64);
+
+        RuleSet rules = new();
+        SteamLayout steamLayout = new();
+        steamLayout.LibraryRoots.Add(directory);
+        using ContentScanner scanner = new(rules);
+
+        ContainerScanNode directNode = new()
+        {
+            Kind = ContainerNodeKind.File,
+            DisplayPath = codeHostPath,
+            OriginalTarget = codeHostPath,
+            Sha256 = codeHostHash,
+            OriginalTargetSha256 = codeHostHash
+        };
+        VPetFamilyEvidence strongCodeEvidence = new()
+        {
+            SourceSha256 = codeHostHash,
+            Status = VPetFamilyStatus.CodeMatched,
+            Role = VPetComponentRole.Loader,
+            ReasonCode = "VPET-LOADER-STRUCTURE",
+            EnvelopeValidated = true,
+            Signals = ["VPET-KNOWN-CODE-SECTION", "VPET-ORDINAL-ONE"]
+        };
+        Finding? directFinding = scanner.CreateVPetFamilyFinding(directNode, strongCodeEvidence, "inert detail", "123456");
+        Check("0.3 第4步 VPET-KNOWN-CODE-SECTION 本地物理文件升级为可隔离宿主",
+            directFinding is
+            {
+                RuleId: "VPET-FAMILY-STRUCTURE",
+                CanRemediate: true,
+                IsKnownMalware: false,
+                TargetSha256: not null
+            } &&
+            directFinding.Target == codeHostPath &&
+            directFinding.TargetSha256 == codeHostHash &&
+            directFinding.SuggestedActions.SequenceEqual([SuggestedActionKind.QuarantineFile]) &&
+            RemediationEvidencePolicy.CanRemediate(directFinding) &&
+            FindingHandlingPresentation.Get(directFinding).CanSelect);
+
+        ContainerScanNode boundMemberNode = new()
+        {
+            Kind = ContainerNodeKind.ArchiveMember,
+            DisplayPath = archivePath + "!/native/loader.dll",
+            OriginalTarget = archivePath,
+            Sha256 = innerMemberHash,
+            OriginalTargetSha256 = archiveOuterHash
+        };
+        Finding? boundArchiveFinding = scanner.CreateVPetFamilyFinding(boundMemberNode, strongCodeEvidence, "inert archive detail");
+        Check("0.3 第4步 VPET-KNOWN-CODE-SECTION 具备有效外层哈希的归档升级为隔离外层包",
+            boundArchiveFinding is { CanRemediate: true, IsKnownMalware: false } &&
+            boundArchiveFinding.Target == archivePath &&
+            boundArchiveFinding.TargetSha256 == archiveOuterHash &&
+            boundArchiveFinding.Sha256 == innerMemberHash &&
+            boundArchiveFinding.SuggestedActions.SequenceEqual([SuggestedActionKind.QuarantineFile]) &&
+            FindingHandlingPresentation.Get(boundArchiveFinding).CanSelect);
+
+        // 缺失外层哈希或状态为 Malformed 时，绝不升级为可自动隔离
+        ContainerScanNode unboundMemberNode = new()
+        {
+            Kind = ContainerNodeKind.ArchiveMember,
+            DisplayPath = archivePath + "!/native/loader.dll",
+            OriginalTarget = archivePath,
+            Sha256 = innerMemberHash,
+            OriginalTargetSha256 = null
+        };
+        VPetFamilyEvidence malformedCodeEvidence = new()
+        {
+            SourceSha256 = codeHostHash,
+            Status = VPetFamilyStatus.Malformed,
+            ReasonCode = "VPET-FOOTER-BOUNDS",
+            Signals = ["VPET-KNOWN-CODE-SECTION"]
+        };
+        Finding? unboundFinding = scanner.CreateVPetFamilyFinding(unboundMemberNode, strongCodeEvidence, "unbound");
+        Finding? malformedFinding = scanner.CreateVPetFamilyFinding(directNode, malformedCodeEvidence, "malformed");
+        Check("0.3 第4步 缺失外层哈希或损坏封装即使含代码节信号仍保持ReviewOnly",
+            unboundFinding is { CanRemediate: false } &&
+            unboundFinding.SuggestedActions.SequenceEqual([SuggestedActionKind.ReviewOnly]) &&
+            malformedFinding is { CanRemediate: false } &&
+            malformedFinding.SuggestedActions.SequenceEqual([SuggestedActionKind.ReviewOnly]));
+
+        RemediationPlanBuilder builder = new(rules, steamLayout);
+        RemediationPlan codePlan = await builder.BuildAsync([directFinding!, boundArchiveFinding!], addKnownDomainBlock: false);
+        Check("0.3 第4步 VPET-KNOWN-CODE-SECTION 完整通过计划构建且绑定外层真实哈希",
+            codePlan.Actions.Count == 2 &&
+            codePlan.Actions.Any(a => a.Type == RemediationActionType.QuarantineFile && a.Target == Path.GetFullPath(codeHostPath) && a.ExpectedSha256 == codeHostHash) &&
+            codePlan.Actions.Any(a => a.Type == RemediationActionType.QuarantineFile && a.Target == Path.GetFullPath(archivePath) && a.ExpectedSha256 == archiveOuterHash) &&
+            File.Exists(codeHostPath) && File.Exists(archivePath));
+
+        // 真实扫描器集成链路：纯 ECMA-335 元数据合成外壳触发 VPET-WRAPPER-THREADED-SIDECAR -> VPET-FAMILY-STRUCTURE 可隔离
+        byte[] wrapperBytes = V030InertWrapperDllBytes();
+        string wrapperPath = Path.Combine(directory, "inert-wrapper-plugin.dll");
+        await File.WriteAllBytesAsync(wrapperPath, wrapperBytes);
+        string wrapperHash = Hashing.Sha256Bytes(wrapperBytes);
+        ScanReport wrapperReport = await new ScanCoordinator(RuleLoader.LoadEmbedded(), steamLayout).RunAsync(V030ContentOptions(wrapperPath));
+        Finding? wrapperFinding = wrapperReport.Findings.SingleOrDefault(f => f.RuleId == "VPET-FAMILY-STRUCTURE");
+        Check("0.3 第4步 真实扫描命中 VPET-WRAPPER-THREADED-SIDECAR 升级为可隔离宿主",
+            wrapperFinding is { CanRemediate: true, IsKnownMalware: false } &&
+            wrapperFinding.Target == wrapperPath &&
+            wrapperFinding.Sha256 == wrapperHash &&
+            wrapperFinding.TargetSha256 == wrapperHash &&
+            wrapperFinding.SuggestedActions.SequenceEqual([SuggestedActionKind.QuarantineFile]));
+        RemediationPlan wrapperPlan = await builder.BuildAsync([wrapperFinding!], addKnownDomainBlock: false);
+        Check("0.3 第4步 外壳可隔离宿主生成单文件隔离计划且原件完好",
+            wrapperPlan.Actions.Count == 1 &&
+            wrapperPlan.Actions[0].Type == RemediationActionType.QuarantineFile &&
+            wrapperPlan.Actions[0].ExpectedSha256 == wrapperHash &&
+            File.Exists(wrapperPath));
+    }
+
+    // 仅持久化纯 ECMA-335 元数据字节流供静态 IL 检查器读取，含类型初始化防执行守卫，从不加载或调用
+    private static byte[] V030InertWrapperDllBytes()
+    {
+        PersistedAssemblyBuilder assembly = new(new AssemblyName("InertVPetWrapperFixture"), typeof(object).Assembly);
+        ModuleBuilder module = assembly.DefineDynamicModule("InertVPetWrapperFixture.dll");
+
+        static void GuardType(TypeBuilder type)
+        {
+            ILGenerator guard = type.DefineTypeInitializer().GetILGenerator();
+            guard.Emit(OpCodes.Newobj, typeof(NotSupportedException).GetConstructor(Type.EmptyTypes)!);
+            guard.Emit(OpCodes.Throw);
+        }
+
+        TypeBuilder basePlugin = module.DefineType("VPet_Simulator.Windows.Interface.MainPlugin", TypeAttributes.Public);
+        GuardType(basePlugin);
+        _ = basePlugin.CreateType();
+
+        TypeBuilder pxBridge = module.DefineType("SmartPet.PxBridge", TypeAttributes.Public);
+        GuardType(pxBridge);
+        MethodBuilder getProcOrdinal = pxBridge.DefinePInvokeMethod(
+            "GetProcAddressOrdinal", "kernel32.dll", "GetProcAddress",
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.PinvokeImpl,
+            CallingConventions.Standard, typeof(nint), [typeof(nint), typeof(nint)],
+            CallingConvention.Winapi, CharSet.Ansi);
+        getProcOrdinal.SetImplementationFlags(MethodImplAttributes.PreserveSig);
+        MethodBuilder loadLibrary = pxBridge.DefinePInvokeMethod(
+            "LoadLibrary", "kernel32.dll", "LoadLibraryW",
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.PinvokeImpl,
+            CallingConventions.Standard, typeof(nint), [typeof(string)],
+            CallingConvention.Winapi, CharSet.Unicode);
+        loadLibrary.SetImplementationFlags(MethodImplAttributes.PreserveSig);
+
+        MethodBuilder findSidecar = pxBridge.DefineMethod("FindSidecarDll", MethodAttributes.Public | MethodAttributes.Static, typeof(string), Type.EmptyTypes);
+        ILGenerator sidecarIl = findSidecar.GetILGenerator();
+        sidecarIl.Emit(OpCodes.Ldstr, "native");
+        sidecarIl.Emit(OpCodes.Pop);
+        sidecarIl.Emit(OpCodes.Ldstr, "sidecar_inert.dll");
+        sidecarIl.Emit(OpCodes.Ret);
+
+        MethodBuilder runNear = pxBridge.DefineMethod("RunNear", MethodAttributes.Public | MethodAttributes.Static, typeof(void), [typeof(object)]);
+        ILGenerator runIl = runNear.GetILGenerator();
+        runIl.Emit(OpCodes.Ldstr, "sidecar_inert.dll");
+        runIl.Emit(OpCodes.Call, loadLibrary);
+        runIl.Emit(OpCodes.Ldc_I4_1);
+        runIl.Emit(OpCodes.Conv_I);
+        runIl.Emit(OpCodes.Call, getProcOrdinal);
+        runIl.Emit(OpCodes.Ldtoken, typeof(Action));
+        runIl.Emit(OpCodes.Call, typeof(Type).GetMethod(nameof(Type.GetTypeFromHandle), [typeof(RuntimeTypeHandle)])!);
+        runIl.Emit(OpCodes.Call, typeof(Marshal).GetMethod(nameof(Marshal.GetDelegateForFunctionPointer), [typeof(nint), typeof(Type)])!);
+        runIl.Emit(OpCodes.Pop);
+        runIl.Emit(OpCodes.Ret);
+        _ = pxBridge.CreateType();
+
+        TypeBuilder pluginMain = module.DefineType("SmartPet.PluginMain", TypeAttributes.Public, basePlugin);
+        GuardType(pluginMain);
+        MethodBuilder findOrig = pluginMain.DefineMethod("FindOrigDll", MethodAttributes.Public | MethodAttributes.Static, typeof(string), Type.EmptyTypes);
+        ILGenerator origIl = findOrig.GetILGenerator();
+        origIl.Emit(OpCodes.Ldstr, "lib");
+        origIl.Emit(OpCodes.Pop);
+        origIl.Emit(OpCodes.Ldstr, "target.orig.dll");
+        origIl.Emit(OpCodes.Ret);
+
+        MethodBuilder ensureInner = pluginMain.DefineMethod("EnsureInner", MethodAttributes.Public | MethodAttributes.Static, typeof(void), Type.EmptyTypes);
+        ILGenerator innerIl = ensureInner.GetILGenerator();
+        innerIl.Emit(OpCodes.Ldstr, "inert.dll");
+        innerIl.Emit(OpCodes.Call, typeof(Assembly).GetMethod(nameof(Assembly.LoadFrom), [typeof(string)])!);
+        innerIl.Emit(OpCodes.Pop);
+        innerIl.Emit(OpCodes.Ret);
+
+        MethodBuilder callback = pluginMain.DefineMethod("DispatchCallback", MethodAttributes.Private | MethodAttributes.Static, typeof(void), [typeof(object)]);
+        ILGenerator callbackIl = callback.GetILGenerator();
+        callbackIl.Emit(OpCodes.Ldarg_0);
+        callbackIl.Emit(OpCodes.Call, runNear);
+        callbackIl.Emit(OpCodes.Ret);
+
+        MethodBuilder loadPlugin = pluginMain.DefineMethod("LoadPlugin", MethodAttributes.Public, typeof(void), Type.EmptyTypes);
+        ILGenerator loadIl = loadPlugin.GetILGenerator();
+        loadIl.Emit(OpCodes.Ldnull);
+        loadIl.Emit(OpCodes.Ldftn, callback);
+        loadIl.Emit(OpCodes.Newobj, typeof(WaitCallback).GetConstructor([typeof(object), typeof(nint)])!);
+        loadIl.Emit(OpCodes.Call, typeof(ThreadPool).GetMethod(nameof(ThreadPool.QueueUserWorkItem), [typeof(WaitCallback)])!);
+        loadIl.Emit(OpCodes.Pop);
+        loadIl.Emit(OpCodes.Ret);
+        _ = pluginMain.CreateType();
+
+        MetadataBuilder metadata = assembly.GenerateMetadata(out BlobBuilder il, out BlobBuilder fields);
+        ManagedPEBuilder pe = new(PEHeaderBuilder.CreateLibraryHeader(), new MetadataRootBuilder(metadata), il, fields);
+        BlobBuilder output = new();
+        pe.Serialize(output);
+        return output.ToArray();
+    }
 }

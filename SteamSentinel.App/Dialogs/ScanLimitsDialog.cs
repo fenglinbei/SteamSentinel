@@ -13,10 +13,10 @@ internal sealed class ScanLimitsDialog : Window
 {
     private readonly Dictionary<string, TextBox> _inputs = [];
     private readonly StackPanel _rows = new();
-    private readonly TextBlock _error = new() { Foreground = Brushes.Firebrick, TextWrapping = TextWrapping.Wrap, Margin = new(0, 8, 0, 8) };
+    private readonly TextBlock _error = new() { Foreground = new SolidColorBrush(Color.FromRgb(0xB4, 0x23, 0x18)), TextWrapping = TextWrapping.Wrap, Margin = new(0, 8, 0, 6) };
     private readonly ComboBox _mode = new() { ItemsSource = new[] { DisplayText.Get("Ui.ScanLimitsDialog._mode.01"), DisplayText.Get("Ui.ScanLimitsDialog._mode.02") }, SelectedIndex = 0, MinWidth = 230 };
     private readonly ComboBox _preset = new() { ItemsSource = ScanLimitSettings.Presets, MinWidth = 130, Margin = new(12, 0, 0, 0) };
-    private readonly TextBlock _presetHint = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DarkSlateGray, Margin = new(0, 8, 0, 0) };
+    private readonly TextBlock _presetHint = new() { TextWrapping = TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.FromRgb(0x47, 0x55, 0x69)), Margin = new(0, 8, 0, 0) };
     private ScanMode _active = ScanMode.Quick;
     private bool _switching;
     private bool _rendering;
@@ -33,46 +33,60 @@ internal sealed class ScanLimitsDialog : Window
         Width = 640; Height = 460; MinWidth = 500; MinHeight = 360;
         MaxWidth = SystemParameters.WorkArea.Width; MaxHeight = SystemParameters.WorkArea.Height;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        FontFamily = new("Microsoft YaHei UI"); FontSize = 12;
-        Background = Brushes.WhiteSmoke;
-        DockPanel panel = new() { Margin = new(18) };
+        FontFamily = new("Microsoft YaHei UI, Segoe UI"); FontSize = 12;
+        Background = new SolidColorBrush(Color.FromRgb(0xF4, 0xF6, 0xF9));
+        DockPanel panel = new() { Margin = new(16) };
         Content = panel;
-        StackPanel header = new(); DockPanel.SetDock(header, Dock.Top); panel.Children.Add(header);
-        header.Children.Add(new TextBlock { Text = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.02"), FontSize = 20, FontWeight = FontWeights.SemiBold });
-        header.Children.Add(new TextBlock
+        StackPanel headerContent = new();
+        headerContent.Children.Add(new TextBlock { Text = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.02"), FontSize = 18, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromRgb(0x0F, 0x17, 0x2A)) });
+        headerContent.Children.Add(new TextBlock
         {
             Text = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.03"),
             TextWrapping = TextWrapping.Wrap,
-            Margin = new(0, 6, 0, 6)
+            Foreground = new SolidColorBrush(Color.FromRgb(0x33, 0x41, 0x55)),
+            Margin = new(0, 5, 0, 3)
         });
-        header.Children.Add(new TextBlock
+        headerContent.Children.Add(new TextBlock
         {
             Text = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.04"),
             TextWrapping = TextWrapping.Wrap,
-            Foreground = Brushes.DarkSlateGray,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x64, 0x74, 0x8B)),
+            FontSize = 11.5,
             Margin = new(0, 0, 0, 8)
         });
         WrapPanel selectors = new(); selectors.Children.Add(_mode); selectors.Children.Add(_preset);
         System.Windows.Automation.AutomationProperties.SetName(_mode, DisplayText.Get("Ui.ScanLimitsDialog.Constructor.05"));
         System.Windows.Automation.AutomationProperties.SetName(_preset, DisplayText.Get("Ui.ScanLimitsDialog.Constructor.06"));
-        header.Children.Add(selectors); header.Children.Add(_presetHint);
+        headerContent.Children.Add(selectors); headerContent.Children.Add(_presetHint);
+        Border headerCard = new()
+        {
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(14, 12, 14, 12),
+            Child = headerContent
+        };
+        DockPanel.SetDock(headerCard, Dock.Top); panel.Children.Add(headerCard);
         StackPanel footer = new(); DockPanel.SetDock(footer, Dock.Bottom); panel.Children.Add(footer);
         footer.Children.Add(_error);
         footer.Children.Add(new TextBlock
         {
             Text = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.07"),
             TextWrapping = TextWrapping.Wrap,
-            Foreground = Brushes.DimGray,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x64, 0x74, 0x8B)),
+            FontSize = 11.5,
             Margin = new(0, 0, 0, 8)
         });
         WrapPanel actions = new() { HorizontalAlignment = HorizontalAlignment.Right };
         footer.Children.Add(actions);
-        Button reset = new() { Name = "ResetLimitsButton", Content = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.08"), Padding = new(12, 6, 12, 6), Margin = new(4) };
+        Button reset = new() { Name = "ResetLimitsButton", Content = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.08"), Padding = new(12, 6, 12, 6), Margin = new(0, 0, 6, 0) };
         reset.Click += (_, _) => { Settings.For(_active).Clear(); RenderRows(); _error.Text = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.09"); };
         actions.Children.Add(reset);
-        Button cancel = new() { Content = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.10"), IsCancel = true, Padding = new(12, 6, 12, 6), Margin = new(4) };
+        Button cancel = new() { Content = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.10"), IsCancel = true, Padding = new(12, 6, 12, 6), Margin = new(0, 0, 6, 0) };
         actions.Children.Add(cancel);
-        Button save = new() { Name = "SaveLimitsButton", Content = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.11"), IsDefault = true, Padding = new(12, 6, 12, 6), Margin = new(4) };
+        Button save = new() { Name = "SaveLimitsButton", Content = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.11"), IsDefault = true, Padding = new(12, 6, 12, 6), Margin = new(0) };
+        if (TryFindResource("PrimaryButton") is Style primaryStyle) save.Style = primaryStyle;
         save.Click += (_, _) =>
         {
             if (!Capture()) return;
@@ -81,7 +95,17 @@ internal sealed class ScanLimitsDialog : Window
             { _error.Text = DisplayText.Get("Ui.ScanLimitsDialog.Constructor.12") + ex.Message; }
         };
         actions.Children.Add(save);
-        panel.Children.Add(new ScrollViewer { Content = _rows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Margin = new(0, 12, 0, 0) });
+        Border bodyCard = new()
+        {
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(14, 12, 14, 10),
+            Margin = new Thickness(0, 10, 0, 0),
+            Child = new ScrollViewer { Content = _rows, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }
+        };
+        panel.Children.Add(bodyCard);
         _mode.SelectionChanged += (_, _) =>
         {
             if (_switching) return;
@@ -151,9 +175,9 @@ internal sealed class ScanLimitsDialog : Window
                 _preset.SelectedIndex = 5;
                 _presetHint.Text = ScanLimitSettings.PresetDescription(5);
             };
-            TextBlock unit = new() { Text = field.Unit, VerticalAlignment = VerticalAlignment.Center, Margin = new(8, 0, 0, 0) };
+            TextBlock unit = new() { Text = field.Unit, Foreground = new SolidColorBrush(Color.FromRgb(0x47, 0x55, 0x69)), VerticalAlignment = VerticalAlignment.Center, Margin = new(8, 0, 0, 0) };
             Grid.SetColumn(unit, 2); line.Children.Add(unit); row.Children.Add(line);
-            row.Children.Add(new TextBlock { Text = DisplayText.Format("Ui.ScanLimitsDialog.RenderRows.01", (field.Default(_active)), (field.Unit), (field.Consequence)), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, Margin = new(0, 4, 0, 0) });
+            row.Children.Add(new TextBlock { Text = DisplayText.Format("Ui.ScanLimitsDialog.RenderRows.01", (field.Default(_active)), (field.Unit), (field.Consequence)), TextWrapping = TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.FromRgb(0x64, 0x74, 0x8B)), FontSize = 11.5, Margin = new(0, 4, 0, 0) });
             advancedRows.Children.Add(row);
         }
         _advancedExpander = new Expander

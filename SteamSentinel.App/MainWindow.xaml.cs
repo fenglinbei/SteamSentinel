@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Win32;
 using SteamSentinel.App.Dialogs;
+using SteamSentinel.App.Localization;
 using SteamSentinel.App.Services;
 using SteamSentinel.App.ViewModels;
 using SteamSentinel.Core.Models;
@@ -42,19 +43,67 @@ public partial class MainWindow : Window
     private bool _trustProxyTabRevealed;
     private bool _casesTabRevealed;
     private bool _containerTabRevealed;
+    private bool _pendingLanguageRefresh;
 
-    private static readonly Brush VerdictActionableBackground = FreezeBrush(0xFE, 0xF3, 0xF2);
-    private static readonly Brush VerdictActionableBorder = FreezeBrush(0xFE, 0xCD, 0xCA);
-    private static readonly Brush VerdictActionableForeground = FreezeBrush(0xB4, 0x23, 0x18);
-    private static readonly Brush VerdictReviewBackground = FreezeBrush(0xFF, 0xFA, 0xEB);
-    private static readonly Brush VerdictReviewBorder = FreezeBrush(0xFE, 0xDF, 0x89);
-    private static readonly Brush VerdictReviewForeground = FreezeBrush(0xB5, 0x47, 0x08);
-    private static readonly Brush VerdictIncompleteBackground = FreezeBrush(0xF2, 0xF4, 0xF7);
-    private static readonly Brush VerdictIncompleteBorder = FreezeBrush(0xD0, 0xD5, 0xDD);
-    private static readonly Brush VerdictIncompleteForeground = FreezeBrush(0x34, 0x40, 0x54);
-    private static readonly Brush VerdictCleanBackground = FreezeBrush(0xEC, 0xFD, 0xF3);
-    private static readonly Brush VerdictCleanBorder = FreezeBrush(0xAB, 0xEF, 0xC6);
-    private static readonly Brush VerdictCleanForeground = FreezeBrush(0x06, 0x76, 0x47);
+    private static readonly Brush VerdictActionableBackground = FreezeBrush(0xFE, 0xF2, 0xF2);
+    private static readonly Brush VerdictActionableBorder = FreezeBrush(0xFE, 0xCA, 0xCA);
+    private static readonly Brush VerdictActionableForeground = FreezeBrush(0x99, 0x1B, 0x1B);
+    private static readonly Brush VerdictReviewBackground = FreezeBrush(0xFF, 0xFB, 0xEB);
+    private static readonly Brush VerdictReviewBorder = FreezeBrush(0xFD, 0xE6, 0x8A);
+    private static readonly Brush VerdictReviewForeground = FreezeBrush(0x92, 0x40, 0x0E);
+    private static readonly Brush VerdictIncompleteBackground = FreezeBrush(0xF8, 0xFA, 0xFC);
+    private static readonly Brush VerdictIncompleteBorder = FreezeBrush(0xCB, 0xD5, 0xE1);
+    private static readonly Brush VerdictIncompleteForeground = FreezeBrush(0x33, 0x41, 0x55);
+    private static readonly Brush VerdictCleanBackground = FreezeBrush(0xEC, 0xFD, 0xF5);
+    private static readonly Brush VerdictCleanBorder = FreezeBrush(0xA7, 0xF3, 0xD0);
+    private static readonly Brush VerdictCleanForeground = FreezeBrush(0x06, 0x5F, 0x46);
+    private static readonly Brush DotReadyBrush = FreezeBrush(0x10, 0xB9, 0x81);
+    private static readonly Brush DotWarningBrush = FreezeBrush(0xD9, 0x77, 0x06);
+    private static readonly Brush StatusReadyTextBrush = FreezeBrush(0x33, 0x41, 0x55);
+    private static readonly Brush StatusWarningTextBrush = FreezeBrush(0xB4, 0x53, 0x09);
+
+    private static readonly Brush ToneNeutralDotBrush = FreezeBrush(0x94, 0xA3, 0xB8);
+    private static readonly Brush ToneNeutralTextBrush = FreezeBrush(0x0F, 0x17, 0x2A);
+    private static readonly Brush ToneNeutralBgBrush = FreezeBrush(0xFF, 0xFF, 0xFF);
+    private static readonly Brush ToneNeutralBorderBrush = FreezeBrush(0xE2, 0xE8, 0xF0);
+
+    private static readonly Brush ToneScanningDotBrush = FreezeBrush(0x25, 0x63, 0xEB);
+    private static readonly Brush ToneScanningTextBrush = FreezeBrush(0x1E, 0x3A, 0x8A);
+    private static readonly Brush ToneScanningBgBrush = FreezeBrush(0xF5, 0xF9, 0xFF);
+    private static readonly Brush ToneScanningBorderBrush = FreezeBrush(0xBF, 0xDB, 0xFE);
+
+    private static readonly Brush ToneSuccessDotBrush = FreezeBrush(0x10, 0xB9, 0x81);
+    private static readonly Brush ToneSuccessTextBrush = FreezeBrush(0x06, 0x5F, 0x46);
+    private static readonly Brush ToneSuccessBgBrush = FreezeBrush(0xEC, 0xFD, 0xF5);
+    private static readonly Brush ToneSuccessBorderBrush = FreezeBrush(0xA7, 0xF3, 0xD0);
+
+    private static readonly Brush ToneWarningTextBrush = FreezeBrush(0x92, 0x40, 0x0E);
+    private static readonly Brush ToneWarningBgBrush = FreezeBrush(0xFF, 0xFB, 0xEB);
+    private static readonly Brush ToneWarningBorderBrush = FreezeBrush(0xFD, 0xE6, 0x8A);
+
+    private static readonly Brush ToneDangerDotBrush = FreezeBrush(0xB4, 0x23, 0x18);
+    private static readonly Brush ToneDangerTextBrush = FreezeBrush(0x99, 0x1B, 0x1B);
+    private static readonly Brush ToneDangerBgBrush = FreezeBrush(0xFE, 0xF2, 0xF2);
+    private static readonly Brush ToneDangerBorderBrush = FreezeBrush(0xFE, 0xCA, 0xCA);
+
+    internal enum HeaderStatusTone { Neutral, Scanning, Success, Warning, Danger }
+
+    internal void UpdateHeaderStatusTone(HeaderStatusTone tone)
+    {
+        if (ScanStatusHeader is null || HeaderStatusDot is null || HeaderStatusText is null) return;
+        (Brush dot, Brush text, Brush bg, Brush border) = tone switch
+        {
+            HeaderStatusTone.Scanning => (ToneScanningDotBrush, ToneScanningTextBrush, ToneScanningBgBrush, ToneScanningBorderBrush),
+            HeaderStatusTone.Success => (ToneSuccessDotBrush, ToneSuccessTextBrush, ToneSuccessBgBrush, ToneSuccessBorderBrush),
+            HeaderStatusTone.Warning => (DotWarningBrush, ToneWarningTextBrush, ToneWarningBgBrush, ToneWarningBorderBrush),
+            HeaderStatusTone.Danger => (ToneDangerDotBrush, ToneDangerTextBrush, ToneDangerBgBrush, ToneDangerBorderBrush),
+            _ => (ToneNeutralDotBrush, ToneNeutralTextBrush, ToneNeutralBgBrush, ToneNeutralBorderBrush)
+        };
+        HeaderStatusDot.Fill = dot;
+        HeaderStatusText.Foreground = text;
+        ScanStatusHeader.Background = bg;
+        ScanStatusHeader.BorderBrush = border;
+    }
 
     private static Brush FreezeBrush(byte r, byte g, byte b)
     {
@@ -82,6 +131,8 @@ public partial class MainWindow : Window
         DataContext = this;
         SetBusy(true);
         HeaderDetailText.Text = DisplayText.Format("Ui.xaml.Constructor.03", (_coordinator.Rules.Version));
+        UpdateHeaderStatusTone(HeaderStatusTone.Neutral);
+        Localizer.Instance.LanguageChanged += OnLanguageChanged;
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
@@ -101,11 +152,7 @@ public partial class MainWindow : Window
             ShowActivity(ActivityPhase.Working, DisplayText.Get("Ui.xaml.MainWindow_Loaded.01"));
             SteamLayout layout = await Task.Run(SteamLocator.Discover);
             _findingScopeLayout = layout;
-            List<WorkshopScopeItem> scopes = [new("", DisplayText.Get("Ui.xaml.MainWindow_Loaded.02"))];
-            foreach (string appId in layout.WorkshopRoots.Select(ContentDiscovery.WorkshopAppId).Where(id => id.Length > 0).Distinct())
-                scopes.Add(new(appId, (layout.Games.FirstOrDefault(game => game.AppId == appId)?.Name ?? (appId == "431960" ? "Wallpaper Engine" : DisplayText.Get("Ui.xaml.MainWindow_Loaded.03"))) + " · " + appId));
-            WorkshopScopeComboBox.ItemsSource = scopes;
-            WorkshopScopeComboBox.SelectedIndex = 0;
+            RefreshWorkshopScopeItems(preserveSelection: false);
             if (Application.Current is App { AdministratorWindowRequested: true })
                 FooterText.Text = _elevationContext.IsElevated
                     ? DisplayText.Get("Ui.xaml.MainWindow_Loaded.04")
@@ -151,7 +198,9 @@ public partial class MainWindow : Window
             (DownloadLocationsCheckBox.IsChecked == true ? DisplayText.Get("Ui.xaml.ScopeOptions_Changed.02") : DisplayText.Get("Ui.xaml.ScopeOptions_Changed.03"));
     }
 
-    private void CoverageGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void CoverageGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateCoverageSelectionDetails();
+
+    private void UpdateCoverageSelectionDetails()
     {
         DetailScoreText.Text = string.Empty;
         if (CoverageGrid.SelectedItem is not CoverageGroup group)
@@ -177,12 +226,7 @@ public partial class MainWindow : Window
         FindingDetailCard.Visibility = ResultTabs.SelectedIndex is 2 or 3 or 4 or 5 or 6 ||
             ResultTabs.SelectedIndex == 0 && SelectedFinding is null ? Visibility.Collapsed : Visibility.Visible;
         SelectionActionsBar.Visibility = ResultTabs.SelectedIndex is 5 or 6 ? Visibility.Collapsed : Visibility.Visible;
-        if (ResultTabs.SelectedIndex == 0) FindingsGrid_SelectionChanged(FindingsGrid, e);
-        else if (ResultTabs.SelectedIndex == 1)
-        {
-            if (CoverageGrid.SelectedIndex < 0 && CoverageGrid.Items.Count > 0) CoverageGrid.SelectedIndex = 0;
-            CoverageGrid_SelectionChanged(CoverageGrid, e);
-        }
+        RefreshCurrentSelectionDetails();
         UpdateFindingActions();
         UpdateCompactHeader();
     }
@@ -249,6 +293,7 @@ public partial class MainWindow : Window
         ShowActivity(ActivityPhase.Scanning);
         Findings.Clear();
         ClearFindingGroups();
+        FindingDetailCard.IsExpanded = false;
         CoverageGrid.ItemsSource = null;
         CoverageTab.Header = DisplayText.Get("Ui.xaml.StartScanAsync.01");
         CoverageStatusText.Text = DisplayText.Get("Ui.xaml.StartScanAsync.02");
@@ -269,9 +314,11 @@ public partial class MainWindow : Window
             ScanMode.Full => DisplayText.Get("Ui.xaml.StartScanAsync.Full.01"),
             _ => DisplayText.Get("Ui.xaml.StartScanAsync.04")
         };
+        UpdateHeaderStatusTone(HeaderStatusTone.Scanning);
+        UpdateScanStageText(null, null, HeaderDetailText.Text);
         FindingCountText.Text = DisplayText.Get("Ui.xaml.StartScanAsync.05");
         FindingHandlingSummaryText.Text = DisplayText.Get("Ui.xaml.StartScanAsync.06");
-        ScanProgressBar.IsIndeterminate = true;
+        ScanProgressBar.IsIndeterminate = false;
         ScanProgressBar.Value = 0;
         _scanCancellation = new CancellationTokenSource();
         CancelScanButton.IsEnabled = true;
@@ -279,10 +326,12 @@ public partial class MainWindow : Window
         using DispatcherProgress<ScanProgress> progress = CreateUiProgress(UpdateProgress);
         ScanReport? systemReport = null;
         bool contentAttempted = false;
+        bool runsSystemStage = mode != ScanMode.Custom || reviewRelated;
+        BeginScanProgressStage(0, runsSystemStage ? 18 : 99, reset: true);
 
         try
         {
-            if (mode != ScanMode.Custom || reviewRelated)
+            if (runsSystemStage)
             {
                 ScanOptions systemOptions = new()
                 {
@@ -332,15 +381,19 @@ public partial class MainWindow : Window
             _resourceScanMode = mode;
             _resourceSaveChoices.Clear();
             contentRunner ??= (settings, reporter, cancellation) => _workerClient.RunAsync(settings, RequestPasswordAsync, reporter, cancellation, RequestResourcesAsync);
+            if (runsSystemStage) BeginScanProgressStage(18, 96);
             ScanReport contentReport = await contentRunner(contentOptions, progress, token);
             _lastReport = systemReport is null ? contentReport : ScanReportMerger.Merge(systemReport, contentReport);
             if (_lastReport.RelatedComponentDiagnostics is not null)
             {
+                BeginScanProgressStage(96, 99);
                 using DispatcherProgress<ScanProgress> relatedProgress = CreateUiProgress(p =>
                 {
+                    ReportScanProgressPercent(p);
                     ProgressStageText.Text = p.DisplayStage;
                     ProgressItemText.Text = p.DisplayCurrentItem;
                     ActivityDetailText.Text = p.DisplayDetail;
+                    UpdateScanStageText(p.DisplayStage, p.DisplayCurrentItem, p.DisplayDetail);
                 });
                 _lastReport = await Task.Run(() => new RelatedComponentPipeline(_coordinator.Rules).CompleteAsync(_lastReport,
                     contentOptions, async (options, workerProgress, workerToken) =>
@@ -371,6 +424,7 @@ public partial class MainWindow : Window
             else PreserveSystemStageFailure(systemReport, mode, ex, cancelled: true);
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.StartScanAsync.10");
             HeaderDetailText.Text = contentAttempted ? DisplayText.Get("Ui.xaml.StartScanAsync.11") : DisplayText.Get("Ui.xaml.StartScanAsync.12");
+            UpdateHeaderStatusTone(HeaderStatusTone.Warning);
             FooterText.Text = DisplayText.Get("Ui.xaml.StartScanAsync.13");
         }
         catch (Exception ex)
@@ -398,7 +452,10 @@ public partial class MainWindow : Window
         PopulateFindings(_lastReport);
         UpdateSummary(_lastReport);
         if (!PriorityFindings.Any(item => item.Finding.Severity >= FindingSeverity.Medium))
+        {
             HeaderStatusText.Text = cancelled ? DisplayText.Get("Ui.xaml.PreserveScanFailure.01") : DisplayText.Get("Ui.xaml.PreserveScanFailure.02");
+            UpdateHeaderStatusTone(HeaderStatusTone.Warning);
+        }
         HeaderDetailText.Text = DisplayText.Get("Ui.xaml.PreserveScanFailure.03");
         ProgressStageText.Text = cancelled ? DisplayText.Get("Ui.xaml.PreserveScanFailure.04") : DisplayText.Get("Ui.xaml.PreserveScanFailure.05");
         ScanProgressBar.Value = 0;
@@ -431,9 +488,23 @@ public partial class MainWindow : Window
     private void UpdateProgress(ScanProgress progress)
     {
         if (_lastReport is not null) return;
-        ProgressStageText.Text = progress.DisplayStage + " · " + progress.DisplayDetail;
+        ReportScanProgressPercent(progress);
+        ProgressStageText.Text = !string.IsNullOrWhiteSpace(progress.DisplayDetail) && !IsRawContainerDiagnosticDetail(progress.DisplayDetail)
+            ? progress.DisplayStage + " · " + progress.DisplayDetail
+            : progress.DisplayStage;
         ProgressItemText.Text = progress.DisplayCurrentItem;
-        FooterText.Text = DisplayText.Format("Ui.xaml.UpdateProgress.01", (progress.Completed), (progress.DisplayCurrentItem));
+        UpdateScanStageText(progress.DisplayStage, progress.DisplayCurrentItem, progress.DisplayDetail);
+        if (_scanProgressMaxPercent >= 1 && progress.Total is > 0)
+        {
+            string context = string.IsNullOrWhiteSpace(progress.DisplayCurrentItem)
+                ? progress.DisplayDetail
+                : progress.DisplayCurrentItem;
+            FooterText.Text = DisplayText.Format("Ui.xaml.UpdateProgress.WithTotal", (int)Math.Round(_scanProgressMaxPercent), context);
+        }
+        else
+        {
+            FooterText.Text = DisplayText.Format("Ui.xaml.UpdateProgress.01", (progress.Completed), (progress.DisplayCurrentItem));
+        }
     }
 
     private readonly HashSet<FindingItemViewModel> _subscribedFindings = [];
@@ -516,20 +587,12 @@ public partial class MainWindow : Window
         DisplayTrustProxyDiagnostics(report.TrustProxyDiagnostics);
         DisplayRelatedComponentDiagnostics(report.RelatedComponentDiagnostics);
         DisplayContainers(report.Containers);
-        IReadOnlyList<CoverageGroup> groups = CoveragePresentation.Groups(report);
-        CoverageGrid.ItemsSource = groups;
-        CoverageTab.Header = groups.Count > 0 ? DisplayText.Format("Ui.xaml.PopulateFindings.02", (groups.Count)) :
-            report.Coverage == ScanCoverage.Complete ? DisplayText.Get("Ui.xaml.PopulateFindings.03") : DisplayText.Get("Ui.xaml.PopulateFindings.04");
-        CoverageStatusText.Text = groups.Count > 0
-            ? DisplayText.Format("Ui.xaml.PopulateFindings.05", (groups.Count))
-            : report.Coverage == ScanCoverage.Complete
-                ? DisplayText.Get("Ui.xaml.PopulateFindings.06")
-                : DisplayText.Get("Ui.xaml.PopulateFindings.07");
-        if (report.ResourceAudit is { } resourceAudit) CoverageStatusText.Text += "\n" + ScanResourcePresentation.Summary(resourceAudit);
+        IReadOnlyList<CoverageGroup> groups = RefreshCoveragePresentation(report, preserveSelection: false);
         ExportButton.IsEnabled = true;
         UpdateRemediationEligibility();
         if (PriorityFindings.Count > 0) FindingsGrid.SelectedIndex = 0;
         else if (groups.Count > 0 && ExplicitContentRootsUnchecked(report)) ResultTabs.SelectedItem = CoverageTab;
+        FindingDetailCard.IsExpanded = false;
     }
 
     private void UpdateSummary(ScanReport report)
@@ -545,56 +608,68 @@ public partial class MainWindow : Window
             ? FindingHandlingPresentation.Count(PriorityFindings.Select(item => item.Handling))
             : FindingHandlingPresentation.Count(report.Findings.Where(f => f.Category != FindingCategory.Coverage && !referenceIds.Contains(f.Id))
                 .Select(f => FindingHandlingPresentation.Get(f, _coordinator.Rules, _findingScopeLayout, CurrentRemediationMode)));
+        HeaderStatusTone tone;
         if (confirmed)
         {
             bool hostEvidence = report.Findings.Any(f => f.Category is FindingCategory.Process or FindingCategory.Persistence or FindingCategory.Steam && f.Severity >= FindingSeverity.High);
             HeaderStatusText.Text = hostEvidence ? DisplayText.Get("Ui.xaml.UpdateSummary.01") : DisplayText.Get("Ui.xaml.UpdateSummary.02");
             HeaderDetailText.Text = string.Empty;
+            tone = HeaderStatusTone.Danger;
         }
         else if (suspicious)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.04");
             HeaderDetailText.Text = string.Empty;
+            tone = HeaderStatusTone.Warning;
         }
         else if (report.Coverage == ScanCoverage.Skipped && !explicitContentUnchecked)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.06");
             HeaderDetailText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.07");
+            tone = HeaderStatusTone.Warning;
         }
         else if (handling.AttentionCount > 0)
         {
             HeaderStatusText.Text = DisplayText.Format("Ui.xaml.UpdateSummary.08", (handling.AttentionCount));
             HeaderDetailText.Text = handling.PendingConfirmation > 0 || handling.NeedsVerification > 0 ? handling.Summary
                 : DisplayText.Format("Ui.xaml.UpdateSummary.09", (handling.NeedsReview), (handling.Unsupported), (handling.Blocked));
+            tone = HeaderStatusTone.Warning;
         }
         else if (handling.SelectableCount > 0)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.10");
             HeaderDetailText.Text = handling.PendingConfirmation > 0 ? handling.Summary
                 : DisplayText.Format("Ui.xaml.UpdateSummary.11", (handling.Actionable));
+            tone = HeaderStatusTone.Warning;
         }
         else if (explicitContentUnchecked)
         {
             HeaderStatusText.Text = DisplayText.Get("Coverage.ExplicitRootsUnchecked.Title");
             HeaderDetailText.Text = DisplayText.Get("Coverage.ExplicitRootsUnchecked.Detail");
+            tone = HeaderStatusTone.Warning;
         }
         else if (report.TrustProxyDiagnostics is { } diagnostic && (diagnostic.CompletedAtUtc is null ||
             !diagnostic.Checks.Any(check => check.Required) || IncompleteDiagnosticChecks(diagnostic) > 0))
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.12");
             HeaderDetailText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.13");
+            tone = HeaderStatusTone.Warning;
         }
         else if (referenceIds.Count > 0)
         {
+            bool incompleteReference = report.ExecutionState is ScanExecutionState.Failed or ScanExecutionState.Cancelled ||
+                report.Coverage != ScanCoverage.Complete;
             HeaderStatusText.Text = report.ExecutionState is ScanExecutionState.Failed or ScanExecutionState.Cancelled
                 ? StatusPresentation.Scan(report)
                 : DisplayText.Get(report.Coverage == ScanCoverage.Complete ? "FindingPriority.ReferenceOnly" : "FindingPriority.Incomplete");
             HeaderDetailText.Text = string.Empty;
+            tone = incompleteReference ? HeaderStatusTone.Warning : HeaderStatusTone.Success;
         }
         else if (report.Coverage == ScanCoverage.Complete)
         {
             HeaderStatusText.Text = DisplayText.Get("Ui.xaml.UpdateSummary.14");
             HeaderDetailText.Text = string.Empty;
+            tone = HeaderStatusTone.Success;
         }
         else
         {
@@ -602,11 +677,13 @@ public partial class MainWindow : Window
             HeaderDetailText.Text = report.Mode == ScanMode.Quick
                 ? DisplayText.Get("Ui.xaml.UpdateSummary.17")
                 : DisplayText.Get("Ui.xaml.UpdateSummary.18");
+            tone = HeaderStatusTone.Warning;
         }
 
         if (report.Coverage == ScanCoverage.Partial &&
             (confirmed || suspicious || handling.AttentionCount > 0 || handling.Actionable > 0))
             HeaderDetailText.Text = DisplayText.Get(explicitContentUnchecked ? "Coverage.ExplicitRootsUnchecked.Detail" : "FindingPriority.Incomplete");
+        UpdateHeaderStatusTone(tone);
         string scanName = report.Mode == ScanMode.Quick ? DisplayText.Get("Ui.xaml.UpdateSummary.21") : DisplayText.Get("Ui.xaml.UpdateSummary.22");
         ProgressStageText.Text = report.Coverage == ScanCoverage.Skipped ? DisplayText.Get("Ui.xaml.UpdateSummary.23") :
             scanName + (report.Coverage == ScanCoverage.Complete ? DisplayText.Get("Ui.xaml.UpdateSummary.24") : DisplayText.Get("Ui.xaml.UpdateSummary.25"));
@@ -614,7 +691,7 @@ public partial class MainWindow : Window
             ? string.Empty : DisplayText.Get("FindingPriority.Incomplete");
         ScanProgressBar.Value = 100;
         FooterText.Text = DisplayText.Format("Ui.xaml.UpdateSummary.28", (report.Metrics.FilesVisited), (report.Metrics.WorkshopItemsVisited), (report.Metrics.ArchiveEntriesVisited), (ReportExporter.CoverageLabel(report.Coverage)));
-        UpdateScanVerdictBanner(report, confirmed, suspicious, explicitContentUnchecked, handling);
+        UpdateScanVerdictBanner(report, confirmed, suspicious, explicitContentUnchecked, handling, referenceIds);
     }
 
     private void AdvancedTabs_Changed(object sender, RoutedEventArgs e) => UpdateAdvancedTabsVisibility();
@@ -636,7 +713,8 @@ public partial class MainWindow : Window
             ResultTabs.SelectedIndex = 0;
     }
 
-    private void UpdateScanVerdictBanner(ScanReport report, bool confirmed, bool suspicious, bool explicitContentUnchecked, FindingHandlingCounts handling)
+    private void UpdateScanVerdictBanner(ScanReport report, bool confirmed, bool suspicious, bool explicitContentUnchecked,
+        FindingHandlingCounts handling, IReadOnlySet<string> referenceIds)
     {
         if (ScanVerdictBanner is null || ScanVerdictText is null) return;
         _hasScanVerdict = true;
@@ -650,7 +728,9 @@ public partial class MainWindow : Window
         }
         else if (suspicious || handling.AttentionCount > 0)
         {
-            int count = Math.Max(handling.AttentionCount, report.Findings.Count(f => f.Category != FindingCategory.Coverage && f.Severity >= FindingSeverity.Medium));
+            // 已折叠进「信息与参考」的项不再计入主表待确认数量，避免纯参考态或混合态误报冗余计数。
+            int count = Math.Max(handling.AttentionCount, report.Findings.Count(f =>
+                f.Category != FindingCategory.Coverage && !referenceIds.Contains(f.Id) && f.Severity >= FindingSeverity.Medium));
             ScanVerdictBanner.Background = VerdictReviewBackground;
             ScanVerdictBanner.BorderBrush = VerdictReviewBorder;
             ScanVerdictText.Foreground = VerdictReviewForeground;
@@ -681,12 +761,33 @@ public partial class MainWindow : Window
             DataGrid? otherGrid = selectedGrid == FindingsGrid ? ReferenceFindingsGrid : FindingsGrid;
             if (otherGrid is not null) otherGrid.SelectedItem = null;
         }
+        UpdateSelectedFindingDetails();
+    }
+
+    private void UpdateSelectedFindingDetails()
+    {
         FindingItemViewModel? item = SelectedFinding;
         if (ResultTabs.SelectedIndex == 0) FindingDetailCard.Visibility = item is null ? Visibility.Collapsed : Visibility.Visible;
-        DetailDescriptionText.Text = item is null ? string.Empty : item.Title + "\n" + item.Description + "\n" + item.HandlingDetails +
-            (RelatedComponentReportPresentation.IsRelatedFinding(item.Finding)
-                ? "\n" + RelatedComponentReportPresentation.DescribeFinding(item.Finding, _lastReport?.RelatedComponentDiagnostics) : string.Empty);
-        if (item?.IsReference == true) DetailDescriptionText.Text = item.Description;
+        if (item is null) DetailDescriptionText.Text = string.Empty;
+        else if (item.IsReference) DetailDescriptionText.Text = item.Description;
+        else
+        {
+            List<string> lines = [];
+            if (!string.IsNullOrWhiteSpace(item.Description)) lines.Add(item.Description);
+            string summary = string.IsNullOrWhiteSpace(item.HandlingReasonSummary)
+                ? item.HandlingLabel
+                : DisplayText.Format("Common.LabelValue", item.HandlingLabel, item.HandlingReasonSummary);
+            if (!lines.Contains(summary, StringComparer.Ordinal)) lines.Add(summary);
+            if (!string.IsNullOrWhiteSpace(item.HandlingNextStep) &&
+                !string.Equals(item.HandlingNextStep, DisplayText.Get("FindingHandling.Get.20"), StringComparison.Ordinal))
+                lines.Add(item.HandlingNextStep);
+            if (RelatedComponentReportPresentation.IsRelatedFinding(item.Finding))
+            {
+                string related = RelatedComponentReportPresentation.DescribeFinding(item.Finding, _lastReport?.RelatedComponentDiagnostics);
+                if (!string.IsNullOrWhiteSpace(related)) lines.Add(related);
+            }
+            DetailDescriptionText.Text = string.Join("\n", lines);
+        }
         DetailScoreText.Text = item is null ? string.Empty : DisplayText.Format("FindingPriority.Score", item.Score);
         DetailEvidenceText.Text = item?.Evidence ?? string.Empty;
         DetailHashText.Text = item is null ? string.Empty : DisplayText.Format("Ui.xaml.FindingsGrid_SelectionChanged.01", (item.Sha256), (item.Finding.TargetSha256 ?? DisplayText.Get("Ui.xaml.FindingsGrid_SelectionChanged.02")), (item.Finding.ContentPath ?? item.Target));
@@ -1006,6 +1107,11 @@ public partial class MainWindow : Window
         UpdateQuarantineActions();
         ElevateButton.IsEnabled = !busy && _installationSecurity.CanRemediate && !_elevationContext.IsElevated;
         RefreshInstallationButton.IsEnabled = !busy;
+        if (!busy && _pendingLanguageRefresh && !_windowClosed)
+        {
+            _pendingLanguageRefresh = false;
+            RefreshLocalizedUi();
+        }
         if (!busy && _closeWhenIdle && !_windowClosed)
         {
             _closeWhenIdle = false;
@@ -1060,6 +1166,7 @@ public partial class MainWindow : Window
         RollbackButton.IsEnabled = false;
         DeleteIncidentButton.IsEnabled = false;
         HeaderStatusText.Text = DisplayText.Get("Ui.xaml.EnterRecoveryMode.01");
+        UpdateHeaderStatusTone(HeaderStatusTone.Danger);
         FooterText.Text = DisplayText.Get("Ui.xaml.EnterRecoveryMode.02");
         UpdateRemediationEligibility();
     }
@@ -1076,7 +1183,8 @@ public partial class MainWindow : Window
                 : _elevationContext.CanElevateSameUser
                     ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.06")
                     : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.07");
-            InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#027A48"));
+            InstallationStatusDot.Fill = DotReadyBrush;
+            InstallationSecurityText.Foreground = StatusReadyTextBrush;
             string tooltip = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.12");
             RollbackButton.ToolTip = tooltip;
             DeleteIncidentButton.ToolTip = tooltip;
@@ -1091,7 +1199,8 @@ public partial class MainWindow : Window
                 : _elevationContext.CanElevateSameUser
                     ? DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableHintCanElevate")
                     : DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableHintStandard");
-            InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B54708"));
+            InstallationStatusDot.Fill = DotWarningBrush;
+            InstallationSecurityText.Foreground = StatusWarningTextBrush;
             string tooltip = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.PortableTooltip");
             RollbackButton.ToolTip = tooltip;
             DeleteIncidentButton.ToolTip = tooltip;
@@ -1100,7 +1209,8 @@ public partial class MainWindow : Window
         {
             InstallationSecurityText.Text = DisplayText.Format("Ui.xaml.ApplyInstallationSecurityStatus.03", (_installationSecurity.MessageText.Display));
             ElevationHintText.Text = DisplayText.Get("Ui.xaml.ApplyInstallationSecurityStatus.04");
-            InstallationSecurityText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B54708"));
+            InstallationStatusDot.Fill = DotWarningBrush;
+            InstallationSecurityText.Foreground = StatusWarningTextBrush;
             string tooltip = _installationSecurity.MessageText.Display;
             RollbackButton.ToolTip = tooltip;
             DeleteIncidentButton.ToolTip = tooltip;

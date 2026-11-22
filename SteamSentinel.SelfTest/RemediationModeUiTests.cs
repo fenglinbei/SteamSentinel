@@ -116,21 +116,15 @@ internal static partial class Program
                     SetTrustProxyUiReport(window, report);
                     UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, new(false, true));
                     Expander options = (Expander)window.FindName("ScanOptionsExpander");
-                    ScrollViewer optionsScroll = (ScrollViewer)window.FindName("ScanOptionsScroll");
+                    FrameworkElement modePanel = (FrameworkElement)window.FindName("RemediationModePanel");
                     ComboBox mode = (ComboBox)window.FindName("RemediationModeComboBox");
                     FrameworkElement badge = (FrameworkElement)window.FindName("AggressiveModeBadge");
                     Button selectAll = TrustProxyUiButton(window, "SelectAllButton");
                     options.IsExpanded = true;
                     layout.Refresh();
-                    mode.BringIntoView();
-                    layout.Refresh();
-                    DpiScale dpi = VisualTreeHelper.GetDpi(mode);
-                    for (int step = 0; step < 2 && !layout.IsFullyVisible(mode); step++)
-                    {
-                        optionsScroll.ScrollToVerticalOffset(optionsScroll.VerticalOffset + 1 / dpi.DpiScaleY);
-                        layout.Refresh();
-                    }
-                    Check($"Mode UI {culture.Name}/{width} defaults conservative without changing evidence",
+                    // 处置模式切换入口已从普通用户界面隐藏并默认锁定保守模式，后端策略路径仍保留兼容。
+                    Check($"Mode UI {culture.Name}/{width} hides selector and defaults conservative without changing evidence",
+                        modePanel.Visibility == Visibility.Collapsed && mode.Visibility == Visibility.Collapsed && !mode.IsVisible &&
                         window.CurrentRemediationMode == RemediationMode.Conservative && mode.SelectedIndex == 0 &&
                         badge.Visibility == Visibility.Collapsed &&
                         window.Findings[0].IsSelected && !window.Findings[1].CanSelect && !window.Findings[2].CanSelect);
@@ -144,8 +138,9 @@ internal static partial class Program
                         window.Findings[1].Score == 90 && !window.Findings[1].Finding.IsKnownMalware &&
                         window.Findings[1].HandlingLabel.Contains(DisplayText.Get("RemediationMode.RiskLabel"), StringComparison.Ordinal) &&
                         original == JsonSerializer.Serialize(report, JsonFile.Options));
-                    Check($"Mode UI {culture.Name}/{width} selector and actions fit viewport",
-                        layout.IsFullyVisible(mode) && layout.IsFullyVisible(selectAll) &&
+                    Check($"Mode UI {culture.Name}/{width} selector stays hidden while actions fit viewport",
+                        modePanel.Visibility == Visibility.Collapsed && mode.Visibility == Visibility.Collapsed && !mode.IsVisible &&
+                        layout.IsFullyVisible(selectAll) &&
                         layout.IsFullyVisible(TrustProxyUiButton(window, "RemediateButton")));
                     DataGrid findings = (DataGrid)window.FindName("FindingsGrid");
                     DataGridRow? firstRow = findings.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;

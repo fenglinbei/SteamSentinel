@@ -8,65 +8,57 @@
         Width="1180" Height="820" MinWidth="800" MinHeight="500"
         UseLayoutRounding="True" SnapsToDevicePixels="True" FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="12"
         WindowStartupLocation="CenterScreen"
-        Background="#F2F4F7">
+        Background="{StaticResource CanvasBrush}" Foreground="{StaticResource TextPrimaryBrush}">
     <Grid x:Name="WindowLayout" SizeChanged="WindowLayout_SizeChanged">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border x:Name="HeaderCard" Background="#101828" Padding="16,10">
+        <Border x:Name="ActivityPanel" Grid.Row="0" Visibility="Collapsed" Margin="0" Padding="0"
+                Background="#F5F8FF" BorderBrush="#DCE7F8" BorderThickness="0,0,0,1"
+                AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.006}" AutomationProperties.LiveSetting="Polite">
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid Margin="18,7,18,6">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <Image Source="/SteamSentinel;component/Assets/App.png" Width="34" Height="34" Margin="0,0,10,0" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.002}" />
-                    <StackPanel Grid.Column="1">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Foreground="White" FontSize="20" FontWeight="SemiBold" Text="SteamSentinel" />
-                        <Border Margin="10,0,0,0" Background="#B42318" CornerRadius="8" Padding="7,2" VerticalAlignment="Center">
-                            <TextBlock Foreground="White" FontSize="11" FontWeight="SemiBold" Text="{x:Static models:ProductInfo.Version}" />
+                    <Grid x:Name="ActivitySpinner" Width="18" Height="18" Margin="0,0,10,0" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                        <Grid.RenderTransform><RotateTransform x:Name="ActivityRotation"/></Grid.RenderTransform>
+                        <Ellipse Width="18" Height="18" Stroke="#DBEAFE" StrokeThickness="1.8" />
+                        <Path Data="M 9,0.9 A 8.1,8.1 0 0 1 16.01,13.05" Stroke="#2563EB" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                    </Grid>
+                    <DockPanel Grid.Column="1" VerticalAlignment="Center" LastChildFill="True">
+                        <TextBlock x:Name="ActivityTitleText" DockPanel.Dock="Left" FontSize="12.5" FontWeight="SemiBold" Foreground="#0F172A" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, ElementName=ActivityDetailText}" />
+                        <TextBlock x:Name="ActivityDetailSeparator" DockPanel.Dock="Left" Text="·" Foreground="#CBD5E1" Margin="8,0" VerticalAlignment="Center" />
+                        <TextBlock x:Name="ActivityDetailText" FontSize="12" Foreground="#64748B" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                    </DockPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                        <Border x:Name="ActivityPercentBadge" Visibility="Collapsed" Margin="0,0,8,0" Padding="9,2"
+                                CornerRadius="11" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" VerticalAlignment="Center">
+                            <TextBlock x:Name="ActivityPercentText" Visibility="Collapsed"
+                                       FontFamily="Segoe UI Variable Display, Consolas, Cascadia Mono, Segoe UI" FontSize="14.5" FontWeight="Bold"
+                                       Foreground="#1D4ED8" VerticalAlignment="Center" />
+                        </Border>
+                        <Border Padding="8,2" CornerRadius="10" Background="#EBF0F7" VerticalAlignment="Center">
+                            <TextBlock x:Name="ActivityElapsedText" FontFamily="Consolas, Cascadia Mono, Segoe UI" FontSize="11" Foreground="#475569" VerticalAlignment="Center" />
                         </Border>
                     </StackPanel>
-                    <TextBlock x:Name="ProductTagline" Margin="0,2,0,0" Foreground="#D0D5DD" FontSize="11" Text="{ui:Text Ui.Xaml.MainWindow.003}" />
-                    </StackPanel>
                 </Grid>
-                <StackPanel Grid.Column="1" Margin="22,0,0,0" VerticalAlignment="Center">
-                    <TextBlock x:Name="HeaderStatusText" Foreground="White" FontSize="16" FontWeight="SemiBold" TextAlignment="Right" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.004}" />
-                    <TextBlock x:Name="HeaderDetailText" Margin="0,3,0,0" Foreground="#D0D5DD" TextAlignment="Right" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.005}" />
-                </StackPanel>
+                <ProgressBar x:Name="ActivityProgressBar" Grid.Row="1" Height="3.5" Foreground="#2563EB" Background="#E2E8F0" IsIndeterminate="False" />
             </Grid>
         </Border>
 
-        <Border x:Name="ActivityPanel" Grid.Row="1" Visibility="Collapsed" Margin="12,6,12,0" Padding="10,6"
-                Background="#EFF6FF" BorderBrush="#B2CCFF" BorderThickness="1" CornerRadius="8"
-                AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.006}" AutomationProperties.LiveSetting="Polite">
-            <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <Grid x:Name="ActivitySpinner" Width="26" Height="26" Margin="0,0,12,0" Grid.RowSpan="2" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
-                    <Grid.RenderTransform><RotateTransform x:Name="ActivityRotation"/></Grid.RenderTransform>
-                    <Ellipse Width="22" Height="22" Stroke="#D1E0FF" StrokeThickness="3"/>
-                    <Path Data="M13,2 A11,11 0 0 1 24,13" Stroke="#175CD3" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
-                </Grid>
-                <TextBlock x:Name="ActivityTitleText" Grid.Column="1" FontSize="13" FontWeight="SemiBold" Foreground="#1849A9" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, ElementName=ActivityDetailText}"/>
-                <TextBlock x:Name="ActivityElapsedText" Grid.Column="2" Margin="12,0,0,0" Foreground="#475467" VerticalAlignment="Center"/>
-                <TextBlock x:Name="ActivityDetailText" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,2,0,0" Foreground="#475467" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-                <ProgressBar x:Name="ActivityProgressBar" Grid.Row="2" Grid.ColumnSpan="3" Margin="0,5,0,0" Height="3" Foreground="#175CD3" Background="#D1E0FF" IsIndeterminate="False"/>
-            </Grid>
-        </Border>
-
-        <TabControl x:Name="MainTabs" Grid.Row="2" Margin="12,8,12,8">
-            <TabItem Header="{ui:Text Ui.Xaml.MainWindow.007}">
-                <Grid x:Name="ScanPage" Margin="10" SizeChanged="ScanPage_SizeChanged" LayoutUpdated="ScanPage_LayoutUpdated">
+        <TabControl x:Name="MainTabs" Grid.Row="1" Style="{StaticResource ModernTopTabControl}" Margin="0">
+            <TabItem Style="{StaticResource ModernTopTabItem}" Header="{ui:Text Ui.Xaml.MainWindow.007}">
+                <Grid x:Name="ScanPage" Margin="14,10,14,10" SizeChanged="ScanPage_SizeChanged" LayoutUpdated="ScanPage_LayoutUpdated">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -75,7 +67,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <Border x:Name="ScanControlsCard" Style="{StaticResource Card}" Padding="10,8">
+                    <Border x:Name="ScanControlsCard" Style="{StaticResource Card}" Padding="14,10">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -111,13 +103,12 @@
                                     </Button.Style>
                                 </Button>
                             </WrapPanel>
-                            <StackPanel x:Name="ScanOptionsContainer" Grid.Row="1" Margin="0,5,0,0">
+                            <StackPanel x:Name="ScanOptionsContainer" Grid.Row="1" Margin="0,6,0,0">
                             <Expander x:Name="ScanOptionsExpander" Header="{ui:Text Ui.Xaml.MainWindow.015}" Expanded="ScanOptions_Expanded">
                             <ScrollViewer x:Name="ScanOptionsScroll" MaxHeight="126" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <!-- Keep the final option reachable after fractional-DPI scroll rounding. -->
                             <StackPanel Margin="0,6,0,2">
-                            <TextBlock x:Name="ScanScopeText" TextWrapping="Wrap" Foreground="#475467" Margin="0,0,0,6" Text="{ui:Text Ui.Xaml.MainWindow.016}" />
-                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Text="{ui:Text Ui.Xaml.MainWindow.017}" />
+                            <TextBlock x:Name="ScanScopeText" TextWrapping="Wrap" Foreground="#64748B" Margin="0,0,0,8" Text="{ui:Text Ui.Xaml.MainWindow.016}" />
                             <WrapPanel>
                                 <TextBlock Text="{ui:Text Ui.Xaml.MainWindow.018}" VerticalAlignment="Center" Margin="0,0,8,8" />
                                 <ComboBox x:Name="WorkshopScopeComboBox" AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.019}" DisplayMemberPath="Label" SelectedValuePath="AppId" MinWidth="160" MaxWidth="250" Margin="0,0,18,8" ToolTip="{ui:Text Ui.Xaml.MainWindow.020}" />
@@ -127,9 +118,10 @@
                                 <CheckBox x:Name="AmsiCheckBox" IsChecked="False" IsEnabled="True" Visibility="Visible" Margin="0,0,22,6" Content="{ui:Text Ui.Xaml.MainWindow.026}" />
                                 <CheckBox x:Name="DeepSignatureCheckBox" IsChecked="True" Margin="0,0,22,6" Content="{ui:Text Ui.Xaml.MainWindow.027}" ToolTip="{ui:Text Ui.Xaml.MainWindow.028}" />
                                 <CheckBox x:Name="DomainBlockCheckBox" IsChecked="True" Margin="0,0,18,6" Content="{ui:Text Ui.Xaml.MainWindow.029}" />
-                                <StackPanel Orientation="Horizontal" Margin="0,0,18,6" VerticalAlignment="Center">
+                                <!-- 处置模式切换入口已从普通用户界面下线（默认锁定保守模式），保留控件命名与事件以兼容后端策略测试 -->
+                                <StackPanel x:Name="RemediationModePanel" Visibility="Collapsed" Orientation="Horizontal" Margin="0,0,18,6" VerticalAlignment="Center">
                                     <TextBlock Text="{ui:Text RemediationMode.Label}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                    <ComboBox x:Name="RemediationModeComboBox" Width="126" SelectedIndex="0"
+                                    <ComboBox x:Name="RemediationModeComboBox" Visibility="Collapsed" Width="126" SelectedIndex="0"
                                               SelectionChanged="RemediationMode_SelectionChanged"
                                               AutomationProperties.Name="{ui:Text RemediationMode.Label}"
                                               ToolTip="{ui:Text RemediationMode.ConservativeDescription}">
@@ -145,53 +137,97 @@
                             </ScrollViewer>
                             </Expander>
                             </StackPanel>
-                            <Grid x:Name="InstallationControls" Grid.Row="2" Margin="0,5,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Margin="0,0,12,0" VerticalAlignment="Center">
-                                    <TextBlock x:Name="InstallationSecurityText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.030}" />
-                                    <TextBlock x:Name="ElevationHintText" Margin="0,2,0,0" FontSize="11" Foreground="#475467" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <Button x:Name="ElevateButton" Content="{ui:Text Ui.Xaml.MainWindow.031}" IsEnabled="False" Click="Elevate_Click" />
-                                    <Button x:Name="RefreshInstallationButton" Content="{ui:Text Ui.Xaml.MainWindow.032}" IsEnabled="False" Click="RefreshInstallation_Click" />
-                                </StackPanel>
-                            </Grid>
+                            <Border x:Name="InstallationDividerBorder" Grid.Row="2" Margin="0,6,0,0" Padding="0,5,0,0" BorderBrush="#F1F5F9" BorderThickness="0,1,0,0">
+                                <Grid x:Name="InstallationControls">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid Margin="0,0,12,0" VerticalAlignment="Center">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse x:Name="InstallationStatusDot" Width="7" Height="7" Fill="#10B981" Margin="0,1,8,0" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock x:Name="InstallationSecurityText" FontSize="12" FontWeight="SemiBold" Foreground="#334155" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.030}" />
+                                            <TextBlock x:Name="ElevationHintText" Margin="0,1,0,0" FontSize="11" Foreground="#64748B" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button x:Name="ElevateButton" Style="{StaticResource SubtleCompactButton}" Content="{ui:Text Ui.Xaml.MainWindow.031}" IsEnabled="False" Click="Elevate_Click" />
+                                        <Button x:Name="RefreshInstallationButton" Style="{StaticResource SubtleCompactButton}" Content="{ui:Text Ui.Xaml.MainWindow.032}" IsEnabled="False" Click="RefreshInstallation_Click" Margin="0" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
                         </Grid>
                     </Border>
 
-                    <Grid x:Name="ScanProgressSummary" Grid.Row="1" Margin="0,7,0,7">
-                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <Grid x:Name="ScanProgressSummary" Grid.Row="1" Margin="0,8,0,7">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <DockPanel VerticalAlignment="Center">
-                            <TextBlock x:Name="ProgressStageText" DockPanel.Dock="Left" MaxWidth="200" Margin="0,0,10,0" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.033}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <TextBlock x:Name="ProgressItemText" Foreground="#667085" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        <Border x:Name="ScanStatusHeader" Grid.Row="0" Grid.ColumnSpan="2" Padding="11,7" Margin="0,0,0,5"
+                                CornerRadius="8" Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse x:Name="HeaderStatusDot" Width="8" Height="8" Fill="#94A3B8" Margin="0,0,9,0" VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock x:Name="HeaderStatusText" Foreground="#0F172A" FontSize="13.5" FontWeight="SemiBold"
+                                               TextAlignment="Left" TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.004}" />
+                                    <TextBlock x:Name="HeaderDetailText" Margin="0,2,0,0" FontSize="11.5" Foreground="#64748B"
+                                               TextAlignment="Left" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.005}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <Trigger Property="Text" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                    <TextBlock x:Name="FindingCountText" VerticalAlignment="Center" FontSize="12.5" FontWeight="SemiBold" Foreground="#475569" Text="{ui:Text Ui.Xaml.MainWindow.034}" />
+                                    <Border x:Name="AggressiveModeBadge" Visibility="Collapsed" Margin="10,0,0,0" Padding="8,2"
+                                            CornerRadius="10" Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1" VerticalAlignment="Center">
+                                        <TextBlock Foreground="#92400E" FontSize="11" FontWeight="SemiBold" Text="{ui:Text Ui.P2C.AggressiveBadge}" />
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <DockPanel x:Name="InlineProgressRow" Grid.Row="1" Grid.ColumnSpan="2" VerticalAlignment="Center">
+                            <TextBlock x:Name="ProgressStageText" DockPanel.Dock="Left" MaxWidth="460" Margin="0,0,10,0" FontSize="11.5" FontWeight="Medium" Foreground="#334155" Text="{ui:Text Ui.Xaml.MainWindow.033}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <TextBlock x:Name="ProgressItemText" FontSize="11.5" Foreground="#64748B" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                         </DockPanel>
-                        <ProgressBar x:Name="ScanProgressBar" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,1,0,0" Height="3" IsIndeterminate="False" />
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock x:Name="FindingCountText" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.034}" />
-                            <Border x:Name="AggressiveModeBadge" Visibility="Collapsed" Margin="10,0,0,0" Padding="7,2"
-                                    CornerRadius="8" Background="#FEF3C7" BorderBrush="#F59E0B" BorderThickness="1" VerticalAlignment="Center">
-                                <TextBlock Foreground="#92400E" FontSize="11" FontWeight="SemiBold" Text="{ui:Text Ui.P2C.AggressiveBadge}" />
-                            </Border>
-                        </StackPanel>
-                        <TextBlock x:Name="FindingHandlingSummaryText" Visibility="Collapsed" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#475467"
+                        <TextBlock x:Name="FindingHandlingSummaryText" Visibility="Collapsed" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,0" FontSize="11" Foreground="#64748B"
                                    Text="{ui:Text Ui.Xaml.MainWindow.035}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                        <Border x:Name="ScanVerdictBanner" Grid.Row="3" Grid.ColumnSpan="2" Visibility="Collapsed"
-                                Margin="0,5,0,0" Padding="8,5" CornerRadius="6" BorderThickness="1">
+                        <ProgressBar x:Name="ScanProgressBar" Grid.Row="3" Grid.ColumnSpan="2" Visibility="Collapsed" Margin="0,4,0,0" Height="2" Background="#EEF2F6" IsIndeterminate="False" />
+                        <Border x:Name="ScanVerdictBanner" Grid.Row="4" Grid.ColumnSpan="2" Visibility="Collapsed"
+                                Margin="0,6,0,0" Padding="10,6" CornerRadius="8" BorderThickness="1">
                             <TextBlock x:Name="ScanVerdictText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                         </Border>
                     </Grid>
 
-                    <TabControl Grid.Row="2" x:Name="ResultTabs" SelectionChanged="ResultTabs_SelectionChanged">
-                    <TabItem Header="{ui:Text Ui.Xaml.MainWindow.036}">
-                    <Grid>
+                    <TabControl Grid.Row="2" x:Name="ResultTabs" Style="{StaticResource ModernSubTabControl}" SelectionChanged="ResultTabs_SelectionChanged">
+                    <TabItem Style="{StaticResource ModernSubTabItem}" Header="{ui:Text Ui.Xaml.MainWindow.036}">
+                    <Grid x:Name="FindingsAreaHost" SizeChanged="FindingsAreaHost_SizeChanged">
                     <Grid.RowDefinitions>
                         <RowDefinition x:Name="PriorityFindingsRow" Height="*" />
                         <RowDefinition x:Name="ReferenceFindingsRow" Height="Auto" />
@@ -203,14 +239,20 @@
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal">
                         <DataGrid.Columns>
                             <DataGridTemplateColumn Header="{ui:Text Ui.Xaml.MainWindow.037}" Width="46" HeaderStyle="{StaticResource GridCenteredHeader}">
+                                <DataGridTemplateColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Setter Property="ToolTip" Value="{Binding HandlingDetails}" />
+                                    </Style>
+                                </DataGridTemplateColumn.CellStyle>
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center" IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
-                                                  IsEnabled="{Binding CanSelect}" ToolTip="{Binding HandlingDetails}" ToolTipService.ShowOnDisabled="True" />
+                                                  IsEnabled="{Binding CanSelect}" Visibility="{Binding CanSelect, Converter={StaticResource BoolToVis}}"
+                                                  ToolTip="{Binding HandlingDetails}" ToolTipService.ShowOnDisabled="True" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.038}" Binding="{Binding Severity}" IsReadOnly="True" Width="72" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.038}" Binding="{Binding Severity}" IsReadOnly="True" Width="72" ElementStyle="{StaticResource SeverityCellText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.039}" Binding="{Binding Category}" IsReadOnly="True" Width="64" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.041}" Binding="{Binding Title}" IsReadOnly="True" Width="2*" MinWidth="110" ElementStyle="{StaticResource GridPathText}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.042}" Binding="{Binding TargetDisplay}" IsReadOnly="True" Width="2*" MinWidth="120" ElementStyle="{StaticResource GridPathText}" />
@@ -218,8 +260,8 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel ToolTip="{Binding HandlingDetails}" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding HandlingLabel}" FontWeight="SemiBold" TextWrapping="Wrap" TextTrimming="None" />
-                                            <TextBlock Text="{Binding HandlingReason}" FontSize="11" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding HandlingLabel}" Style="{StaticResource HandlingLabelText}" />
+                                            <TextBlock Text="{Binding HandlingReasonSummary}" FontSize="11" Foreground="#64748B" Margin="0,1,0,0" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
@@ -233,10 +275,16 @@
                                   HeadersVisibility="Column" GridLinesVisibility="Horizontal" Background="White">
                             <DataGrid.Columns>
                                 <DataGridTemplateColumn Header="{ui:Text Ui.Xaml.MainWindow.037}" Width="46" HeaderStyle="{StaticResource GridCenteredHeader}">
+                                    <DataGridTemplateColumn.CellStyle>
+                                        <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                            <Setter Property="ToolTip" Value="{Binding HandlingDetails}" />
+                                        </Style>
+                                    </DataGridTemplateColumn.CellStyle>
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center" IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}"
-                                                      IsEnabled="{Binding CanSelect}" ToolTip="{Binding HandlingDetails}" ToolTipService.ShowOnDisabled="True" />
+                                                      IsEnabled="{Binding CanSelect}" Visibility="{Binding CanSelect, Converter={StaticResource BoolToVis}}"
+                                                      ToolTip="{Binding HandlingDetails}" ToolTipService.ShowOnDisabled="True" />
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
@@ -245,12 +293,129 @@
                             </DataGrid.Columns>
                         </DataGrid>
                     </Expander>
+                    <Border x:Name="ScanStageOverlay" Grid.Row="0" Panel.ZIndex="10" Visibility="Collapsed" IsHitTestVisible="False" ClipToBounds="True">
+                        <Border.Background>
+                            <RadialGradientBrush Center="0.5,0.44" RadiusX="0.7" RadiusY="0.78">
+                                <GradientStop Color="#FFF5F9FF" Offset="0" />
+                                <GradientStop Color="#FFFFFFFF" Offset="0.65" />
+                                <GradientStop Color="#FFF8FAFC" Offset="1" />
+                            </RadialGradientBrush>
+                        </Border.Background>
+                        <StackPanel MaxWidth="460" Margin="20,8" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Grid x:Name="ScanStageRingHost" Width="108" Height="108" HorizontalAlignment="Center">
+                                <Ellipse x:Name="ScanPulseRing1" Width="84" Height="84" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                         Stroke="#3B82F6" StrokeThickness="1.3" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <ScaleTransform x:Name="ScanPulseScale1" ScaleX="1" ScaleY="1" />
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                                <Ellipse x:Name="ScanPulseRing2" Width="84" Height="84" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                         Stroke="#3B82F6" StrokeThickness="1.3" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <ScaleTransform x:Name="ScanPulseScale2" ScaleX="1" ScaleY="1" />
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                                <Ellipse Width="84" Height="84" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                         Stroke="#E6EEF9" StrokeThickness="5.5" />
+                                <Grid x:Name="ScanRingIndeterminateHost" Width="108" Height="108" RenderTransformOrigin="0.5,0.5">
+                                    <Grid.RenderTransform>
+                                        <RotateTransform x:Name="ScanRingIndeterminateRotation" Angle="0" />
+                                    </Grid.RenderTransform>
+                                    <Path StrokeThickness="5.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M 54,12 A 42,42 0 0 1 93.47,68.36">
+                                        <Path.Stroke>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                <GradientStop Color="#3B82F6" Offset="0" />
+                                                <GradientStop Color="#2563EB" Offset="0.5" />
+                                                <GradientStop Color="#4F46E5" Offset="1" />
+                                            </LinearGradientBrush>
+                                        </Path.Stroke>
+                                    </Path>
+                                </Grid>
+                                <Path x:Name="ScanRingProgressPath" Visibility="Collapsed" StrokeThickness="5.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+                                    <Path.Stroke>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#3B82F6" Offset="0" />
+                                            <GradientStop Color="#2563EB" Offset="0.5" />
+                                            <GradientStop Color="#4F46E5" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Path.Stroke>
+                                    <Path.Data>
+                                        <PathGeometry>
+                                            <PathFigure StartPoint="54,12" IsClosed="False">
+                                                <ArcSegment x:Name="ScanRingArcSegment" Size="42,42" SweepDirection="Clockwise" Point="54.5,12" IsLargeArc="False" />
+                                            </PathFigure>
+                                        </PathGeometry>
+                                    </Path.Data>
+                                </Path>
+                                <Grid x:Name="ScanRingHeadDotHost" Width="108" Height="108" RenderTransformOrigin="0.5,0.5" Visibility="Collapsed">
+                                    <Grid.RenderTransform>
+                                        <RotateTransform x:Name="ScanRingHeadRotation" Angle="0" />
+                                    </Grid.RenderTransform>
+                                    <Grid Width="12" Height="12" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,6,0,0">
+                                        <Ellipse Width="12" Height="12" Fill="#4D3B82F6" />
+                                        <Ellipse Width="7" Height="7" Fill="#FFFFFF" Stroke="#2563EB" StrokeThickness="1.8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Grid>
+                                <StackPanel x:Name="ScanStagePercentPanel" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                    <TextBlock x:Name="ScanStagePercentNumber" FontFamily="Segoe UI Variable Display, Consolas, Segoe UI" FontSize="28" FontWeight="Bold" Foreground="#0F172A" Text="0" />
+                                    <TextBlock x:Name="ScanStagePercentSymbol" Text="%" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="13" FontWeight="SemiBold" Foreground="#2563EB" VerticalAlignment="Bottom" Margin="1,0,0,5" />
+                                </StackPanel>
+                                <TextBlock x:Name="ScanStagePendingDots" Text="···" FontSize="22" FontWeight="Bold" Foreground="#2563EB" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock x:Name="ScanStageTitleText" Margin="0,12,0,0" FontSize="15" FontWeight="SemiBold" Foreground="#0F172A" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="ScanStageItemText" Margin="0,4,0,0" FontSize="12" Foreground="#64748B" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                            <Border Margin="0,14,0,0" Width="300" Height="6" CornerRadius="3" Background="#E6EEF9" ClipToBounds="True" HorizontalAlignment="Center">
+                                <Grid>
+                                    <Border x:Name="ScanStageBarFill" HorizontalAlignment="Left" Width="0" CornerRadius="3" ClipToBounds="True" Visibility="Collapsed">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#3B82F6" Offset="0" />
+                                                <GradientStop Color="#2563EB" Offset="0.5" />
+                                                <GradientStop Color="#4F46E5" Offset="1" />
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <Border x:Name="ScanStageBarShimmer" HorizontalAlignment="Left" Width="90" CornerRadius="3" IsHitTestVisible="False">
+                                            <Border.RenderTransform>
+                                                <TranslateTransform x:Name="ScanStageBarShimmerTransform" X="-100" />
+                                            </Border.RenderTransform>
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0.35">
+                                                    <GradientStop Color="#00FFFFFF" Offset="0" />
+                                                    <GradientStop Color="#66FFFFFF" Offset="0.5" />
+                                                    <GradientStop Color="#00FFFFFF" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                        </Border>
+                                    </Border>
+                                    <Border x:Name="ScanStageBarIndeterminate" HorizontalAlignment="Left" Width="110" CornerRadius="3" IsHitTestVisible="False">
+                                        <Border.RenderTransform>
+                                            <TranslateTransform x:Name="ScanStageBarIndeterminateTransform" X="-110" />
+                                        </Border.RenderTransform>
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#002563EB" Offset="0" />
+                                                <GradientStop Color="#FF2563EB" Offset="0.5" />
+                                                <GradientStop Color="#002563EB" Offset="1" />
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                            <StackPanel x:Name="ScanStageMetaPanel" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
+                                <Border Padding="8,2" CornerRadius="10" Background="#EFF4FB" VerticalAlignment="Center">
+                                    <TextBlock x:Name="ScanStageElapsedText" FontFamily="Consolas, Cascadia Mono, Segoe UI" FontSize="11" Foreground="#475569" VerticalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="·" Foreground="#CBD5E1" Margin="8,0" VerticalAlignment="Center" />
+                                <TextBlock x:Name="ScanStageHintText" FontSize="11.5" Foreground="#64748B" VerticalAlignment="Center" Text="{ui:Text Ui.Activity.ShowActivity.Scanning.02}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
                     </Grid>
                     </TabItem>
-                    <TabItem x:Name="CoverageTab" Header="{ui:Text Ui.Xaml.MainWindow.044}">
-                        <Grid Margin="8">
+                    <TabItem x:Name="CoverageTab" Style="{StaticResource ModernSubTabItem}" Header="{ui:Text Ui.Xaml.MainWindow.044}">
+                        <Grid Margin="10">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                            <TextBlock x:Name="CoverageStatusText" Text="{ui:Text Ui.Xaml.MainWindow.045}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,0,6" />
+                            <TextBlock x:Name="CoverageStatusText" Foreground="#475569" Text="{ui:Text Ui.Xaml.MainWindow.045}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,0,8" />
                             <DataGrid x:Name="CoverageGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="CoverageGrid_SelectionChanged">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.046}" Binding="{Binding Kind}" Width="2*" MinWidth="160" ElementStyle="{StaticResource GridCellText}" />
@@ -260,8 +425,8 @@
                             </DataGrid>
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="BatchResultsTab" Header="{ui:Text Ui.Xaml.MainWindow.049}">
-                        <Grid Margin="8">
+                    <TabItem x:Name="BatchResultsTab" Style="{StaticResource ModernSubTabItem}" Header="{ui:Text Ui.Xaml.MainWindow.049}">
+                        <Grid Margin="10">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                             <DockPanel>
                                 <Button x:Name="BatchActionDetailsButton" DockPanel.Dock="Right" Content="{ui:Text Ui.Xaml.MainWindow.083}"
@@ -299,8 +464,8 @@
                             </DataGrid>
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="TrustProxyTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.055}">
-                        <Grid x:Name="TrustProxyPage" Margin="8">
+                    <TabItem x:Name="TrustProxyTab" Style="{StaticResource ModernSubTabItem}" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.055}">
+                        <Grid x:Name="TrustProxyPage" Margin="10">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -309,30 +474,30 @@
                                 <Button x:Name="TrustProxyScanButton" Grid.Column="1" Content="{ui:Text Ui.Xaml.MainWindow.057}" Click="TrustProxyScan_Click" Margin="0"
                                         ToolTip="{ui:Text Ui.Xaml.MainWindow.058}" ToolTipService.ShowOnDisabled="True" />
                             </Grid>
-                            <TextBlock x:Name="TrustProxyScopeText" Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#475467" Text="{ui:Text Ui.Xaml.MainWindow.059}"
+                            <TextBlock x:Name="TrustProxyScopeText" Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#64748B" Text="{ui:Text Ui.Xaml.MainWindow.059}"
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <TextBox x:Name="TrustProxyDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
-                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                            <TextBox x:Name="TrustProxyDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="10,8"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#E2E8F0" Background="#FAFBFD"
                                      AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.060}"
                                      Text="{ui:Text Ui.Xaml.MainWindow.061}" />
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="RelatedComponentsTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.062}">
-                        <Grid x:Name="RelatedComponentsPage" Margin="8">
+                    <TabItem x:Name="RelatedComponentsTab" Style="{StaticResource ModernSubTabItem}" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.062}">
+                        <Grid x:Name="RelatedComponentsPage" Margin="10">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <TextBlock x:Name="RelatedComponentsStatusText" Text="{ui:Text Ui.Xaml.MainWindow.063}" FontWeight="SemiBold"
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <TextBlock x:Name="RelatedComponentsScopeText" Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#475467"
+                            <TextBlock x:Name="RelatedComponentsScopeText" Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#64748B"
                                        Text="{ui:Text Ui.Xaml.MainWindow.064}"
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                            <TextBox x:Name="RelatedComponentsDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
-                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                            <TextBox x:Name="RelatedComponentsDetailsText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="10,8"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#E2E8F0" Background="#FAFBFD"
                                      AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.065}"
                                      Text="{ui:Text Ui.Xaml.MainWindow.066}" />
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="CasesTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.067}">
-                        <Grid Margin="8">
+                    <TabItem x:Name="CasesTab" Style="{StaticResource ModernSubTabItem}" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.067}">
+                        <Grid Margin="10">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -342,21 +507,21 @@
                                 <Button x:Name="CaseExportButton" Grid.Column="3" Content="{ui:Text Ui.Xaml.MainWindow.071}" Click="CaseExport_Click" Margin="6,0,0,0"/>
                                 <Button x:Name="CaseClearCompletedButton" Grid.Column="4" Content="{ui:Text Ui.Xaml.MainWindow.CaseClearCompletedButton}" Click="CaseClearCompleted_Click" Margin="6,0,0,0"/>
                             </Grid>
-                            <TextBlock Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#475467" Text="{ui:Text Ui.Xaml.MainWindow.072}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-                            <Border x:Name="UnresolvedExecutionBanner" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,6" Padding="8,6" CornerRadius="6" Background="#FEF3C7" BorderBrush="#F59E0B" BorderThickness="1">
+                            <TextBlock Grid.Row="1" Margin="0,5,0,6" FontSize="11" Foreground="#64748B" Text="{ui:Text Ui.Xaml.MainWindow.072}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                            <Border x:Name="UnresolvedExecutionBanner" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,6" Padding="10,7" CornerRadius="8" Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1">
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <TextBlock VerticalAlignment="Center" Foreground="#92400E" TextWrapping="Wrap" Text="{ui:Text Ui.Cases.AcknowledgeUnknown.Banner}" Margin="0,0,8,0"/>
-                                    <Button x:Name="CaseAcknowledgeUnknownButton" Grid.Column="1" VerticalAlignment="Center" Content="{ui:Text Ui.Cases.AcknowledgeUnknown.Button}" Click="CaseAcknowledgeUnknown_Click"/>
+                                    <Button x:Name="CaseAcknowledgeUnknownButton" Grid.Column="1" VerticalAlignment="Center" Content="{ui:Text Ui.Cases.AcknowledgeUnknown.Button}" Click="CaseAcknowledgeUnknown_Click" Margin="0"/>
                                 </Grid>
                             </Border>
-                            <TextBox x:Name="CaseDetailsText" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
-                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                            <TextBox x:Name="CaseDetailsText" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Padding="10,8"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#E2E8F0" Background="#FAFBFD"
                                      AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.073}" Text="{ui:Text Ui.Xaml.MainWindow.074}"/>
                         </Grid>
                     </TabItem>
-                    <TabItem x:Name="ContainerTab" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.075}">
-                        <Grid x:Name="ContainerPage" Margin="8">
+                    <TabItem x:Name="ContainerTab" Style="{StaticResource ModernSubTabItem}" Visibility="Collapsed" Header="{ui:Text Ui.Xaml.MainWindow.075}">
+                        <Grid x:Name="ContainerPage" Margin="10">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <TextBlock x:Name="ContainerStatusText" Text="{ui:Text Ui.Xaml.MainWindow.076}" FontWeight="SemiBold"
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
@@ -375,16 +540,17 @@
                                       AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.085}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}"/></DataTemplate></ComboBox.ItemTemplate>
                             </ComboBox>
-                            <TextBox x:Name="ContainerDetailsText" Grid.Row="3" IsReadOnly="True" IsUndoEnabled="False" AcceptsReturn="True" TextWrapping="Wrap" Padding="8,6"
-                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#D0D5DD" Background="White"
+                            <TextBox x:Name="ContainerDetailsText" Grid.Row="3" IsReadOnly="True" IsUndoEnabled="False" AcceptsReturn="True" TextWrapping="Wrap" Padding="10,8"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderBrush="#E2E8F0" Background="#FAFBFD"
                                      AutomationProperties.Name="{ui:Text Ui.Xaml.MainWindow.086}"
                                      Text="{ui:Text Ui.Xaml.MainWindow.087}"/>
                         </Grid>
                     </TabItem>
                     </TabControl>
 
-                    <Expander x:Name="FindingDetailCard" Grid.Row="3" Header="{ui:Text Ui.Xaml.MainWindow.088}" IsExpanded="True" Margin="0,7,0,0" Background="White" Expanded="FindingDetails_Expanded">
-                        <ScrollViewer x:Name="FindingDetailScroll" Height="100" Margin="8,5,8,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Expander x:Name="FindingDetailCard" Grid.Row="3" Header="{ui:Text Ui.Xaml.MainWindow.088}" IsExpanded="False" Margin="0,8,0,0" Padding="10,6"
+                              Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Expanded="FindingDetails_Expanded">
+                        <ScrollViewer x:Name="FindingDetailScroll" Height="100" Margin="6,5,6,2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" MinWidth="88" MaxWidth="180" />
@@ -396,23 +562,23 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
-                                <TextBlock Margin="0,0,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.089}" />
-                                <TextBlock x:Name="DetailDescriptionText" Grid.Column="1" TextWrapping="Wrap" />
-                                <TextBlock Grid.Row="1" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.090}" />
+                                <TextBlock Margin="0,0,14,0" MaxWidth="166" TextWrapping="Wrap" Foreground="#64748B" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.089}" />
+                                <TextBlock x:Name="DetailDescriptionText" Grid.Column="1" Foreground="#0F172A" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="1" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" Foreground="#64748B" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.090}" />
                                 <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,7,0,0">
-                                    <TextBlock x:Name="DetailScoreText" Foreground="#667085" TextWrapping="Wrap" />
-                                    <TextBlock x:Name="DetailEvidenceText" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="DetailScoreText" Foreground="#64748B" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="DetailEvidenceText" Foreground="#334155" TextWrapping="Wrap" />
                                 </StackPanel>
-                                <TextBlock Grid.Row="2" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="SHA-256" />
-                                <TextBlock x:Name="DetailHashText" Grid.Row="2" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
-                                <TextBlock Grid.Row="3" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.091}" />
-                                <TextBlock x:Name="DetailWorkshopText" Grid.Row="3" Grid.Column="1" Margin="0,7,0,0" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="2" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" Foreground="#64748B" FontWeight="SemiBold" Text="SHA-256" />
+                                <TextBlock x:Name="DetailHashText" Grid.Row="2" Grid.Column="1" Margin="0,7,0,0" Foreground="#334155" FontFamily="Consolas, Cascadia Mono, Microsoft YaHei UI" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="3" Margin="0,7,14,0" MaxWidth="166" TextWrapping="Wrap" Foreground="#64748B" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.091}" />
+                                <TextBlock x:Name="DetailWorkshopText" Grid.Row="3" Grid.Column="1" Margin="0,7,0,0" Foreground="#334155" TextWrapping="Wrap" />
                             </Grid>
                         </ScrollViewer>
                     </Expander>
 
                     <DockPanel x:Name="SelectionActionsBar" Grid.Row="4" Margin="0,8,0,0" LastChildFill="True">
-                    <Border x:Name="RemediationAvailabilityPanel" DockPanel.Dock="Bottom" Margin="0,4,0,0" Padding="8,5" Background="#EFF6FF" BorderBrush="#B2CCFF" BorderThickness="1" CornerRadius="4">
+                    <Border x:Name="RemediationAvailabilityPanel" DockPanel.Dock="Bottom" Margin="0,3,0,0" Padding="8,4" Background="Transparent" BorderBrush="#CBD5E1" BorderThickness="0" CornerRadius="6">
                         <Border.Style><Style TargetType="Border">
                             <Setter Property="Visibility" Value="Collapsed"/>
                             <Style.Triggers>
@@ -431,7 +597,7 @@
                         </Style></Border.Style>
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBlock x:Name="RemediationAvailabilityTextBlock" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#1849A9"
+                            <TextBlock x:Name="RemediationAvailabilityTextBlock" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#64748B"
                                        AutomationProperties.LiveSetting="Polite" />
                             <Button x:Name="RemediationAvailabilityActionButton" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
                                     Click="RemediationAvailabilityAction_Click" Visibility="Collapsed" />
@@ -473,62 +639,78 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="{ui:Text Ui.Xaml.MainWindow.103}">
-                <Grid Margin="10">
+            <TabItem Style="{StaticResource ModernTopTabItem}" Header="{ui:Text Ui.Xaml.MainWindow.103}">
+                <Grid Margin="14,10,14,10">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <Border Style="{StaticResource Card}">
-                        <TextBlock TextWrapping="Wrap" Text="{ui:Text Ui.Xaml.MainWindow.104}" />
+                    <Border Style="{StaticResource Card}" Padding="12,9">
+                        <TextBlock TextWrapping="Wrap" Foreground="#475569" Text="{ui:Text Ui.Xaml.MainWindow.104}" />
                     </Border>
-                    <DataGrid x:Name="QuarantineGrid" Grid.Row="1" Margin="0,12,0,12" ItemsSource="{Binding QuarantineItems}"
-                              AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="QuarantineGrid_SelectionChanged">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.105}" Binding="{Binding IncidentId}" Width="2*" MinWidth="140" ElementStyle="{StaticResource GridCellText}" />
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.106}" Binding="{Binding Created}" Width="156" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.107}" Binding="{Binding ItemCount}" Width="62" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.108}" Binding="{Binding Status}" Width="*" MinWidth="120" ElementStyle="{StaticResource GridCellText}" />
-                            <DataGridCheckBoxColumn Header="{ui:Text Ui.Xaml.MainWindow.109}" Binding="{Binding RebootObserved, Mode=OneWay}" Width="62" ElementStyle="{StaticResource GridReadOnlyCheckBox}" HeaderStyle="{StaticResource GridCenteredHeader}" />
-                        </DataGrid.Columns>
-                    </DataGrid>
+                    <Border Grid.Row="1" Margin="0,10,0,10" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="1">
+                        <DataGrid x:Name="QuarantineGrid" ItemsSource="{Binding QuarantineItems}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single" SelectionChanged="QuarantineGrid_SelectionChanged">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.105}" Binding="{Binding IncidentId}" Width="2*" MinWidth="140" ElementStyle="{StaticResource GridCellText}" />
+                                <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.106}" Binding="{Binding Created}" Width="156" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                                <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.107}" Binding="{Binding ItemCount}" Width="62" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                                <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.108}" Binding="{Binding Status}" Width="*" MinWidth="120" ElementStyle="{StaticResource GridCellText}" />
+                                <DataGridCheckBoxColumn Header="{ui:Text Ui.Xaml.MainWindow.109}" Binding="{Binding RebootObserved, Mode=OneWay}" Width="62" ElementStyle="{StaticResource GridReadOnlyCheckBox}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
                     <WrapPanel Grid.Row="2">
                         <Button Content="{ui:Text Ui.Xaml.MainWindow.110}" Click="RefreshQuarantine_Click" />
                         <Button Content="{ui:Text Ui.Xaml.MainWindow.111}" Click="OpenQuarantine_Click" />
                         <Button x:Name="RollbackButton" IsEnabled="False" Content="{ui:Text Ui.Xaml.MainWindow.112}" Click="Rollback_Click" />
-                        <Button x:Name="DeleteIncidentButton" IsEnabled="False" Style="{StaticResource PrimaryButton}" Content="{ui:Text Ui.Xaml.MainWindow.113}" Click="DeleteIncident_Click" />
+                        <Button x:Name="DeleteIncidentButton" IsEnabled="False" Style="{StaticResource DangerButton}" Content="{ui:Text Ui.Xaml.MainWindow.113}" Click="DeleteIncident_Click" />
                     </WrapPanel>
                 </Grid>
             </TabItem>
 
-            <TabItem Header="{ui:Text Ui.Xaml.MainWindow.114}">
+            <TabItem Style="{StaticResource ModernTopTabItem}" Header="{ui:Text Ui.Xaml.MainWindow.114}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="22" MaxWidth="900" HorizontalAlignment="Left">
-                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.115}" />
-                        <TextBlock Margin="0,14,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="{ui:Text Ui.Xaml.MainWindow.116}" />
-                        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="{ui:Text Ui.Xaml.MainWindow.117}" />
-                        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="{ui:Text Ui.Xaml.MainWindow.118}" />
-                        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" LineHeight="22" FontWeight="SemiBold" Foreground="#B42318"
-                                   Text="{ui:Text Ui.Xaml.MainWindow.119}" />
-                        <TextBlock Margin="0,22,0,0" FontSize="18" FontWeight="SemiBold" Text="{ui:Text Ui.Xaml.MainWindow.120}" />
-                        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="22"
-                                   Text="{ui:Text Ui.Xaml.MainWindow.121}" />
-                        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Text="{ui:Text Ui.Xaml.MainWindow.122}" />
-                        <TextBlock Margin="0,8,0,0" Foreground="#667085" Text="Copyright © 2026 fenglinbei" />
+                    <StackPanel Margin="20,16" MaxWidth="860" HorizontalAlignment="Left">
+                        <TextBlock FontSize="19" FontWeight="SemiBold" Foreground="#0F172A" Text="{ui:Text Ui.Xaml.MainWindow.115}" Margin="0,0,0,12" />
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="16">
+                            <StackPanel>
+                                <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="#0F172A" Text="{ui:Text Ui.About.Card.Safety}" />
+                                <TextBlock Margin="0,8,0,0" Foreground="#334155" TextWrapping="Wrap" LineHeight="21"
+                                           Text="{ui:Text Ui.Xaml.MainWindow.116}" />
+                                <TextBlock Margin="0,8,0,0" Foreground="#334155" TextWrapping="Wrap" LineHeight="21"
+                                           Text="{ui:Text Ui.Xaml.MainWindow.117}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="16">
+                            <StackPanel>
+                                <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="#0F172A" Text="{ui:Text Ui.About.Card.Scope}" />
+                                <TextBlock Margin="0,8,0,0" Foreground="#334155" TextWrapping="Wrap" LineHeight="21"
+                                           Text="{ui:Text Ui.Xaml.MainWindow.118}" />
+                                <TextBlock Margin="0,8,0,0" Foreground="#B45309" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="21"
+                                           Text="{ui:Text Ui.Xaml.MainWindow.119}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Padding="16">
+                            <StackPanel>
+                                <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="#0F172A" Text="{ui:Text Ui.About.Card.License}" />
+                                <TextBlock Margin="0,8,0,0" Foreground="#334155" TextWrapping="Wrap" LineHeight="21"
+                                           Text="{ui:Text Ui.Xaml.MainWindow.121}" />
+                                <TextBlock Margin="0,8,0,0" Foreground="#1D4ED8" TextWrapping="Wrap" Text="{ui:Text Ui.Xaml.MainWindow.122}" />
+                                <TextBlock Margin="0,6,0,0" Foreground="#64748B" Text="Copyright © 2026 fenglinbei" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <TabItem Header="{ui:Text Ui.Language.Tab}">
+            <TabItem Style="{StaticResource ModernTopTabItem}" Header="{ui:Text Ui.Language.Tab}">
                 <ui:LanguageSettingsView />
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="3" Background="#E4E7EC" Padding="12,4">
-            <TextBlock x:Name="FooterText" Foreground="#475467" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.123}" />
+        <Border Grid.Row="2" Background="#EEF2F6" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="14,4">
+            <TextBlock x:Name="FooterText" Foreground="#64748B" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="{ui:Text Ui.Xaml.MainWindow.123}" />
         </Border>
     </Grid>
 </Window>

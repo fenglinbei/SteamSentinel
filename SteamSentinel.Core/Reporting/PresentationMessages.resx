@@ -536,7 +536,7 @@ Recognized credential fields have been filtered, but records may still contain u
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:33. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.14" xml:space="preserve">
-    <value>Configuration indicators were found, but their origin and maliciousness are unconfirmed. Automatic remediation is not available.</value>
+    <value>Configuration indicators found; source is unconfirmed (ignore if using your own proxy).</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:34. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.15" xml:space="preserve">
@@ -544,7 +544,7 @@ Recognized credential fields have been filtered, but records may still contain u
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:35. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.16" xml:space="preserve">
-    <value>Inspect proxies and certificates, or export the diagnostic record.</value>
+    <value>Confirm whether this is your own proxy, or click "Check proxy &amp; certificates".</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:36. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.17" xml:space="preserve">
@@ -556,7 +556,7 @@ Recognized credential fields have been filtered, but records may still contain u
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:37. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.19" xml:space="preserve">
-    <value>This is an informational entry. No action is requested.</value>
+    <value>Status note only; no action needed.</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:37. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.20" xml:space="preserve">
@@ -2857,11 +2857,11 @@ This replaces the current report. Cancel and export first if you need to keep it
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.Quick.01" xml:space="preserve">
-    <value>Quickly checking system state and selected content</value>
+    <value>Quick check of system and selected scope</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.Full.01" xml:space="preserve">
-    <value>Running a full content scan with the selected scope and options</value>
+    <value>Full scan of selected scope and archives</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.04" xml:space="preserve">
@@ -2873,7 +2873,7 @@ This replaces the current report. Cancel and export first if you need to keep it
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.06" xml:space="preserve">
-    <value>Scanning; remediation eligibility has not yet been checked</value>
+    <value>Scanning...</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.StartScanAsync.07" xml:space="preserve">
@@ -2985,11 +2985,11 @@ This replaces the current report. Cancel and export first if you need to keep it
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.08" xml:space="preserve">
-    <value>{0} items remain unresolved</value>
+    <value>{0} item(s) to review</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.09" xml:space="preserve">
-    <value>Review needed: {0}; unsupported: {1}; prerequisites unmet: {2}. See each item's handling state and reason.</value>
+    <value>Review {0} · Unsupported {1} · Blocked {2}</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.10" xml:space="preserve">
@@ -3045,7 +3045,7 @@ This replaces the current report. Cancel and export first if you need to keep it
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.UpdateSummary.28" xml:space="preserve">
-    <value>Files {0:N0} · Workshop items {1:N0} · Archive entries {2:N0} · Coverage {3}</value>
+    <value>Files {0:N0} · Workshop {1:N0} · Archive entries {2:N0} · {3}</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.FindingsGrid_SelectionChanged.01" xml:space="preserve">
@@ -3248,11 +3248,11 @@ Content locations in this scan: {0}.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.01" xml:space="preserve">
-    <value>Installation check passed. This window has administrator privileges.</value>
+    <value>Environment ready (Admin)</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.02" xml:space="preserve">
-    <value>Installation check passed. This window has standard privileges.</value>
+    <value>Environment ready (Standard)</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.03" xml:space="preserve">
@@ -3260,27 +3260,27 @@ Content locations in this scan: {0}.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.04" xml:space="preserve">
-    <value>Elevation cannot repair the installation. Use the installer to repair it, then recheck. Scanning and export remain available.</value>
+    <value>Repair via the installer and recheck; read-only scanning remains available.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.05" xml:space="preserve">
-    <value>Scanning and remediation are available. You will review and confirm the plan before execution; nothing is cleared automatically.</value>
+    <value>Ready to scan and remediate; review and confirm before execution.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.06" xml:space="preserve">
-    <value>Scanning requires no elevation. Remediation will request Windows authorization. You can also open an administrator window first.</value>
+    <value>No elevation needed for scans; UAC is requested on remediation.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.07" xml:space="preserve">
-    <value>Scanning requires no elevation. For remediation, open an administrator window, enter administrator credentials and scan again.</value>
+    <value>Open an admin window and scan again to remediate.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.08" xml:space="preserve">
-    <value>Administrator window</value>
+    <value>Admin active</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.09" xml:space="preserve">
-    <value>Open admin window</value>
+    <value>Admin window</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.10" xml:space="preserve">
@@ -3296,19 +3296,19 @@ Content locations in this scan: {0}.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableElevated" xml:space="preserve">
-    <value>Portable mode verified (administrator window). Directory permissions are not restricted by Program Files; install via the installer for stronger protection.</value>
+    <value>Portable mode (Admin)</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableStandard" xml:space="preserve">
-    <value>Portable mode verified (standard window). Component hashes match SHA256SUMS.txt, but this folder lacks Program Files write protection.</value>
+    <value>Portable mode (Standard)</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintCanElevate" xml:space="preserve">
-    <value>Portable remediation will confirm risks before requesting Windows UAC elevation. Installing to Program Files via setup is recommended.</value>
+    <value>Scanning and remediation available (UAC on action); installed edition recommended.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableHintStandard" xml:space="preserve">
-    <value>Running in portable mode. To remediate, open an administrator window, provide admin credentials, and scan again.</value>
+    <value>Open an admin window and scan again for portable remediation.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.xaml.cs</comment>
   </data>
   <data name="Ui.xaml.ApplyInstallationSecurityStatus.PortableTooltip" xml:space="preserve">
@@ -3388,48 +3388,47 @@ This window and its scan results were retained.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Preparing.02" xml:space="preserve">
-    <value>Checking files, startup entries and associated processes. No files have changed yet. You may cancel.</value>
+    <value>Verifying targets and dependencies; no files changed yet.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Confirmation.02" xml:space="preserve">
-    <value>Waiting for your confirmation in the preview window. Remediation has not started.</value>
+    <value>Waiting for confirmation in the preview window.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Applying.02" xml:space="preserve">
-    <value>Review any Windows authorization prompt. Waiting for the administrator component to finish execution and verification. Do not close the window or restart.</value>
+    <value>Approve the Windows UAC prompt; keep this window open until finished.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.FollowUp.02" xml:space="preserve">
-    <value>Reading system and Steam state again. Files will not be quarantined again. This may take up to about 2 minutes.</value>
+    <value>Rechecking system and Steam state (read-only).</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.ContentFollowUp.02" xml:space="preserve">
-    <value>Using the original scope and settings for read-only checks, for up to about 2 minutes. You may cancel and manually rescan incomplete areas later. Encrypted content may require passwords again.</value>
+    <value>Rechecking original scope (read-only). You can cancel anytime.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Scanning.02" xml:space="preserve">
-    <value>Large scopes or archives may take longer. You may cancel. Elapsed time is not an estimate of time remaining.</value>
+    <value>Scanning in progress. You can cancel anytime.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Exporting.02" xml:space="preserve">
-    <value>Saving records. The output location will be shown when finished.</value>
+    <value>Exporting diagnostic report.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Cancelling.02" xml:space="preserve">
-    <value>Waiting for the current read to finish and temporary files to be released. No new remediation will start.</value>
+    <value>Stopping safely and cleaning up temporary files.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.02" xml:space="preserve">
-    <value>Reading information; please wait. Elapsed time is not an estimate of time remaining.</value>
+    <value>Loading environment details.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.RefreshActivityElapsed.01" xml:space="preserve">
-    <value>Stage elapsed: </value>
+    <value>Elapsed </value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.RefreshActivityElapsed.02" xml:space="preserve">
-    <value>
-This stage has not returned a result. Animation only indicates that the interface is waiting; it does not prove that background work is progressing.</value>
+    <value> (processing large items or waiting on the system)</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.CreateUiProgress.01" xml:space="preserve">
@@ -3895,15 +3894,15 @@ See exported records for more detail.</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.02" xml:space="preserve">
-    <value>Choose your scan budgets</value>
+    <value>Scan depth &amp; budgets</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.03" xml:space="preserve">
-    <value>Settings are saved for the current Windows user and apply to the next scan. Both scan modes are saved separately and can be reset at any time. 1 MiB = 1,048,576 bytes.</value>
+    <value>Saved per scan mode and applied to the next scan.</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.04" xml:space="preserve">
-    <value>Higher budgets increase coverage but may lead to long scans, a full disk or insufficient memory. Lower budgets stop checks sooner and leave content unchecked. Budgets apply together; use the report's stop reasons to adjust them.</value>
+    <value>Higher presets increase coverage along with scan time and resource use.</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.05" xml:space="preserve">
@@ -3915,7 +3914,7 @@ See exported records for more detail.</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.07" xml:space="preserve">
-    <value>File formats, passwords, access rights, system resources and component capacities may impose additional limits. The report explains incomplete checks.</value>
+    <value>Encryption, permissions, and available resources may still limit some checks.</value>
     <comment>Display only: SteamSentinel.App/Dialogs/ScanLimitsDialog.cs</comment>
   </data>
   <data name="Ui.ScanLimitsDialog.Constructor.08" xml:space="preserve">
@@ -4007,7 +4006,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.003" xml:space="preserve">
-    <value>Steam Workshop · Mod · Plugin security checks</value>
+    <value>Steam &amp; Workshop Security Check</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.004" xml:space="preserve">
@@ -4031,7 +4030,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.009" xml:space="preserve">
-    <value>Full content scan</value>
+    <value>Full scan</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.010" xml:space="preserve">
@@ -4055,15 +4054,15 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.015" xml:space="preserve">
-    <value>Scope &amp; options · Selected locations, not every disk</value>
+    <value>Scan options</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.016" xml:space="preserve">
-    <value>Quick scan: Steam runtime state and local Workshop content, mods and plugins. Videos first receive structure and trailing-data checks. This does not scan every disk.</value>
+    <value>Scans selected Steam and local locations only, not the entire disk. Adjust limits in Scan settings.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.017" xml:space="preserve">
-    <value>A full scan prioritizes accessible content. Configure size, depth, time and temporary disk budgets under Scan limits using presets or individual settings. Quick and full/custom modes are saved separately. Reports record actual settings and reasons for incomplete checks. Full content scan covers only the selected scope, not every disk.</value>
+    <value>Quick scan checks high-risk locations and structures; use Full scan for deeper inspection.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.018" xml:space="preserve">
@@ -4079,7 +4078,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.021" xml:space="preserve">
-    <value>Also include Downloads, Desktop and temporary folders</value>
+    <value>Include Downloads, Desktop &amp; Temp</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.022" xml:space="preserve">
@@ -4099,7 +4098,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.026" xml:space="preserve">
-    <value>Use local antimalware scanning (AMSI)</value>
+    <value>Enable local AMSI scan</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.027" xml:space="preserve">
@@ -4115,7 +4114,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.030" xml:space="preserve">
-    <value>Checking installation…</value>
+    <value>Checking environment…</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.031" xml:space="preserve">
@@ -4171,7 +4170,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.045" xml:space="preserve">
-    <value>After scanning, this area shows why checks were skipped or incomplete. These are not counted as risks.</value>
+    <value>No unchecked items (items skipped by quick policy or limits appear here and do not imply threats).</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.046" xml:space="preserve">
@@ -4191,11 +4190,11 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.050" xml:space="preserve">
-    <value>No remediation plan yet. A preview will list how selected targets are handled.</value>
+    <value>No remediation records yet.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.051" xml:space="preserve">
-    <value>Original-scope and system follow-up checks are shown separately. Execution success does not establish that every threat is gone.</value>
+    <value>Target outcomes and follow-up verification appear here after remediation.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.052" xml:space="preserve">
@@ -4227,7 +4226,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.059" xml:space="preserve">
-    <value>Collects local configuration and certificates only. PAC is not executed and proxy targets are not contacted. Unread data does not establish that configuration is safe.</value>
+    <value>Read-only local proxy and certificate snapshot; no external network access.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.060" xml:space="preserve">
@@ -4235,7 +4234,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.061" xml:space="preserve">
-    <value>Click Check proxy &amp; certificates to view each collection state, proxy configuration source, certificate store and certificate summary. Existing scan findings are retained.</value>
+    <value>Click the button above to inspect local proxy and certificate settings.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.062" xml:space="preserve">
@@ -4247,7 +4246,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.064" xml:space="preserve">
-    <value>Records path associations. File checks do not inspect all memory contents; the writer has not been located.</value>
+    <value>Read-only path relationships between components and hosts.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.065" xml:space="preserve">
@@ -4255,7 +4254,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.066" xml:space="preserve">
-    <value>After association checks in a normal scan, this area shows sources, host identities, candidate reasons, restricted content checks and per-round budgets. Association records do not grant remediation authority.</value>
+    <value>Associated components and host details appear here after scanning.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.067" xml:space="preserve">
@@ -4279,7 +4278,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.072" xml:space="preserve">
-    <value>After restarting or signing in again, reopen the tool and verify. Old plans are not replayed and no automatic restart occurs.</value>
+    <value>Run read-only reverification here after restarting or signing back in.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.073" xml:space="preserve">
@@ -4287,7 +4286,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.074" xml:space="preserve">
-    <value>No saved cases yet. Confirming remediation saves the plan, execution results and pre-remediation session identity for this account.</value>
+    <value>No saved remediation cases.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.075" xml:space="preserve">
@@ -4339,15 +4338,15 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.087" xml:space="preserve">
-    <value>After a file or folder scan, this area shows each container's relationships, integrity, content checks and budgets. Select text and press Ctrl+C to copy.</value>
+    <value>Archive layers and inspection records appear here after scanning containers.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.088" xml:space="preserve">
-    <value>Selected finding · Full path &amp; evidence</value>
+    <value>Details</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.089" xml:space="preserve">
-    <value>What this means</value>
+    <value>Summary</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.090" xml:space="preserve">
@@ -4359,7 +4358,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.092" xml:space="preserve">
-    <value>Review selected</value>
+    <value>Preview &amp; remediate</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.093" xml:space="preserve">
@@ -4407,7 +4406,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.104" xml:space="preserve">
-    <value>The administrator component checks quarantine incidents before rollback. Active file records cannot be permanently deleted in this version. Fully rolled-back empty incidents can be cleaned up. Known threats are rescanned after restoration. Preserve legacy records without a verifiable index and review them manually.</value>
+    <value>Quarantined items can be rolled back after verification. Only fully rolled-back empty incidents may be removed after a clean rescan.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.105" xml:space="preserve">
@@ -4447,27 +4446,27 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.114" xml:space="preserve">
-    <value>Scope &amp; safety</value>
+    <value>About &amp; Security</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.115" xml:space="preserve">
-    <value>What the tool checks and its limits</value>
+    <value>Security &amp; Scope</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.116" xml:space="preserve">
-    <value>Scanned media, scripts and executables are not run. Archive content is read in a separate process with Low Integrity and a restricted token. The process joins a dedicated Job Object before it receives scan paths and is terminated if its parent exits. Normal scanning does not request administrator privileges.</value>
+    <value>Read-only inspection never executes scanned files. Archives are parsed in a low-integrity sandbox worker that terminates on exit; scanning requires no elevation.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.117" xml:space="preserve">
-    <value>Remediation requires both a protected installation and intact components before administrator authorization. It requests UAC when needed; you can also open an administrator window and scan again while retaining the original window and report. Standard accounts need administrator credentials, which this tool does not collect. The administrator component checks the caller, plan SHA-256, exact paths, file hashes and directory pointers independently.</value>
+    <value>Remediation is enabled only after integrity checks pass. Every action is previewed before UAC confirmation and backed by rollback records.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.118" xml:space="preserve">
-    <value>This tool focuses on Steam, Wallpaper Engine and observed fake-alert malware activity. After a quick scan, choose a full content scan following inspection, quarantine or Steam restoration. No known threat found does not mean the computer is absolutely safe. Password failures, unsupported formats, missing volumes or resource limits leave checks incomplete.</value>
+    <value>Focused on Steam, Wallpaper Engine, and fake red-alert chains—not a full-disk antivirus. Encrypted or restricted items are reported under Unchecked.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.119" xml:space="preserve">
-    <value>Heuristics provide review hints rather than certainty and are not selected by default. Successful remediation applies only to the targets in that plan; it does not certify the whole computer as malware-free. When needed, use maintained antimalware software for an independent full-disk review.</value>
+    <value>Note: Heuristic detections are not preselected. Completed remediation covers only the approved plan; follow up with full antivirus if needed.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.120" xml:space="preserve">
@@ -4475,7 +4474,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.121" xml:space="preserve">
-    <value>Open-source software by fenglinbei, licensed under Apache License 2.0. You can inspect, use, modify and distribute the source under its terms. See LICENSE in the installation folder for the full license, and NOTICE and THIRD-PARTY-NOTICES.md for attribution and third-party notices.</value>
+    <value>Open-sourced by fenglinbei under Apache License 2.0. See LICENSE and NOTICE in the installation folder.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.122" xml:space="preserve">
@@ -4483,7 +4482,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.123" xml:space="preserve">
-    <value>Local checks · No sample or account-data uploads by default · Quarantine supports rollback</value>
+    <value>Local only · No data upload · Reversible quarantine</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.001" xml:space="preserve">
@@ -4491,7 +4490,7 @@ See exported records for more detail.</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.002" xml:space="preserve">
-    <value>Enter a password or skip. Content that remains encrypted is marked as incompletely scanned.</value>
+    <value>Enter a password to inspect, or skip this encrypted archive.</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.003" xml:space="preserve">
@@ -4551,7 +4550,7 @@ See exported records for more detail.</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.017" xml:space="preserve">
-    <value>Passwords remain in this scan's memory only. They are not cracked or saved.</value>
+    <value>Passwords remain in scan memory only and are never saved.</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.018" xml:space="preserve">
@@ -4575,11 +4574,11 @@ See exported records for more detail.</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.023" xml:space="preserve">
-    <value>Candidates are tried in the selected scope. Continuing also appends any non-empty password still in the input box.</value>
+    <value>Candidates are tried in order; continuing includes any current input.</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.024" xml:space="preserve">
-    <value>Original content location &amp; password scope</value>
+    <value>Archive location &amp; details</value>
     <comment>Display only: Dialogs/PasswordDialog.xaml</comment>
   </data>
   <data name="Ui.Xaml.PasswordDialog.025" xml:space="preserve">
@@ -4615,7 +4614,7 @@ See exported records for more detail.</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.002" xml:space="preserve">
-    <value>Review every remediation action</value>
+    <value>Review remediation plan</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.003" xml:space="preserve">
@@ -4683,11 +4682,11 @@ See exported records for more detail.</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.018" xml:space="preserve">
-    <value>Select an item on the current tab to view its full target, reason and identity checks.</value>
+    <value>Select any row to inspect its full target path and identity details.</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.019" xml:space="preserve">
-    <value>Actions may include verified associated startup entries, processes and files. Save your work first; closing programs may interrupt games. Review heuristic results carefully. Quarantine retains rollback records rather than immediately deleting files permanently.</value>
+    <value>Remediation may close related processes or clear startup entries—save your work first. Quarantined items remain reversible.</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.020" xml:space="preserve">
@@ -4719,15 +4718,15 @@ See exported records for more detail.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.NextStartup" xml:space="preserve">
-    <value>Language for the next launch</value>
+    <value>Interface language</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.StartupHelp" xml:space="preserve">
-    <value>Settings are saved for the current Windows user and apply the next time the app starts. Saving keeps this window in its current language and does not interrupt scanning or remediation.</value>
+    <value>Saved for the current user and applied immediately without restarting. You can still choose another language when exporting reports.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.AutomaticHelp" xml:space="preserve">
-    <value>Automatic uses the Windows display language: Chinese uses Simplified Chinese resources; other languages use English.</value>
+    <value>Automatic mode follows your Windows display language.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.Save" xml:space="preserve">
@@ -4735,7 +4734,7 @@ See exported records for more detail.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.Saved" xml:space="preserve">
-    <value>Language saved. It applies the next time the app starts. This window and any running task stay unchanged.</value>
+    <value>Language preference saved and applied immediately.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.Language.SaveFailed" xml:space="preserve">
@@ -4759,7 +4758,7 @@ See exported records for more detail.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Help" xml:space="preserve">
-    <value>Choose the language for the Markdown report or record bundle instructions. This choice does not change the interface or your saved preference.</value>
+    <value>Choose the display language for this export without changing app settings.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Current" xml:space="preserve">
@@ -4767,7 +4766,7 @@ See exported records for more detail.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Originals" xml:space="preserve">
-    <value>JSON machine fields and original evidence stay unchanged. Text from older records or the system retains its original language and is not automatically translated.</value>
+    <value>JSON machine fields and raw evidence remain unchanged.</value>
     <comment>Frozen language preferences and export behavior, 2026-09-21. Display only.</comment>
   </data>
   <data name="Ui.ExportLanguage.Cancel" xml:space="preserve">
@@ -6676,7 +6675,7 @@ Component error output: </value>
     <value>The service entry contains known fake support-alert family indicators</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanHosts.01" xml:space="preserve">
-    <value>A known C2 domain is already blocked in hosts</value>
+    <value>Protection active: known malicious domains blocked in hosts</value>
   </data>
   <data name="Backend.Core.SystemScanner.ScanHosts.02" xml:space="preserve">
     <value>This is a defensive setting and does not need deletion.</value>
@@ -9637,10 +9636,10 @@ Component error output: </value>
     <value>Offline certificate chain inspection</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.07" xml:space="preserve">
-    <value>Proxy configuration detected; confirmation required</value>
+    <value>Local proxy configuration detected</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.08" xml:space="preserve">
-    <value>The proxy may belong to a legitimate tool or enterprise network. Only configuration is recorded; its origin, actual request path and maliciousness are unconfirmed.</value>
+    <value>Normal if you use a game accelerator, Clash, or proxy tool; otherwise click "Check proxy &amp; certificates" to verify.</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.09" xml:space="preserve">
     <value>unavailable</value>
@@ -9652,7 +9651,7 @@ Component error output: </value>
     <value>unavailable</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.12" xml:space="preserve">
-    <value>Proxy configuration was found, but its writer and actual connection chain are unconfirmed, so automatic remediation is unavailable. This configuration was not modified.</value>
+    <value>Local network settings were not modified.</value>
   </data>
   <data name="Backend.Core.TrustProxyCorrelator.Apply.13" xml:space="preserve">
     <value>Certificate name requires purpose confirmation</value>
@@ -11659,7 +11658,7 @@ Component error output: </value>
     <value>The previous operation could not be checked. Try again before further remediation.</value>
   </data>
   <data name="Ui.RemediationAvailability.ScanRequired" xml:space="preserve">
-    <value>Run a scan, then select the issues to address.</value>
+    <value>Click "Quick scan" or "Full scan" above to start.</value>
   </data>
   <data name="Ui.RemediationAvailability.InstallationUnavailable" xml:space="preserve">
     <value>The installation needs attention before remediation. Check its status to continue.</value>
@@ -11671,10 +11670,10 @@ Component error output: </value>
     <value>The previous operation ended with an unknown outcome. Its record is kept. Scan again before further remediation.</value>
   </data>
   <data name="Ui.RemediationAvailability.EndedUnknownNoActionableFindings" xml:space="preserve">
-    <value>The previous operation ended with an unknown outcome. Its record is kept. No current items are actionable.</value>
+    <value>A previous remediation ended with an unknown outcome (no actionable items now).</value>
   </data>
   <data name="Ui.RemediationAvailability.Ready" xml:space="preserve">
-    <value>Select the issues to address, then review the remediation preview.</value>
+    <value>Select items to handle, then click "Preview &amp; remediate".</value>
   </data>
   <data name="Ui.RemediationAvailability.CheckRecovery" xml:space="preserve">
     <value>Check and continue</value>
@@ -11901,14 +11900,15 @@ Open the report now? You can review it before sharing it for troubleshooting.</v
   <data name="SteamConfig.PreviewIntent" xml:space="preserve"><value>Planned change: {0} Content and target identity will be independently verified again before execution.</value></data>
   <data name="SteamConfig.OriginalValue" xml:space="preserve"><value>Original value: {0}</value></data>
   <data name="SteamConfig.RepairedValue" xml:space="preserve"><value>Expected value after repair: {0}</value></data>
-  <data name="FindingPriority.Counts" xml:space="preserve"><value>Priority {0:N0} · Reference {1:N0}</value></data>
-  <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>Reference · File format notices ({0:N0})</value></data>
+  <data name="FindingPriority.Counts" xml:space="preserve"><value>Results {0:N0} · Info &amp; reference {1:N0}</value></data>
+  <data name="FindingPriority.ReferenceGroup" xml:space="preserve"><value>Info &amp; reference ({0:N0})</value></data>
   <data name="FindingPriority.FormatHint" xml:space="preserve"><value>File format notice</value></data>
-  <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>Only file format notices found</value></data>
+  <data name="FindingPriority.ReferenceOnly" xml:space="preserve"><value>No actionable risk found; info and reference items only</value></data>
   <data name="Coverage.ExplicitRootsUnchecked.Title" xml:space="preserve"><value>No content checks ran on the selected paths</value></data>
   <data name="Coverage.ExplicitRootsUnchecked.Detail" xml:space="preserve"><value>No files were read from the selected paths, so their risk cannot be assessed. Review the reasons under Unchecked, adjust the scope and retry.</value></data>
-  <data name="FindingPriority.Empty" xml:space="preserve"><value>No priority findings</value></data>
-  <data name="FindingPriority.Incomplete" xml:space="preserve"><value>Some checks are incomplete</value></data>
+  <data name="FindingPriority.Empty" xml:space="preserve"><value>No risks need action; routine notices and reference info are collapsed below.</value></data>
+  <data name="FindingPriority.EmptyNoReference" xml:space="preserve"><value>No risks need action.</value></data>
+  <data name="FindingPriority.Incomplete" xml:space="preserve"><value>Some items not deeply checked</value></data>
   <data name="FindingPriority.Score" xml:space="preserve"><value>Rule score: {0}</value></data>
   <data name="FindingPriority.NoSelectablePriority" xml:space="preserve"><value>No selectable priority findings</value></data>
   <data name="SteamAlert.Watchdog.InvalidHost" xml:space="preserve"><value>The script host identity or command does not match the verified malicious script. Scan again.</value></data>
@@ -12024,11 +12024,17 @@ Reason: {2}</value></data>
   <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. If Steam fails to open, shows a blank/broken UI, or has unverified binaries, download and run the official SteamSetup.exe installer over the existing Steam folder (your steamapps game library will stay intact), then rescan.</value></data>
   <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>SteamSentinel never patches Steam binaries or executes external installers automatically; perform and verify the recovery steps above.</value></data>
   <data name="Ui.P2C.AggressiveBadge" xml:space="preserve"><value>Aggressive mode</value></data>
-  <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>Show advanced diagnostic tabs (proxy/components/cases/containers)</value></data>
-  <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>By default only Findings, Coverage, and Remediation results are shown. Check this to reveal Proxy &amp; Certificates, Component Associations, Case Reverification, and Container Analysis tabs.</value></data>
-  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>Found {0} actionable risk item(s): review checked items and click Preview and remediate selected.</value></data>
-  <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>Found {0} item(s) requiring manual review: select a row for details or export a report before acting.</value></data>
-  <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>Scan did not cover all items and found no risks so far: open the Coverage tab to review or recheck skipped items.</value></data>
-  <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>Scan complete: no known fake-alert or malware risks were found in the checked Steam and local scope.</value></data>
-  <data name="Ui.P2C.AdvancedLimitsHeader" xml:space="preserve"><value>Advanced custom budgets ({0} expert parameters, rarely needed)</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>Show advanced diagnostic tabs</value></data>
+  <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>Core tabs are shown by default; enable to inspect proxy, component, case, and container diagnostics.</value></data>
+  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>{0} actionable risk(s) found · review selection and click "Preview &amp; remediate"</value></data>
+  <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>No known malware · {0} item(s) to review (ignore if your own proxy/accelerator)</value></data>
+  <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>No known malware · some items not deeply checked (use Full scan for deeper coverage)</value></data>
+  <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>No known fake red-alert or malware risks found in the selected scope</value></data>
+  <data name="Ui.P2C.AdvancedLimitsHeader" xml:space="preserve"><value>Advanced limits ({0})</value></data>
+  <data name="Ui.About.Card.Safety" xml:space="preserve"><value>Local Sandbox &amp; Safe Execution</value></data>
+  <data name="Ui.About.Card.Scope" xml:space="preserve"><value>Scope &amp; Boundaries</value></data>
+  <data name="Ui.About.Card.License" xml:space="preserve"><value>Open Source &amp; License</value></data>
+  <data name="Backend.Core.ContentScanner.ProgressStage" xml:space="preserve"><value>Content scan</value></data>
+  <data name="Backend.Core.ContentScanner.ProgressDetail" xml:space="preserve"><value>Checked {0:N0} files</value></data>
+  <data name="Ui.xaml.UpdateProgress.WithTotal" xml:space="preserve"><value>Scan progress {0}% · {1}</value></data>
 </root>

@@ -53,7 +53,7 @@ internal static partial class Program
             ScrollViewer detailsScroll = (ScrollViewer)window.FindName("FindingDetailScroll");
             options.IsExpanded = true;
             layout.Refresh();
-            Check("DPI 短窗口展开选项时让出品牌区域", ((FrameworkElement)window.FindName("HeaderCard")).Visibility == Visibility.Collapsed);
+            Check("DPI 短窗口展开选项时让出状态摘要区域", ((FrameworkElement)window.FindName("ScanStatusHeader")).Visibility == Visibility.Collapsed);
             double stableHeight = optionsScroll.ActualHeight;
             for (int pass = 0; pass < 4; pass++) layout.Refresh();
             Check("DPI 展开面板布局稳定且保留完整第一行", Math.Abs(optionsScroll.ActualHeight - stableHeight) < 0.01 &&
@@ -123,7 +123,7 @@ internal static partial class Program
             finally { layout.Root.LayoutUpdated -= rejectOscillation; }
             details.IsExpanded = false;
             layout.Refresh();
-            Check("DPI 关闭可选面板后恢复品牌区域", ((FrameworkElement)window.FindName("HeaderCard")).Visibility == Visibility.Visible);
+            Check("DPI 关闭可选面板后恢复状态摘要区域", ((FrameworkElement)window.FindName("ScanStatusHeader")).Visibility == Visibility.Visible);
             layout.SetDpi(dpi);
             layout.Refresh();
         }

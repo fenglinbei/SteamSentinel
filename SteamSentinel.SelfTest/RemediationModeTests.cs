@@ -47,7 +47,39 @@ internal static partial class Program
         { Target = path, ContentPath = path + ">inside.exe", Sha256 = new('A', 64), TargetSha256 = hash, Severity = FindingSeverity.High }));
         Check("Modes coverage and configuration do not become arbitrary file actions", !RemediationModePolicy.CanRequestQuarantine(new()
         { Category = FindingCategory.Coverage, Target = path, Sha256 = hash, Severity = FindingSeverity.High }));
+        Finding infoReview = new()
+        {
+            RuleId = "STEAM-MOD-MILLENNIUM",
+            Category = FindingCategory.Steam,
+            Severity = FindingSeverity.Information,
+            Score = 5,
+            Target = path,
+            Sha256 = hash,
+            TargetSha256 = hash,
+            CanRemediate = false,
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+        };
+        Finding lowReview = new()
+        {
+            RuleId = "KNOWN-DROP-PATH",
+            Category = FindingCategory.File,
+            Severity = FindingSeverity.Low,
+            Score = 20,
+            Target = path,
+            Sha256 = hash,
+            TargetSha256 = hash,
+            CanRemediate = false,
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+        };
+        Check("Modes information and low findings with ReviewOnly cannot be requested for quarantine",
+            !RemediationModePolicy.CanRequestQuarantine(infoReview) &&
+            !RemediationModePolicy.CanRequestQuarantine(lowReview) &&
+            ReferenceEquals(infoReview, RemediationModePolicy.ProjectFinding(infoReview, RemediationMode.Aggressive)) &&
+            ReferenceEquals(lowReview, RemediationModePolicy.ProjectFinding(lowReview, RemediationMode.Aggressive)));
         RemediationPlanBuilder builder = new(new RuleSet());
+        RemediationPlan nonEligiblePlan = await builder.BuildAsync([infoReview, lowReview], false, remediationMode: RemediationMode.Aggressive);
+        Check("Modes aggressive plan builder produces zero actions for information or low ReviewOnly files",
+            nonEligiblePlan.Actions.Count == 0 && File.Exists(path));
         bool conservativeDenied = false;
         try { await builder.BuildAsync([weak], false); } catch (UnauthorizedAccessException) { conservativeDenied = true; }
         Check("Modes conservative refuses weak evidence", conservativeDenied);

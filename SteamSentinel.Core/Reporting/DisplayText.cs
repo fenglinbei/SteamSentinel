@@ -12,16 +12,30 @@ public static class DisplayText
     public static CultureInfo Chinese { get; } = CultureInfo.GetCultureInfo("zh-Hans");
     public static CultureInfo English { get; } = CultureInfo.GetCultureInfo("en-US");
 
+    public static event EventHandler? ApplicationCultureChanged;
+
     // The application sets this before creating any windows. Worker/Broker defaults
     // remain unchanged; explicit render scopes take precedence over the process default.
     public static CultureInfo ApplicationCulture => Volatile.Read(ref _applicationCulture) ?? Chinese;
     public static CultureInfo Culture => SelectedCulture.Value ?? ApplicationCulture;
     public static void InitializeApplicationCulture(CultureInfo culture) =>
         Volatile.Write(ref _applicationCulture, Resolve(culture));
+
+    /// <summary>更新应用当前显示语言并在发生变化时通知界面热刷新。</summary>
+    public static void SetApplicationCulture(CultureInfo culture)
+    {
+        CultureInfo resolved = Resolve(culture);
+        CultureInfo previous = Interlocked.Exchange(ref _applicationCulture, resolved) ?? Chinese;
+        if (!Equals(previous, resolved)) ApplicationCultureChanged?.Invoke(null, EventArgs.Empty);
+    }
+
     public static CultureInfo Resolve(CultureInfo culture) => culture.TwoLetterISOLanguageName == "zh" ? Chinese : English;
 
     /// <summary>A render scope flows across awaits, is isolated between tasks, and never changes OS/thread culture.</summary>
     public static IDisposable UseCulture(CultureInfo? culture) => new CultureScope(culture);
+
+    /// <summary>临时清除显式任务作用域以读取并验证进程全局语言，退出时自动恢复原作用域。</summary>
+    public static IDisposable UseApplicationCulture() => new ApplicationCultureScope();
     private static string? Template(string id) => id.StartsWith("Status.", StringComparison.Ordinal)
         ? StatusPresentation.Template(id[7..], Culture) : Resources.GetString(id, Culture);
     public static string Get(string id) => Template(id) ?? Missing(id);
@@ -51,6 +65,21 @@ public static class DisplayText
         {
             if (culture is not null) SelectedCulture.Value = Resolve(culture);
         }
+        public void Dispose()
+        {
+            if (_disposed) return;
+            SelectedCulture.Value = _previous;
+            _disposed = true;
+        }
+    }
+
+    private sealed class ApplicationCultureScope : IDisposable
+    {
+        private readonly CultureInfo? _previous = SelectedCulture.Value;
+        private bool _disposed;
+
+        public ApplicationCultureScope() => SelectedCulture.Value = null;
+
         public void Dispose()
         {
             if (_disposed) return;

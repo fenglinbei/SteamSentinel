@@ -24,32 +24,58 @@ internal static partial class Program
     {
         string directory = Path.Combine(output ?? Path.Combine(Path.GetTempPath(), "SteamSentinel-language-ui-" + Guid.NewGuid().ToString("N")), "language-controls");
         Directory.CreateDirectory(directory);
-        foreach ((int width, int height) in new[] { (784, 460), (440, 340) })
+        var outerCulture = DisplayText.Culture;
+        var previousAppCulture = DisplayText.ApplicationCulture;
+        bool startsChinese = outerCulture.TwoLetterISOLanguageName == "zh";
+        using (DisplayText.UseApplicationCulture())
         {
-            string path = Path.Combine(directory, DisplayText.Culture.Name + "-" + width + ".json");
-            LanguageSettingsView view = new(path);
-            Window window = new() { Content = view, FontFamily = new("Microsoft YaHei UI, Segoe UI"), FontSize = 12 };
-            using (UiLayoutHarness layout = new(window, width, height))
+            try
             {
-                ComboBox choice = UiLayoutHarness.Descendants<ComboBox>(layout.Root).Single(x => x.Name == "LanguagePreferenceComboBox");
-                Button save = UiLayoutHarness.Descendants<Button>(layout.Root).Single(x => x.Name == "SaveLanguageButton");
-                TextBlock status = UiLayoutHarness.Descendants<TextBlock>(layout.Root).Single(x => x.Name == "LanguageSaveStatus");
-                var current = DisplayText.Culture; var application = DisplayText.ApplicationCulture;
-                Check("语言UI 三个稳定选项和自动默认 " + width, choice.Items.Count == 3 && Equals(choice.SelectedValue, LanguagePreference.Automatic) && layout.IsFullyVisible(choice) && layout.IsFullyVisible(save));
-                choice.SelectedValue = LanguagePreference.English;
-                save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); layout.Refresh();
-                Check("语言UI 保存只影响下次启动 " + width, LanguageSettings.Load(path) == LanguagePreference.English &&
-                    DisplayText.Culture == current && DisplayText.ApplicationCulture == application && status.Text.Contains(UiExpected("下次启动", "next time the app starts")));
-                if (output is not null) layout.Save("language-settings-" + width + "x" + height, output);
-                using (FileStream held = new(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                foreach ((int width, int height) in new[] { (784, 460), (440, 340) })
                 {
-                    choice.SelectedValue = LanguagePreference.SimplifiedChinese;
-                    save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); layout.Refresh();
-                    Check("语言UI 写入失败不宣称成功 " + width, status.Text.Contains(UiExpected("未保存", "were not saved")) && LanguageSettings.Load(path) == LanguagePreference.English && DisplayText.Culture == current);
+                    DisplayText.SetApplicationCulture(outerCulture);
+                    string path = Path.Combine(directory, outerCulture.Name + "-" + width + ".json");
+                    LanguageSettingsView view = new(path);
+                    Window window = new() { Content = view, FontFamily = new("Microsoft YaHei UI, Segoe UI"), FontSize = 12 };
+                    using (UiLayoutHarness layout = new(window, width, height))
+                    {
+                        ComboBox choice = UiLayoutHarness.Descendants<ComboBox>(layout.Root).Single(x => x.Name == "LanguagePreferenceComboBox");
+                        Button save = UiLayoutHarness.Descendants<Button>(layout.Root).Single(x => x.Name == "SaveLanguageButton");
+                        TextBlock status = UiLayoutHarness.Descendants<TextBlock>(layout.Root).Single(x => x.Name == "LanguageSaveStatus");
+                        Check("语言UI 三个稳定选项和自动默认 " + width, choice.Items.Count == 3 && Equals(choice.SelectedValue, LanguagePreference.Automatic) && layout.IsFullyVisible(choice) && layout.IsFullyVisible(save));
+                        LanguagePreference targetPreference = startsChinese ? LanguagePreference.English : LanguagePreference.SimplifiedChinese;
+                        var targetCulture = startsChinese ? DisplayText.English : DisplayText.Chinese;
+                        choice.SelectedValue = targetPreference;
+                        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); layout.Refresh();
+                        Check("语言UI 保存后立即热切换生效 " + width, LanguageSettings.Load(path) == targetPreference &&
+                            DisplayText.Culture.Equals(targetCulture) && DisplayText.ApplicationCulture.Equals(targetCulture) &&
+                            status.Text.Contains(startsChinese ? "immediately" : "立即", StringComparison.Ordinal) &&
+                            Equals(save.Content, DisplayText.Get("Ui.Language.Save")));
+                        using (FileStream held = new(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                        {
+                            choice.SelectedValue = startsChinese ? LanguagePreference.SimplifiedChinese : LanguagePreference.English;
+                            save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); layout.Refresh();
+                            Check("语言UI 写入失败不宣称成功 " + width,
+                                status.Text.Contains(startsChinese ? "were not saved" : "未保存", StringComparison.Ordinal) &&
+                                LanguageSettings.Load(path) == targetPreference &&
+                                DisplayText.Culture.Equals(targetCulture) && DisplayText.ApplicationCulture.Equals(targetCulture));
+                        }
+                        if (output is not null)
+                        {
+                            choice.SelectedValue = startsChinese ? LanguagePreference.SimplifiedChinese : LanguagePreference.English;
+                            save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); layout.Refresh();
+                            layout.Save("language-settings-" + width + "x" + height, output);
+                        }
+                    }
+                    window.Close();
                 }
             }
-            window.Close();
+            finally
+            {
+                DisplayText.SetApplicationCulture(previousAppCulture);
+            }
         }
+        TestLanguageHotSwitchOnMainWindow();
         foreach ((int width, int height) in new[] { (500, 310), (440, 280) })
         {
             ExportLanguageDialog dialog = new(DisplayText.Culture);
@@ -67,6 +93,58 @@ internal static partial class Program
                 if (output is not null) layout.Save("export-language-" + width + "x" + height, output);
             }
             dialog.Close();
+        }
+    }
+
+    private static void TestLanguageHotSwitchOnMainWindow()
+    {
+        static bool HasChinese(string? value) => !string.IsNullOrEmpty(value) && Regex.IsMatch(value, "[\\p{IsCJKUnifiedIdeographs}]");
+        var previousAppCulture = DisplayText.ApplicationCulture;
+        using (DisplayText.UseApplicationCulture())
+        {
+            try
+            {
+                DisplayText.SetApplicationCulture(DisplayText.Chinese);
+                MainWindow window = new();
+                try
+                {
+                    using UiLayoutHarness layout = new(window, 1148, 780);
+                    UiLayoutFixtures.PopulateThreatWindow(window);
+                    window.PriorityFindings[0].IsSelected = true;
+                    layout.Refresh();
+
+                    Button quickScan = (Button)window.FindName("QuickScanButton");
+                    TextBlock headerStatus = (TextBlock)window.FindName("HeaderStatusText");
+                    TabItem coverageTab = (TabItem)window.FindName("CoverageTab");
+                    TextBlock footer = (TextBlock)window.FindName("FooterText");
+                    Check("语言热切换 初始中文静态与动态文本完整",
+                        HasChinese(window.Title) && Equals(quickScan.Content, DisplayText.Get("Ui.Xaml.MainWindow.008")) &&
+                        HasChinese(headerStatus.Text) && HasChinese(window.PriorityFindings[0].Severity));
+
+                    Localizer.Instance.ApplyLanguage(DisplayText.English);
+                    layout.Refresh();
+                    Check("语言热切换 切英文即时刷新全部静态和动态文案并保留勾选",
+                        !HasChinese(window.Title) && Equals(quickScan.Content, DisplayText.Get("Ui.Xaml.MainWindow.008")) &&
+                        !HasChinese(headerStatus.Text) && !HasChinese(coverageTab.Header?.ToString()) &&
+                        !HasChinese(window.PriorityFindings[0].Severity) && !HasChinese(window.PriorityFindings[0].HandlingLabel) &&
+                        !HasChinese(window.QuarantineItems[0].Status) && !HasChinese(footer.Text) &&
+                        window.PriorityFindings[0].IsSelected);
+
+                    Localizer.Instance.ApplyLanguage(DisplayText.Chinese);
+                    layout.Refresh();
+                    Check("语言热切换 切回中文即时恢复并继续保留勾选",
+                        HasChinese(window.Title) && Equals(quickScan.Content, DisplayText.Get("Ui.Xaml.MainWindow.008")) &&
+                        HasChinese(headerStatus.Text) && HasChinese(coverageTab.Header?.ToString()) &&
+                        HasChinese(window.PriorityFindings[0].Severity) && HasChinese(window.PriorityFindings[0].HandlingLabel) &&
+                        HasChinese(window.QuarantineItems[0].Status) && HasChinese(footer.Text) &&
+                        window.PriorityFindings[0].IsSelected);
+                }
+                finally { CloseSummaryFixture(window); }
+            }
+            finally
+            {
+                DisplayText.SetApplicationCulture(previousAppCulture);
+            }
         }
     }
 
@@ -179,6 +257,7 @@ internal static partial class Program
                     StatusPresentation.ScanMessage(baseline).MessageId == "Scan.Completed" && CoveragePresentation.Groups(baseline).Count == 0);
                 SetTrustProxyUiReport(window, report);
                 UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, new(false, true));
+                ((Expander)window.FindName("FindingDetailCard")).IsExpanded = true;
                 typeof(MainWindow).GetMethod("SelectAll_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .Invoke(window, [window, new RoutedEventArgs()]);
                 layout.Refresh();

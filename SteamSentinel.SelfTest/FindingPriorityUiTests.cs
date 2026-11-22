@@ -81,10 +81,13 @@ internal static partial class Program
                         window.Findings.Count == 216 && priority.Items.Count == 0 && reference.Items.Count == 216 &&
                         !referenceGroup.IsExpanded && referenceGroup.Visibility == Visibility.Visible &&
                         original == JsonSerializer.Serialize(report, JsonFile.Options));
-                    Check(label + " gives a compact format-only summary without explanatory boilerplate",
-                        formatOnlyTitle.Contains(culture.Name == "zh-Hans" ? "格式" : "format", StringComparison.OrdinalIgnoreCase) &&
+                    Check(label + " gives a compact reference-only summary without explanatory boilerplate",
+                        formatOnlyTitle == DisplayText.Get("FindingPriority.ReferenceOnly") &&
+                        formatOnlyTitle.Contains(culture.Name == "zh-Hans" ? "参考" : "reference", StringComparison.OrdinalIgnoreCase) &&
                         string.IsNullOrWhiteSpace(TrustProxyUiText(window, "HeaderDetailText").Text) &&
-                        TrustProxyUiText(window, "FindingCountText").Text.Contains("216", StringComparison.Ordinal));
+                        TrustProxyUiText(window, "FindingCountText").Text.Contains("216", StringComparison.Ordinal) &&
+                        TrustProxyUiText(window, "ScanVerdictText").Text == DisplayText.Get("Ui.P2C.Verdict.Clean") &&
+                        TrustProxyUiText(window, "PriorityFindingsEmptyText").Text == DisplayText.Get("FindingPriority.Empty"));
                     Check(label + " hides empty detail and routine explanation panels for completed reference-only results",
                         ((FrameworkElement)window.FindName("FindingDetailCard")).Visibility == Visibility.Collapsed &&
                         ((FrameworkElement)window.FindName("RemediationAvailabilityPanel")).Visibility == Visibility.Collapsed &&
@@ -100,8 +103,12 @@ internal static partial class Program
                     referenceGroup.IsExpanded = true;
                     reference.SelectedIndex = 0;
                     layout.Refresh();
+                    CheckBox? collapsedModeRefCheck = reference.ItemContainerGenerator.ContainerFromIndex(0) is DataGridRow firstRefRow
+                        ? UiLayoutHarness.Descendants<CheckBox>(reference.Columns[0].GetCellContent(firstRefRow)).FirstOrDefault()
+                        : null;
                     Check(label + " expands the first reference row and shows its score in details",
                         reference.ItemContainerGenerator.ContainerFromIndex(0) is DataGridRow first && layout.IsFullyVisible(first) &&
+                        collapsedModeRefCheck is { Visibility: Visibility.Collapsed, IsEnabled: false } &&
                         detailScore.Text.Contains("40", StringComparison.Ordinal) && priority.SelectedItem is null &&
                         ((FrameworkElement)window.FindName("RemediationAvailabilityPanel")).Visibility == Visibility.Collapsed &&
                         TrustProxyUiButton(window, "ReviewFindingButton").IsEnabled);

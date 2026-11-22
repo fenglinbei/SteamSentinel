@@ -87,8 +87,9 @@ internal static partial class Program
                 UiLayoutFixtures.PopulateThreatWindow(window);
                 layout.Refresh();
                 string size = $"{width}x{height}";
-                FrameworkElement header = (FrameworkElement)window.FindName("HeaderCard");
-                Check($"UI {size} 顶栏高度紧凑", header.ActualHeight is >= 48 and <= 92);
+                FrameworkElement statusHeader = (FrameworkElement)window.FindName("ScanStatusHeader");
+                Check($"UI {size} 无独立品牌大表头且页内状态栏紧凑", window.FindName("HeaderCard") is null &&
+                    statusHeader.ActualHeight is >= 24 and <= 64 && layout.IsFullyVisible(statusHeader));
                 Check($"UI {size} 扫描入口无需整页滚动", UiLayoutFixtures.ScanButtons.All(name =>
                     layout.IsFullyVisible((FrameworkElement)window.FindName(name)) &&
                     !layout.HasScrollingAncestor((FrameworkElement)window.FindName(name))));
@@ -103,6 +104,7 @@ internal static partial class Program
                     UiLayoutHarness.Descendants<ScrollViewer>(findings).Any(viewer => viewer.ScrollableHeight > 0));
                 DataGridRow? first = findings.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;
                 Check($"UI {size} 风险严重度分类和详情分数实际绑定可读", first is not null &&
+                    layout.CellCheckIsCentered(findings, 0, 0) &&
                     ((TextBlock?)findings.Columns[1].GetCellContent(first))?.Text == window.Findings[0].Severity &&
                     ((TextBlock?)findings.Columns[2].GetCellContent(first))?.Text == window.Findings[0].Category &&
                     ((TextBlock)window.FindName("DetailScoreText")).Text == DisplayText.Format("FindingPriority.Score", 100));
@@ -180,12 +182,14 @@ internal static partial class Program
                 ((TabControl)window.FindName("MainTabs")).SelectedIndex = 1;
                 typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [false]);
                 layout.Refresh();
-                Check($"UI {size} 活动中切换页面再完成后恢复顶部状态", header.Visibility == Visibility.Visible && layout.IsFullyVisible(header));
                 DataGrid quarantine = (DataGrid)window.FindName("QuarantineGrid");
                 Check($"UI {size} 隔离列表与回滚删除入口无横向溢出", quarantine.Items.Count > 0 &&
                     layout.HasReadableColumns(quarantine) && layout.IsFullyVisible((FrameworkElement)window.FindName("RollbackButton")) &&
                     layout.IsFullyVisible((FrameworkElement)window.FindName("DeleteIncidentButton")));
                 if (output is not null) layout.Save("layout-quarantine-" + size, output);
+                ((TabControl)window.FindName("MainTabs")).SelectedIndex = 0;
+                layout.Refresh();
+                Check($"UI {size} 活动中切换页面再完成后恢复顶部状态", statusHeader.Visibility == Visibility.Visible && layout.IsFullyVisible(statusHeader));
             }
             window.Close();
         }
@@ -310,8 +314,12 @@ internal static partial class Program
                     UiLayoutHarness.Descendants<TextBlock>(handling).Where(text => !string.IsNullOrWhiteSpace(text.Text)).ToArray() is { Length: >= 2 } lines &&
                     lines.All(layout.IsFullyVisible));
                 Check($"UI 表格 {size} 真实单元格保留左右8上下3像素留白", layout.CellsHaveRealPadding(findings));
-                Check($"UI 表格 {size} 严重度分类与处置复选框居中", new[] { 1, 2 }.All(column => layout.CellTextIsCentered(findings, 0, column)) &&
-                    layout.CellCheckIsCentered(findings, 0, 0));
+                // 不可选信息行应隐藏灰色复选框，同时保留严重度与分类居中对齐。
+                FrameworkElement? firstCheckCell = findings.Columns[0].GetCellContent(first);
+                CheckBox? firstCheck = firstCheckCell as CheckBox ?? UiLayoutHarness.Descendants<CheckBox>(firstCheckCell).FirstOrDefault();
+                Check($"UI 表格 {size} 严重度分类居中且不可选行隐藏灰色复选框",
+                    new[] { 1, 2 }.All(column => layout.CellTextIsCentered(findings, 0, column)) &&
+                    firstCheck is { Visibility: Visibility.Collapsed, IsEnabled: false });
                 Check($"UI 表格 {size} 发现和目标左对齐并垂直居中", new[] { 3, 4 }.All(column => layout.CellTextIsLeftAligned(findings, 0, column)));
                 if (output is not null) layout.Save("visual-information-" + size, output);
 

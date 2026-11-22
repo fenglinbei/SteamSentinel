@@ -87,16 +87,36 @@ public sealed class ScanCoordinator
         }
         try
         {
+            bool willIncludeContent = options.IncludeWorkshop || options.IncludeRelatedContent ||
+                options.IncludeDownloadLocations || options.RelatedRoots.Count > 0 || options.CustomRoots.Count > 0;
+            bool systemOnlyMode = options.IncludeSystem && !willIncludeContent;
+            long systemBandStart = 0;
+            long systemBandEnd = systemOnlyMode ? 1000 : 200;
+
             if (options.IncludeSystem)
             {
+                StageProgressRelay systemStageProgress = new(progress, value =>
+                {
+                    // 将系统 4 步（及代理子步 0/2..1/2）平滑映射至系统区间前 65%
+                    double baseFraction = value.Total is > 0
+                        ? Math.Clamp((double)value.Completed / value.Total.Value, 0.0, 1.0)
+                        : 0.0;
+                    if (value.StageMessage?.MessageId is "Backend.Core.TrustProxyDiagnosticScanner.Collect.05" or "Backend.Core.TrustProxyDiagnosticScanner.Collect.09")
+                        baseFraction = 0.75 + baseFraction * 0.25;
+                    else
+                        baseFraction *= 0.65;
+                    long mapped = systemBandStart + (long)Math.Round((systemBandEnd - systemBandStart) * baseFraction);
+                    return (mapped, 1000);
+                });
                 SystemScanner systemScanner = new(_rules);
-                await systemScanner.ScanAsync(report, options, progress, cancellationToken);
+                await systemScanner.ScanAsync(report, options, systemStageProgress, cancellationToken);
             }
 
             SteamLayout? layout = null;
             if (options.IncludeSteam || options.IncludeWorkshop || options.IncludeRelatedContent)
             {
-                progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.17"), "Steam Library", 0, null, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.18")));
+                long steamStart = options.IncludeSystem ? (systemOnlyMode ? 650 : 130) : 0;
+                ReportMappedProgress(progress, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.17"), "Steam Library", steamStart, 1000, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.18"));
                 layout = _layoutOverride ?? SteamLocator.Discover();
                 foreach (MessageText note in layout.DiscoveryTexts) MarkPartial(report, note);
                 foreach (string root in layout.SteamRoots.Concat(layout.LibraryRoots).Concat(layout.WorkshopRoots))
@@ -113,12 +133,17 @@ public sealed class ScanCoordinator
 
             if (options.IncludeSystem && layout is not null)
             {
-                progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.19"), MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.20"), 0, null, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.21")));
+                long relStart = systemOnlyMode ? 820 : 165;
+                ReportMappedProgress(progress, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.19"), MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.20"), relStart, 1000, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.21"));
                 await new RelatedArtifactScanner(_rules).CollectAsync(layout, report, options, cancellationToken);
             }
 
             if (options.IncludeSystem)
-                new RelatedComponentPipeline(_rules).CollectInitial(report, options, progress, cancellationToken);
+            {
+                long initialStart = systemOnlyMode ? 930 : 185;
+                StageProgressRelay initialRelay = new(progress, _ => (initialStart, 1000));
+                new RelatedComponentPipeline(_rules).CollectInitial(report, options, initialRelay, cancellationToken);
+            }
             if (options.RelatedSignaturePaths.Count > 0)
             {
                 if (!_allowRelatedSignatureProbe) MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.22"));
@@ -126,28 +151,140 @@ public sealed class ScanCoordinator
                     options.MaximumRelatedSignatureBytes, cancellationToken, Checkpoint);
             }
 
+            if (systemOnlyMode)
+            {
+                ReportMappedProgress(progress, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.19"), "SteamSentinel", 1000, 1000, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.21"));
+            }
+
             using ContentScanner contentScanner = new(_rules);
             decorated = report.Findings.Count;
             contentScanner.Checkpoint = Checkpoint;
-            HashSet<string> scanned = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> plannedUnique = new(StringComparer.OrdinalIgnoreCase);
 
-            // Examine evidence-linked locations before media libraries can consume the quick budget.
-            IEnumerable<string> priorityRoots = options.RelatedRoots.Concat(
-                options.IncludeRelatedContent ? report.CandidateRoots : []);
-            foreach (string root in priorityRoots.Distinct(StringComparer.OrdinalIgnoreCase))
+            List<string> priorityList = [];
+            foreach (string root in options.RelatedRoots.Concat(options.IncludeRelatedContent ? report.CandidateRoots : []).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!ContentDiscovery.IsLocalSafePath(root)) { MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.23", (root))); continue; }
-                if (!scanned.Add(Path.GetFullPath(root))) continue;
-                report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.24", (root)));
-                await contentScanner.ScanRootAsync(root, report, options, passwordProvider, progress, cancellationToken);
+                string full = Path.GetFullPath(root);
+                if (plannedUnique.Add(full)) priorityList.Add(full);
             }
 
+            List<ContentRoot> modPluginList = [];
             if (options.IncludeRelatedContent && layout is not null)
             {
                 foreach (ContentRoot source in layout.ContentRoots.Where(item => item.Kind is "mod" or "plugin"))
                 {
-                    if (!scanned.Add(Path.GetFullPath(source.Path))) continue;
+                    string full = Path.GetFullPath(source.Path);
+                    if (plannedUnique.Add(full)) modPluginList.Add(source);
+                }
+            }
+
+            List<(string AppId, string ProjectDirectory)> plannedWorkshopProjects = [];
+            List<(string Root, MessageTextCollection Notes, List<string> Projects)> plannedLocalRoots = [];
+            if (options.IncludeWorkshop && layout is not null)
+            {
+                foreach (string root in layout.WorkshopRoots)
+                {
+                    string appId = ContentDiscovery.WorkshopAppId(root);
+                    if (options.WorkshopAppIds.Count > 0 && !options.WorkshopAppIds.Contains(appId)) continue;
+                    MessageTextCollection notes = [];
+                    IReadOnlyList<string> projects = ContentDiscovery.Children(root, true, notes, 40_000);
+                    foreach (MessageText note in notes.Texts) MarkPartial(report, note);
+                    foreach (string projectDirectory in projects)
+                    {
+                        string id = Path.GetFileName(projectDirectory);
+                        if (!ContentDiscovery.IsNumericId(id)) continue;
+                        string full = Path.GetFullPath(projectDirectory);
+                        if (plannedUnique.Add(full)) plannedWorkshopProjects.Add((appId, projectDirectory));
+                    }
+                }
+                foreach (string root in layout.WallpaperProjectRoots)
+                {
+                    if (!Directory.Exists(root)) continue;
+                    MessageTextCollection notes = [];
+                    List<string> items = [];
+                    foreach (string projectDirectory in ContentDiscovery.Children(root, true, notes))
+                    {
+                        string full = Path.GetFullPath(projectDirectory);
+                        if (plannedUnique.Add(full)) items.Add(projectDirectory);
+                    }
+                    plannedLocalRoots.Add((root, notes, items));
+                }
+            }
+
+            List<string> extraRelatedList = [];
+            List<string> relatedCandidates = [.. options.RelatedRoots];
+            if (options.IncludeRelatedContent) relatedCandidates.AddRange(report.CandidateRoots);
+            if (options.IncludeDownloadLocations)
+                relatedCandidates.AddRange(new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
+                    Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), Path.GetTempPath() });
+            foreach (string root in relatedCandidates.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!ContentDiscovery.IsLocalSafePath(root)) { MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.28", (root))); continue; }
+                string full = Path.GetFullPath(root);
+                if (plannedUnique.Add(full)) extraRelatedList.Add(full);
+            }
+
+            List<(string OriginalRoot, string? FullPath)> plannedCustomRoots = [];
+            foreach (string root in options.CustomRoots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string full;
+                try { full = Path.GetFullPath(root); }
+                catch
+                {
+                    MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.30", (root)));
+                    continue;
+                }
+                if (plannedUnique.Add(full)) plannedCustomRoots.Add((root, full));
+            }
+
+            int totalUnits = priorityList.Count + modPluginList.Count + plannedWorkshopProjects.Count +
+                plannedLocalRoots.Sum(entry => entry.Projects.Count) + extraRelatedList.Count + plannedCustomRoots.Count;
+            long contentBandStart = options.IncludeSystem ? 200 : 0;
+            long contentBandSpan = 1000 - contentBandStart;
+            int unitIndex = 0;
+
+            IProgress<ScanProgress>? CreateUnitProgress(int currentUnit)
+            {
+                if (progress is null || totalUnits <= 0) return progress;
+                if (totalUnits == 1 && !options.IncludeSystem) return new MonotonicProgressRelay(progress);
+                long unitStart = contentBandStart + (long)Math.Round(contentBandSpan * (double)currentUnit / totalUnits);
+                long unitEnd = contentBandStart + (long)Math.Round(contentBandSpan * (double)(currentUnit + 1) / totalUnits);
+                long unitSpan = Math.Max(1, unitEnd - unitStart);
+                long subTicks = 0;
+                return new StageProgressRelay(progress, value =>
+                {
+                    long offset;
+                    if (value.Total is > 0 and long total)
+                    {
+                        double frac = Math.Clamp((double)value.Completed / total, 0.0, 1.0);
+                        offset = (long)Math.Round(unitSpan * frac);
+                    }
+                    else
+                    {
+                        subTicks++;
+                        double frac = Math.Min(0.85, subTicks * 0.04);
+                        offset = (long)Math.Round(unitSpan * frac);
+                    }
+                    return (Math.Min(unitEnd, unitStart + offset), 1000);
+                });
+            }
+
+            foreach (string fullRoot in priorityList)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.24", (fullRoot)));
+                IProgress<ScanProgress>? unitProgress = CreateUnitProgress(unitIndex++);
+                await contentScanner.ScanRootAsync(fullRoot, report, options, passwordProvider, unitProgress, cancellationToken);
+            }
+
+            if (modPluginList.Count > 0)
+            {
+                foreach (ContentRoot source in modPluginList)
+                {
                     int first = report.Findings.Count;
                     currentApp = source.AppId; currentKind = source.Kind;
                     report.AddContentSource($"{source.Name}，{source.Kind}：{source.Path}");
@@ -159,7 +296,8 @@ public sealed class ScanCoordinator
                             RecordVPetMetadata(report, directory, cancellationToken);
                         foreach (string note in metadataNotes) MarkPartial(report, note);
                     }
-                    await contentScanner.ScanRootAsync(source.Path, report, options, passwordProvider, progress, cancellationToken,
+                    IProgress<ScanProgress>? unitProgress = CreateUnitProgress(unitIndex++);
+                    await contentScanner.ScanRootAsync(source.Path, report, options, passwordProvider, unitProgress, cancellationToken,
                         projectType: source.Kind);
                     foreach (Finding finding in report.Findings.Skip(first)) { finding.AppId = source.AppId; finding.SourceKind = source.Kind; }
                 }
@@ -168,104 +306,83 @@ public sealed class ScanCoordinator
             if (options.IncludeWorkshop && layout is not null)
             {
                 currentApp = null; currentKind = null;
-                foreach (string root in layout.WorkshopRoots)
+                foreach ((string appId, string projectDirectory) in plannedWorkshopProjects)
                 {
-                    string appId = ContentDiscovery.WorkshopAppId(root);
-                    if (options.WorkshopAppIds.Count > 0 && !options.WorkshopAppIds.Contains(appId)) continue;
-                    MessageTextCollection notes = [];
-                    IReadOnlyList<string> projects = ContentDiscovery.Children(root, true, notes, 40_000);
-                    foreach (MessageText note in notes.Texts) MarkPartial(report, note);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string id = Path.GetFileName(projectDirectory);
+                    VPetModMetadata? vpet = appId == VPetDiscovery.AppId
+                        ? RecordVPetMetadata(report, projectDirectory, cancellationToken) : null;
+                    WallpaperProject project = appId == "431960" ? SteamLocator.ReadWallpaperProject(projectDirectory)
+                        : new(projectDirectory, id, vpet?.Name, vpet is null ? "workshop" : "vpet-mod", null, null, null);
+                    report.Metrics.WorkshopItemsVisited++;
+                    int currentUnit = unitIndex++;
+                    long workshopMapped = totalUnits > 0
+                        ? contentBandStart + (long)Math.Round(contentBandSpan * (double)currentUnit / totalUnits)
+                        : report.Metrics.WorkshopItemsVisited;
+                    progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.25", (appId)), projectDirectory,
+                        workshopMapped, totalUnits > 0 ? 1000 : null, (MessageText)(project.Title ?? project.WorkshopId)));
 
-                    foreach (string projectDirectory in projects)
+                    if (project.ParseError is not null)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        string id = Path.GetFileName(projectDirectory);
-                        if (!ContentDiscovery.IsNumericId(id)) continue;
-                        VPetModMetadata? vpet = appId == VPetDiscovery.AppId
-                            ? RecordVPetMetadata(report, projectDirectory, cancellationToken) : null;
-                        WallpaperProject project = appId == "431960" ? SteamLocator.ReadWallpaperProject(projectDirectory)
-                            : new(projectDirectory, id, vpet?.Name, vpet is null ? "workshop" : "vpet-mod", null, null, null);
-                        report.Metrics.WorkshopItemsVisited++;
-                        progress?.Report(new ScanProgress(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.25", (appId)), projectDirectory,
-                            report.Metrics.WorkshopItemsVisited, null, (MessageText)(project.Title ?? project.WorkshopId)));
-
-                        if (project.ParseError is not null)
+                        report.Findings.Add(new Finding
                         {
-                            report.Findings.Add(new Finding
-                            {
-                                RuleId = "WORKSHOP-PROJECT-METADATA",
-                                Category = FindingCategory.WallpaperEngine,
-                                Severity = FindingSeverity.Medium,
-                                Score = 35,
-                                TitleText = MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.26"),
-                                DescriptionText = project.ParseErrorText,
-                                Target = projectDirectory,
-                                EvidenceText = $"Workshop ID: {project.WorkshopId}",
-                                WorkshopId = project.WorkshopId,
-                                CanRemediate = false,
-                                SuggestedActions = [SuggestedActionKind.ReviewOnly]
-                            });
-                        }
-
-                        if (!scanned.Add(Path.GetFullPath(projectDirectory))) continue;
-                        currentApp = appId; currentKind = "workshop";
-                        int first = report.Findings.Count;
-                        report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.27", (appId), (project.WorkshopId), (projectDirectory)));
-                        await contentScanner.ScanRootAsync(projectDirectory, report, options, passwordProvider,
-                            progress, cancellationToken, project.WorkshopId, project.Type);
-                        foreach (Finding finding in report.Findings.Skip(first)) { finding.AppId = appId; finding.SourceKind = "workshop"; }
+                            RuleId = "WORKSHOP-PROJECT-METADATA",
+                            Category = FindingCategory.WallpaperEngine,
+                            Severity = FindingSeverity.Medium,
+                            Score = 35,
+                            TitleText = MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.26"),
+                            DescriptionText = project.ParseErrorText,
+                            Target = projectDirectory,
+                            EvidenceText = $"Workshop ID: {project.WorkshopId}",
+                            WorkshopId = project.WorkshopId,
+                            CanRemediate = false,
+                            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+                        });
                     }
+
+                    currentApp = appId; currentKind = "workshop";
+                    int first = report.Findings.Count;
+                    report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.27", (appId), (project.WorkshopId), (projectDirectory)));
+                    IProgress<ScanProgress>? unitProgress = CreateUnitProgress(currentUnit);
+                    await contentScanner.ScanRootAsync(projectDirectory, report, options, passwordProvider,
+                        unitProgress, cancellationToken, project.WorkshopId, project.Type);
+                    foreach (Finding finding in report.Findings.Skip(first)) { finding.AppId = appId; finding.SourceKind = "workshop"; }
                 }
 
-                foreach (string root in layout.WallpaperProjectRoots)
+                foreach ((_, MessageTextCollection notes, List<string> items) in plannedLocalRoots)
                 {
                     currentApp = "431960"; currentKind = "wallpaper-local";
-                    if (!Directory.Exists(root)) continue;
-                    MessageTextCollection notes = [];
-                    foreach (string projectDirectory in ContentDiscovery.Children(root, true, notes))
+                    foreach (string projectDirectory in items)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        if (!scanned.Add(Path.GetFullPath(projectDirectory))) continue;
                         WallpaperProject project = SteamLocator.ReadWallpaperProject(projectDirectory);
                         string? projectType = Path.GetFileName(projectDirectory).Equals("defaultprojects", StringComparison.OrdinalIgnoreCase)
                             ? "trusted-default"
                             : project.Type;
                         report.Metrics.WorkshopItemsVisited++;
+                        IProgress<ScanProgress>? unitProgress = CreateUnitProgress(unitIndex++);
                         await contentScanner.ScanRootAsync(projectDirectory, report, options, passwordProvider,
-                            progress, cancellationToken, "local:" + project.WorkshopId, projectType);
+                            unitProgress, cancellationToken, "local:" + project.WorkshopId, projectType);
                     }
                     foreach (MessageText note in notes.Texts) MarkPartial(report, note);
                 }
             }
 
-            List<string> related = [.. options.RelatedRoots];
             currentApp = null; currentKind = null;
-            if (options.IncludeRelatedContent) related.AddRange(report.CandidateRoots);
-            if (options.IncludeDownloadLocations)
-                related.AddRange(new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
-                    Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), Path.GetTempPath() });
-            foreach (string root in related.Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (string full in extraRelatedList)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!ContentDiscovery.IsLocalSafePath(root)) { MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.28", (root))); continue; }
-                if (!scanned.Add(Path.GetFullPath(root))) continue;
-                report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.29", (root)));
-                await contentScanner.ScanRootAsync(root, report, options, passwordProvider, progress, cancellationToken);
+                report.AddContentSource(MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.29", (full)));
+                IProgress<ScanProgress>? unitProgress = CreateUnitProgress(unitIndex++);
+                await contentScanner.ScanRootAsync(full, report, options, passwordProvider, unitProgress, cancellationToken);
             }
 
-            foreach (string root in options.CustomRoots)
+            foreach ((_, string? full) in plannedCustomRoots)
             {
+                if (full is null) continue;
                 cancellationToken.ThrowIfCancellationRequested();
-                string full;
-                try { full = Path.GetFullPath(root); }
-                catch
-                {
-                    MarkPartial(report, MessageText.Create("Backend.Core.ScanCoordinator.RunAsync.30", (root)));
-                    continue;
-                }
-
-                if (!scanned.Add(full)) continue;
-                await contentScanner.ScanRootAsync(full, report, options, passwordProvider, progress, cancellationToken);
+                IProgress<ScanProgress>? unitProgress = CreateUnitProgress(unitIndex++);
+                await contentScanner.ScanRootAsync(full, report, options, passwordProvider, unitProgress, cancellationToken);
             }
         }
         catch (OperationCanceledException)
@@ -315,5 +432,57 @@ public sealed class ScanCoordinator
     {
         report.Coverage = ScanCoverage.Partial;
         ScanExecution.AddNotice(report, reason, message);
+    }
+
+    private static void ReportMappedProgress(IProgress<ScanProgress>? progress, MessageText stage, string currentItem, long completed, long total, MessageText message) =>
+        progress?.Report(new ScanProgress(stage, currentItem, completed, total, message));
+
+    private static void ReportMappedProgress(IProgress<ScanProgress>? progress, MessageText stage, MessageText currentItem, long completed, long total, MessageText message) =>
+        progress?.Report(new ScanProgress(stage, currentItem, completed, total, message));
+
+    /// <summary>保留原阶段文案与当前对象不变，仅将数值刻度映射为单调递增的区间进度。</summary>
+    private sealed class StageProgressRelay(
+        IProgress<ScanProgress>? inner,
+        Func<ScanProgress, (long Completed, long Total)> map) : IProgress<ScanProgress>
+    {
+        private long _maxCompleted;
+
+        public void Report(ScanProgress value)
+        {
+            if (inner is null) return;
+            (long completed, long total) = map(value);
+            if (total > 0)
+            {
+                if (completed < _maxCompleted) completed = _maxCompleted;
+                else _maxCompleted = completed;
+            }
+            inner.Report(value with { Completed = completed, Total = total > 0 ? total : value.Total });
+        }
+    }
+
+    /// <summary>单根目录透传进度并保证在已报告 Total 后单调递增不倒退。</summary>
+    private sealed class MonotonicProgressRelay(IProgress<ScanProgress> inner) : IProgress<ScanProgress>
+    {
+        private long _maxCompleted;
+        private long? _lastTotal;
+
+        public void Report(ScanProgress value)
+        {
+            if (value.Total is > 0 and long total)
+            {
+                _lastTotal = total;
+                long completed = Math.Max(_maxCompleted, Math.Clamp(value.Completed, 0, total));
+                _maxCompleted = completed;
+                inner.Report(value with { Completed = completed, Total = total });
+            }
+            else if (_lastTotal is > 0 and long preservedTotal)
+            {
+                inner.Report(value with { Completed = _maxCompleted, Total = preservedTotal });
+            }
+            else
+            {
+                inner.Report(value);
+            }
+        }
     }
 }
