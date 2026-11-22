@@ -72,18 +72,33 @@ jobs:
             throw "Expected .NET SDK $expected, got $actual."
           }
 
+      - name: Cache WinRAR 7.23 fixture tool installer
+        id: winrar-cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ${{ runner.temp }}\winrar-cache
+          key: winrar-x64-723-8FF0DAF3ED564CC743C0E23FF2E253997FFC74460F9673F0B6DD037B2DB4CE7B
+
       - name: Install and verify archive fixture tools
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           # Test-only dependency; never copied into SteamSentinel release artifacts.
           # Fixed official installer: https://www.rarlab.com/download.htm
-          $installer = Join-Path $env:RUNNER_TEMP 'winrar-x64-723.exe'
-          if (Test-Path -LiteralPath $installer) {
-            throw 'Refusing to overwrite an existing archive-tool installer.'
+          $cacheDir = Join-Path $env:RUNNER_TEMP 'winrar-cache'
+          New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+          $installer = Join-Path $cacheDir 'winrar-x64-723.exe'
+          $cacheHit = '${{ steps.winrar-cache.outputs.cache-hit }}' -eq 'true'
+          if ($cacheHit -and (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            Write-Host "Using cached WinRAR 7.23 installer for verification: $installer"
           }
-          Invoke-WebRequest -Uri 'https://www.rarlab.com/rar/winrar-x64-723.exe' `
-            -OutFile $installer -TimeoutSec 120
+          else {
+            if (Test-Path -LiteralPath $installer) {
+              throw 'Refusing to overwrite an existing archive-tool installer.'
+            }
+            Invoke-WebRequest -Uri 'https://www.rarlab.com/rar/winrar-x64-723.exe' `
+              -OutFile $installer -TimeoutSec 120
+          }
           $expectedHash = '8FF0DAF3ED564CC743C0E23FF2E253997FFC74460F9673F0B6DD037B2DB4CE7B'
           if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne $expectedHash) {
             throw 'WinRAR 7.23 installer SHA-256 mismatch.'
@@ -150,7 +165,7 @@ jobs:
           $resultPath = Join-Path $env:RUNNER_TEMP 'SteamSentinel-selftest-results.json'
           "result_path=$resultPath" >> $env:GITHUB_OUTPUT
           dotnet run --project SteamSentinel.SelfTest/SteamSentinel.SelfTest.csproj `
-            -c Release --no-build -- --results $resultPath
+            -c Release --no-build -- --results $resultPath --timings
           if ($LASTEXITCODE -ne 0) { throw "SelfTest failed ($LASTEXITCODE)." }
           if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
             throw 'SelfTest did not write its machine-readable result.'
@@ -178,6 +193,68 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  unified-startup:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      NUGET_XMLDOC_MODE: skip
+
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read and validate the build contract
+        id: contract
+        shell: pwsh
+        run: |
+          $sdk = [string]((Get-Content -LiteralPath 'global.json' -Raw | ConvertFrom-Json).sdk.version)
+          [xml]$props = Get-Content -LiteralPath 'Directory.Build.props' -Raw
+          $version = [string]$props.Project.PropertyGroup.VersionPrefix
+          $targetFramework = [string]$props.Project.PropertyGroup.TargetFramework
+          $minimumTests = [int]$props.Project.PropertyGroup.SteamSentinelMinimumSelfTests
+          if ($sdk -notmatch '^\d+\.\d+\.\d+$' -or $version -notmatch '^\d+\.\d+\.\d+$' -or
+              [string]::IsNullOrWhiteSpace($targetFramework) -or $minimumTests -lt 1) {
+            throw 'The central build contract is invalid.'
+          }
+
+          [xml]$appManifest = Get-Content -LiteralPath 'SteamSentinel.App/app.manifest' -Raw
+          [xml]$brokerManifest = Get-Content -LiteralPath 'SteamSentinel.Broker/app.manifest' -Raw
+          $expectedManifestVersion = "$version.0"
+          if ($appManifest.assembly.assemblyIdentity.version -ne $expectedManifestVersion -or
+              $brokerManifest.assembly.assemblyIdentity.version -ne $expectedManifestVersion) {
+            throw 'Application manifest version drifted from Directory.Build.props.'
+          }
+          $installer = Get-Content -LiteralPath 'installer/SteamSentinel.iss' -Raw
+          if ($installer -notmatch ('(?m)^#define AppVersion "' + [regex]::Escape($version) + '"\r?$')) {
+            throw 'Installer default version drifted from Directory.Build.props.'
+          }
+
+          "sdk=$sdk" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "target_framework=$targetFramework" >> $env:GITHUB_OUTPUT
+          "minimum_tests=$minimumTests" >> $env:GITHUB_OUTPUT
+
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ steps.contract.outputs.sdk }}
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+
+      - name: Verify SDK pin
+        shell: pwsh
+        run: |
+          $actual = (dotnet --version).Trim()
+          $expected = '${{ steps.contract.outputs.sdk }}'
+          if ($actual -ne $expected) {
+            throw "Expected .NET SDK $expected, got $actual."
+          }
+
       - name: Build and probe unified native startup
         id: startup
         shell: pwsh
@@ -187,7 +264,17 @@ jobs:
           $nativeBuild = Join-Path $env:RUNNER_TEMP 'SteamSentinel-unified-native-build'
           $results = Join-Path $env:RUNNER_TEMP 'SteamSentinel-unified-startup-results.json'
           "result_path=$results" >> $env:GITHUB_OUTPUT
-          & ./scripts/Test-WorkerFirewallContract.ps1 -ResultsPath (Join-Path $env:RUNNER_TEMP 'SteamSentinel-worker-firewall-contract-results.json')
+          $firewallResults = Join-Path $env:RUNNER_TEMP 'SteamSentinel-worker-firewall-contract-results.json'
+          & ./scripts/Test-WorkerFirewallContract.ps1 -ResultsPath $firewallResults
+          if (-not (Test-Path -LiteralPath $firewallResults -PathType Leaf)) {
+            throw 'Worker firewall contract tests did not write results.'
+          }
+          $firewallResult = Get-Content -LiteralPath $firewallResults -Raw | ConvertFrom-Json
+          if ([int]$firewallResult.passed -lt 20 -or [int]$firewallResult.failed -ne 0 -or
+              [int]$firewallResult.skipped -ne 0 -or $firewallResult.systemFirewallAccessed -ne $false) {
+            throw 'Worker firewall contract tests did not satisfy the inert zero-failure gate.'
+          }
+
           $buildId = "$env:GITHUB_SHA.ci"
           $version = '${{ steps.contract.outputs.version }}'
           $properties = @('-p:SelfContained=true', '-p:UseAppHost=true', '-p:CetCompat=true',
@@ -197,6 +284,8 @@ jobs:
           dotnet restore SteamSentinel.slnx --locked-mode -r win-x64 `
             --source https://api.nuget.org/v3/index.json @properties
           if ($LASTEXITCODE -ne 0) { throw "Self-contained restore failed ($LASTEXITCODE)." }
+          git diff --exit-code -- '**/packages.lock.json'
+          if ($LASTEXITCODE -ne 0) { throw 'Self-contained restore changed a lock file.' }
           foreach ($project in @('SteamSentinel.App', 'SteamSentinel.Broker', 'SteamSentinel.ArchiveWorker')) {
             dotnet publish "$project/$project.csproj" -c Release -r win-x64 --self-contained true `
               --no-restore -o $payload '-p:PublishSingleFile=false' '-p:PublishTrimmed=false' @properties

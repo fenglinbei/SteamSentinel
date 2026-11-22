@@ -133,13 +133,39 @@ public static class ContentDiscovery
             {
                 token.ThrowIfCancellationRequested();
                 if (++visited > maximumEntries) { Note(DiagnosticReadStatus.LimitReached, ReasonCodes.ResourceLimit, MessageText.Create("Backend.Core.ContentDiscovery.Files.03", (maximumEntries), (root))); yield break; }
-                if (!IsLocalSafePath(entry)) { Note(DiagnosticReadStatus.NotChecked, ReasonCodes.UnsafePath, MessageText.Create("Backend.Core.ContentDiscovery.Files.04", (entry))); continue; }
-                if (Directory.Exists(entry))
+                // 父目录出栈时已做完整 IsLocalSafePath 校验；子项仅做轻量语法检查与单次属性查询，避免重复遍历祖先与 DriveInfo
+                if (string.IsNullOrWhiteSpace(entry) || !Path.IsPathFullyQualified(entry) ||
+                    entry.StartsWith(@"\\", StringComparison.Ordinal) || (entry.Length > 2 && entry.IndexOf(':', 2) >= 0))
+                {
+                    Note(DiagnosticReadStatus.NotChecked, ReasonCodes.UnsafePath, MessageText.Create("Backend.Core.ContentDiscovery.Files.04", (entry)));
+                    continue;
+                }
+                FileAttributes attributes;
+                try
+                {
+                    attributes = File.GetAttributes(entry);
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    continue;
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or ArgumentException or NotSupportedException)
+                {
+                    Note(DiagnosticReadStatus.NotChecked, ReasonCodes.UnsafePath, MessageText.Create("Backend.Core.ContentDiscovery.Files.04", (entry)));
+                    continue;
+                }
+                if ((attributes & FileAttributes.ReparsePoint) != 0 &&
+                    SteamSentinel.Core.Utilities.Validation.IsRedirectingReparsePoint(entry))
+                {
+                    Note(DiagnosticReadStatus.NotChecked, ReasonCodes.UnsafePath, MessageText.Create("Backend.Core.ContentDiscovery.Files.04", (entry)));
+                    continue;
+                }
+                if ((attributes & FileAttributes.Directory) != 0)
                 {
                     if (next.Depth >= maximumDepth) Note(DiagnosticReadStatus.LimitReached, ReasonCodes.ResourceLimit, MessageText.Create("Backend.Core.ContentDiscovery.Files.05", (entry)));
                     else pending.Push((entry, next.Depth + 1));
                 }
-                else if (File.Exists(entry)) yield return entry;
+                else yield return entry;
             }
         }
     }

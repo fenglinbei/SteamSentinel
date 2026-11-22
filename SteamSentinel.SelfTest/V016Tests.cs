@@ -14,7 +14,7 @@ namespace SteamSentinel.SelfTest;
 internal static partial class Program
 {
     private static bool _v020LegacyDiagnostics;
-    private static async Task TestV016Async(string root, RuleSet rules)
+    private static async Task TestV016Async(string root, RuleSet rules, bool runDialog = true)
     {
         string directory = Path.Combine(root, "v016");
         Directory.CreateDirectory(directory);
@@ -78,11 +78,64 @@ internal static partial class Program
                 }, options: SteamSentinel.Core.Reporting.ReportPrivacy.ExportOptions);
             return report;
         }
-        foreach (string format in new[] { "aes", "classic", "7z", "rar" })
+        string mixedArchive = Path.Combine(directory, "mixed-entry.zip");
+        CreateZip(mixedArchive, archive => { using StreamWriter writer = new(archive.CreateEntry("plain.txt").Open()); writer.Write("inert plain entry"); });
+
+        // 第一阶段：并发创建互不依赖的加密归档，保持文件命名隔离与后续扫描顺序不变
+        string[] formats = ["aes", "classic", "7z", "rar"];
+        Dictionary<string, (Task<string> First, Task<string> Second)> formatTasks = new(StringComparer.Ordinal);
+        List<Task> stage1Tasks = [];
+        foreach (string format in formats)
+        {
+            if (format == "rar" && rar is null) continue;
+            Task<string> firstTask = Encrypt(format + "-a", format, secret, small);
+            Task<string> secondTask = Encrypt(format + "-b", format, secret, large);
+            formatTasks[format] = (firstTask, secondTask);
+            stage1Tasks.Add(firstTask);
+            stage1Tasks.Add(secondTask);
+        }
+        Task<string> limitedTask = Encrypt("limited", "aes", secret, small, large);
+        Task<string> mixedEntryTask = Encrypt("mixed-entry", "aes", secret, large);
+        Task<string> innerTask = Encrypt("inner", "aes", otherSecret, small);
+        Task<string> learnTask = Encrypt("learn", "aes", otherSecret, large);
+        stage1Tasks.Add(limitedTask);
+        stage1Tasks.Add(mixedEntryTask);
+        stage1Tasks.Add(innerTask);
+        stage1Tasks.Add(learnTask);
+        await Task.WhenAll(stage1Tasks);
+
+        string limited = await limitedTask;
+        _ = await mixedEntryTask;
+        string inner = await innerTask;
+        string learn = await learnTask;
+
+        // 第二阶段：基于 inner.zip 并发创建嵌套归档，并同步准备衍生夹具
+        Task<string> outerATask = Encrypt("outer-a", "aes", secret, inner);
+        Task<string> outerBTask = Encrypt("outer-b", "aes", secret, inner, small);
+
+        string badCrc = Path.Combine(directory, "bad-crc.zip");
+        byte[] crcBytes = await File.ReadAllBytesAsync(Path.Combine(directory, "classic-a.zip"));
+        int central = crcBytes.AsSpan().IndexOf(new byte[] { 0x50, 0x4b, 0x01, 0x02 });
+        if (central < 0) throw new InvalidDataException("Fixture central directory missing");
+        crcBytes[central + 16] ^= 1;
+        crcBytes[14] ^= 1;
+        await File.WriteAllBytesAsync(badCrc, crcBytes);
+
+        string malformed = Path.Combine(directory, "broken.7z");
+        await File.WriteAllBytesAsync(malformed, [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 4]);
+
+        await Task.WhenAll(outerATask, outerBTask);
+        string outerA = await outerATask, outerB = await outerBTask;
+
+        string plainOuterA = Path.Combine(directory, "plain-a.zip"), plainOuterB = Path.Combine(directory, "plain-b.zip");
+        CreateZip(plainOuterA, archive => { using Stream s = archive.CreateEntry("inner.zip").Open(); using FileStream f = File.OpenRead(inner); f.CopyTo(s); });
+        CreateZip(plainOuterB, archive => { using Stream s = archive.CreateEntry("copy.zip").Open(); using FileStream f = File.OpenRead(inner); f.CopyTo(s); });
+
+        foreach (string format in formats)
         {
             if (format == "rar" && rar is null) { Skip("0.1.6 RAR 独立密码回归（缺少 RAR）"); continue; }
-            string a = await Encrypt(format + "-a", format, secret, small);
-            string b = await Encrypt(format + "-b", format, secret, large);
+            (Task<string> firstTask, Task<string> secondTask) = formatTasks[format];
+            string a = await firstTask, b = await secondTask;
             RecordingPasswords provider = new((_, n) => n == 1 ? "wrong-inert-secret" : secret);
             ScanReport result = await Scan([a, b], provider);
             Check($"{format} 错误密码可更正并跨文件复用", result.Coverage == ScanCoverage.Complete && provider.Requests.Count == 2 &&
@@ -92,7 +145,6 @@ internal static partial class Program
         }
 
         string one = Path.Combine(directory, "aes-a.zip"), two = Path.Combine(directory, "aes-b.zip");
-        string limited = await Encrypt("limited", "aes", secret, small, large);
         RecordingPasswords partialProvider = new((_, _) => secret);
         ScanReport partial = await Scan([limited, one], partialProvider, 64);
         Check("已验证密码不因另一成员超过大小上限而丢失", partial.Coverage == ScanCoverage.Partial && partialProvider.Requests.Count == 1 &&
@@ -105,20 +157,10 @@ internal static partial class Program
         ScanReport unverified = await Scan([two, one], unverifiedProvider, 64);
         Check("未读取任何加密成员时不冒充密码已验证", unverified.Coverage == ScanCoverage.Partial && unverifiedProvider.Requests.Count == 2);
 
-        string mixedArchive = Path.Combine(directory, "mixed-entry.zip");
-        CreateZip(mixedArchive, archive => { using StreamWriter writer = new(archive.CreateEntry("plain.txt").Open()); writer.Write("inert plain entry"); });
-        await Encrypt("mixed-entry", "aes", secret, large);
         RecordingPasswords mixedEntries = new((_, _) => secret);
         ScanReport mixedEntryResult = await Scan([mixedArchive, one], mixedEntries, 64);
         Check("普通成员读完不代表跳过的加密成员已验证", mixedEntryResult.Coverage == ScanCoverage.Partial && mixedEntries.Requests.Count == 2);
 
-        string badCrc = Path.Combine(directory, "bad-crc.zip");
-        byte[] crcBytes = await File.ReadAllBytesAsync(Path.Combine(directory, "classic-a.zip"));
-        int central = crcBytes.AsSpan().IndexOf(new byte[] { 0x50, 0x4b, 0x01, 0x02 });
-        if (central < 0) throw new InvalidDataException("Fixture central directory missing");
-        crcBytes[central + 16] ^= 1;
-        crcBytes[14] ^= 1;
-        await File.WriteAllBytesAsync(badCrc, crcBytes);
         RecordingPasswords crcProvider = new((_, _) => secret);
         ScanReport crcResult = await Scan([badCrc, one], crcProvider);
         Check("ZIP 校验失败不缓存密码且后续文件继续", crcResult.Coverage == ScanCoverage.Partial &&
@@ -126,9 +168,6 @@ internal static partial class Program
             crcResult.Containers?.Resources.PasswordAttempts == 2 &&
             crcResult.RootSummaries.Last().Coverage == ScanCoverage.Complete);
 
-        string inner = await Encrypt("inner", "aes", otherSecret, small);
-        string outerA = await Encrypt("outer-a", "aes", secret, inner);
-        string outerB = await Encrypt("outer-b", "aes", secret, inner, small);
         RecordingPasswords skipInner = new((request, _) => request.Depth > 0 ? null : secret);
         ScanReport deferred = await Scan([outerA, outerB], skipInner);
         Check("同哈希内层跳过一次后不重复弹窗", skipInner.Requests.Count == 2 &&
@@ -142,10 +181,6 @@ internal static partial class Program
             repeated.Findings.Any(f => f.RuleId == "ARCHIVE-ENCRYPTED-DEFERRED"));
         Check("重试入口只取真实外层文件并去重", MainWindow.GetPasswordRetryTargets(deferred).Order().SequenceEqual(new[] { outerA, outerB }.Order()));
 
-        string plainOuterA = Path.Combine(directory, "plain-a.zip"), plainOuterB = Path.Combine(directory, "plain-b.zip");
-        CreateZip(plainOuterA, archive => { using Stream s = archive.CreateEntry("inner.zip").Open(); using FileStream f = File.OpenRead(inner); f.CopyTo(s); });
-        CreateZip(plainOuterB, archive => { using Stream s = archive.CreateEntry("copy.zip").Open(); using FileStream f = File.OpenRead(inner); f.CopyTo(s); });
-        string learn = await Encrypt("learn", "aes", otherSecret, large);
         RecordingPasswords learnLater = new((request, _) => request.ArchivePath.StartsWith(plainOuterA, StringComparison.Ordinal) ? null : otherSecret);
         ScanReport recovered = await Scan([plainOuterA, learn, plainOuterB], learnLater);
         Check("之后取得新成功密码仍可自动尝试此前跳过内容", learnLater.Requests.Count == 2 && recovered.RootSummaries.Last().Coverage == ScanCoverage.Complete);
@@ -159,14 +194,12 @@ internal static partial class Program
         Check("导出报告不含输入密码", !JsonSerializer.Serialize(mixedResult, JsonFile.Options).Contains(secret, StringComparison.Ordinal) &&
             !JsonSerializer.Serialize(mixedResult, JsonFile.Options).Contains(otherSecret, StringComparison.Ordinal));
 
-        string malformed = Path.Combine(directory, "broken.7z");
-        await File.WriteAllBytesAsync(malformed, [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 4]);
         RecordingPasswords malformedProvider = new((request, _) => request.ArchivePath == one ? secret : null);
         ScanReport broken = await Scan([malformed, one], malformedProvider);
         Check("损坏压缩包保留缺口并继续下一个文件", broken.Coverage == ScanCoverage.Partial &&
             broken.Findings.Any(f => f.RuleId == "ARCHIVE-UNSUPPORTED") && broken.RootSummaries.Last().Coverage == ScanCoverage.Complete);
 
-        string worker = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../SteamSentinel.ArchiveWorker/bin/Release/net10.0-windows10.0.19041.0/SteamSentinel.ArchiveWorker.exe"));
+        string worker = DevelopmentWorkerPath();
         RecordingPasswords wire = new((_, n) => n == 1 ? "wrong-inert-secret" : secret);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(45));
         ScanReport wireResult = await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions
@@ -181,7 +214,7 @@ internal static partial class Program
         }, wire.RequestPasswordAsync, null, timeout.Token);
         Check("受限工作进程中 ZIP 错密码与损坏包不中止整次扫描", wireResult.Coverage == ScanCoverage.Partial && wire.Requests.Count == 2 &&
             wireResult.RootSummaries.Last().Coverage == ScanCoverage.Complete && wire.Requests[1].PreferredReuseScope == ArchivePasswordReuseScope.Session);
-        TestV016Dialog();
+        if (runDialog) TestV016Dialog();
     }
 
     private static void TestV016Dialog()

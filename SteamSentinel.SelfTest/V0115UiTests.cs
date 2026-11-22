@@ -121,19 +121,45 @@ internal static partial class Program
             typeof(MainWindow).GetField("_operationCommitted", flags)!.SetValue(window, true);
             Check("v0.1.15 处置与复查期间阻止直接关闭窗口", window.MustWaitBeforeClosing);
             int runnerThread = uiThread;
-            ScanReport followUp = await window.RunPostRemediationCheckAsync(CancellationToken.None, async (options, progress, token) =>
+            TextBlock progressItem = Control<TextBlock>("ProgressItemText");
+            TextBlock activityElapsed = Control<TextBlock>("ActivityElapsedText");
+            TaskCompletionSource elapsedUpdated = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            // MainWindow.ActivityTimer 以 1s 周期在 Background 优先级刷新整数秒文本，首轮 tick 可能略早于 1.000s；
+            // 用条件探针等待界面真正跨过 00:01 且进度文本已送达，避免硬编码等待偶发/必现失败。
+            DispatcherTimer elapsedProbe = new(TimeSpan.FromMilliseconds(25), DispatcherPriority.Background, (_, _) =>
             {
-                runnerThread = Environment.CurrentManagedThreadId;
-                Check("v0.1.15 生产复查选项只读且不启动内容扫描", options.IncludeSystem && options.IncludeSteam &&
-                    !options.IncludeWorkshop && !options.IncludeRelatedContent && !options.UseAmsi && !options.InspectArchives);
-                progress.Report(new("fixture", "inert-follow-up", 1, null, "idle data"));
-                await Task.Delay(2200, token);
-                return new ScanReport { CompletedAtUtc = DateTimeOffset.UtcNow };
-            });
+                if (ticks > 5 &&
+                    progressItem.Text == "inert-follow-up" &&
+                    !activityElapsed.Text.EndsWith("00:00", StringComparison.Ordinal))
+                {
+                    elapsedUpdated.TrySetResult();
+                }
+            }, ui);
+            elapsedProbe.Start();
+            ScanReport followUp;
+            try
+            {
+                followUp = await window.RunPostRemediationCheckAsync(CancellationToken.None, async (options, progress, token) =>
+                {
+                    runnerThread = Environment.CurrentManagedThreadId;
+                    Check("v0.1.15 生产复查选项只读且不启动内容扫描", options.IncludeSystem && options.IncludeSteam &&
+                        !options.IncludeWorkshop && !options.IncludeRelatedContent && !options.UseAmsi && !options.InspectArchives);
+                    progress.Report(new("fixture", "inert-follow-up", 1, null, "idle data"));
+                    using CancellationTokenSource waitBudget = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    waitBudget.CancelAfter(TimeSpan.FromMilliseconds(2600));
+                    try { await elapsedUpdated.Task.WaitAsync(waitBudget.Token); }
+                    catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
+                    return new ScanReport { CompletedAtUtc = DateTimeOffset.UtcNow };
+                });
+            }
+            finally
+            {
+                elapsedProbe.Stop();
+            }
             heartbeat.Stop();
             Check("v0.1.15 实际复查入口后台上报可安全更新界面", runnerThread != uiThread &&
-                Control<TextBlock>("ProgressItemText").Text == "inert-follow-up" && followUp.CompletedAtUtc is not null);
-            Check("v0.1.15 等待复查时界面持续响应且已用时间更新", ticks > 5 && !Control<TextBlock>("ActivityElapsedText").Text.EndsWith("00:00"));
+                progressItem.Text == "inert-follow-up" && followUp.CompletedAtUtc is not null);
+            Check("v0.1.15 等待复查时界面持续响应且已用时间更新", ticks > 5 && !activityElapsed.Text.EndsWith("00:00", StringComparison.Ordinal));
             Check("v0.1.15 复查不覆盖已保存的处置结果", ReferenceEquals(typeof(MainWindow).GetField("_caseResult", flags)!.GetValue(window), saved));
 
             bool failed = false, cancelled = false;

@@ -6,7 +6,8 @@ namespace SteamSentinel.Core.Scanning;
 
 public sealed class ContainerResourceBudget
 {
-    private readonly Stopwatch _watch = Stopwatch.StartNew();
+    private readonly TimeProvider _timeProvider;
+    private readonly long _startTimestamp;
     private readonly CancellationToken _token;
     private readonly ScanResourceSession? _resourceSession = ScanResourceSession.Current;
     private long _read, _decoded, _accepted, _rangeCopy, _temporary, _peakTemporary, _peakMemory, _metadata;
@@ -15,15 +16,27 @@ public sealed class ContainerResourceBudget
     private long _nativeDecodedReserved;
     private long _parallelReserved;
     private int _attempts;
-    private readonly long _initialWait = ScanResourceSession.Current?.WaitingMilliseconds ?? 0;
-    private long ActiveMilliseconds => Math.Max(0, _watch.ElapsedMilliseconds - ((ScanResourceSession.Current?.WaitingMilliseconds ?? 0) - _initialWait));
+    private readonly long _initialWait;
+    private long ElapsedMilliseconds => Math.Max(0, (long)_timeProvider.GetElapsedTime(_startTimestamp).TotalMilliseconds);
+    private long ActiveMilliseconds => Math.Max(0, ElapsedMilliseconds - ((ScanResourceSession.Current?.WaitingMilliseconds ?? 0) - _initialWait));
     public ContainerResourceLimits Limits { get; }
     public long EffectiveDiskReserve => _resourceSession?.RaisedResources == true ? Math.Max(1024L * 1024 * 1024, Limits.ReservedDiskBytes) : Limits.ReservedDiskBytes;
     public Action? Progress { get; set; }
 
     public ContainerResourceBudget(ContainerResourceLimits limits, CancellationToken token = default)
+        : this(limits, token, null)
     {
-        Validate(limits); Limits = limits; _token = token;
+    }
+
+    // 仅向内部测试暴露 TimeProvider 注入，默认使用 TimeProvider.System 计算真实耗时。
+    internal ContainerResourceBudget(ContainerResourceLimits limits, CancellationToken token, TimeProvider? timeProvider = null)
+    {
+        Validate(limits);
+        Limits = limits;
+        _token = token;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _startTimestamp = _timeProvider.GetTimestamp();
+        _initialWait = ScanResourceSession.Current?.WaitingMilliseconds ?? 0;
         ScanResourceSession.Current?.ObserveResources(Snapshot);
     }
 
@@ -50,9 +63,10 @@ public sealed class ContainerResourceBudget
         if (ActiveMilliseconds / 1000d >= Limits.MaximumDurationSeconds &&
             !ScanResourceSession.Allow("ContainerLimits.MaximumDurationSeconds", checked(Limits.MaximumDurationSeconds + 1L), ActiveMilliseconds / 1000, known: false))
             throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContainerResourceBudget.Check.01"), sourceText => new ScanResourceLimitException(sourceText));
-        if (_watch.ElapsedMilliseconds - _lastMemoryCheck >= 500)
+        long elapsedMilliseconds = ElapsedMilliseconds;
+        if (elapsedMilliseconds - _lastMemoryCheck >= 500)
         {
-            _lastMemoryCheck = _watch.ElapsedMilliseconds;
+            _lastMemoryCheck = elapsedMilliseconds;
             using Process process = Process.GetCurrentProcess();
             _peakMemory = Math.Max(_peakMemory, process.PrivateMemorySize64);
         }

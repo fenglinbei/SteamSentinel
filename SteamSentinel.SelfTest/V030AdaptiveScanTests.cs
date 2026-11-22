@@ -83,9 +83,10 @@ internal static partial class Program
             Check("自适应 报告条数和文本限制可授权且保留原记录", records.Findings.Count == 2 && session.Audit.Decisions.Select(d => d.Request.LimitKey).ToHashSet().IsSupersetOf(["MaximumReportRecords", "MaximumReportTextCharacters"]));
         }
         ScanOptions timed = Options(directory, ("ContainerLimits.MaximumDurationSeconds", 1));
-        using (ScanResourceSession session = new(timed, r => { Thread.Sleep(1100); return Approve(timed, r); }, default))
+        ManualTimeProvider budgetClock = new();
+        using (ScanResourceSession session = new(timed, r => { budgetClock.Advance(TimeSpan.FromMilliseconds(1100)); return Approve(timed, r); }, default, budgetClock))
         {
-            ContainerResourceBudget budget = new(timed.ContainerLimits!);
+            ContainerResourceBudget budget = new(timed.ContainerLimits!, default, budgetClock);
             bool allowed = ScanResourceSession.Allow("MaximumStringScanBytes", timed.MaximumStringScanBytes + 1);
             budget.Check();
             Check("自适应 等待用户不消耗扫描时限", allowed && session.WaitingMilliseconds >= 1000 && budget.Snapshot().ElapsedMilliseconds < 800);

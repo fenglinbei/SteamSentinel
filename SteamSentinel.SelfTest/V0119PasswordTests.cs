@@ -84,6 +84,7 @@ internal static partial class Program
         }.FirstOrDefault(File.Exists);
         if (sevenZip is null) { Program.Skip("0.1.19 多密码真实归档测试需要7-Zip"); return; }
         const string alpha = "v0119-inert-alpha", beta = "v0119-inert-beta", wrong = "v0119-inert-wrong";
+        const string treeSecret = "v0119-inert-tree", spacesSecret = "  v0119-spaces  ";
         string payload = Path.Combine(directory, "harmless.txt"), plain = Path.Combine(directory, "ordinary.txt"), large = Path.Combine(directory, "large.txt");
         await File.WriteAllTextAsync(payload, "Harmless password regression payload; never execute anything.", new UTF8Encoding(false));
         await File.WriteAllTextAsync(plain, "Ordinary unencrypted file must remain readable.", new UTF8Encoding(false));
@@ -134,11 +135,66 @@ internal static partial class Program
         static ArchivePasswordResponse Skip(ArchivePasswordRequest request, bool all = false) => new(request.RequestId, true, null, false,
             ArchivePasswordReuseScope.CurrentOnly, null, all);
         static int PayloadCount(ScanReport report) => report.Findings.Count(f => f.RuleId == "V0119-HARMLESS-TEXT");
+
+        // 按依赖波次并行创建所有互不依赖的加密夹具归档，保持全部路径、密码与扫描验证语义不变。
+        List<Task<string>> wave1Tasks = [];
+        Task<string> QueueWave1(Task<string> task) { wave1Tasks.Add(task); return task; }
+        Dictionary<string, Task<string>> formatTasks = new()
+        {
+            ["aes"] = QueueWave1(Encrypt("format-aes", "aes", alpha, payload)),
+            ["classic"] = QueueWave1(Encrypt("format-classic", "classic", alpha, payload)),
+            ["7z"] = QueueWave1(Encrypt("format-7z", "7z", alpha, payload))
+        };
+        if (rar is not null) formatTasks["rar"] = QueueWave1(Encrypt("format-rar", "rar", alpha, payload));
+        Dictionary<string, Task<string>> decodeBudgetNextTasks = new()
+        {
+            ["7z"] = QueueWave1(Encrypt("decode-budget-next-7z", "7z", beta, payload))
+        };
+        if (rar is not null) decodeBudgetNextTasks["rar"] = QueueWave1(Encrypt("decode-budget-next-rar", "rar", beta, payload));
+        Dictionary<string, Task<string>> sameInnerTasks = new()
+        {
+            ["aes"] = QueueWave1(Encrypt("same-inner-aes", "classic", alpha, payload)),
+            ["classic"] = QueueWave1(Encrypt("same-inner-classic", "7z", alpha, payload)),
+            ["7z"] = QueueWave1(Encrypt("same-inner-7z", "aes", alpha, payload))
+        };
+        if (rar is not null) sameInnerTasks["rar"] = QueueWave1(Encrypt("same-inner-rar", "7z", alpha, payload));
+        Task<string>? threeInnerTask = rar is not null ? QueueWave1(Encrypt("three-inner", "rar", alpha, payload)) : null;
+        Task<string> betaArchiveTask = QueueWave1(Encrypt("other-password", "aes", beta, payload));
+        Task<string> oversizedTask = QueueWave1(Encrypt("unverified-large", "aes", alpha, large));
+        Task<string> unknownTask = QueueWave1(Encrypt("unknown-password", "classic", "v0119-inert-third", payload));
+        Task<string> knownLaterTask = QueueWave1(Encrypt("known-after-skip", "7z", alpha, payload));
+        Task<string> spacesArchiveTask = QueueWave1(Encrypt("space-password", "aes", spacesSecret, payload));
+        await Task.WhenAll(wave1Tasks);
+
+        string betaArchive = await betaArchiveTask;
+        string oversized = await oversizedTask;
+        string unknown = await unknownTask;
+        string knownLater = await knownLaterTask;
+        string spacesArchive = await spacesArchiveTask;
+
+        List<Task<string>> wave2Tasks = [];
+        Task<string> QueueWave2(Task<string> task) { wave2Tasks.Add(task); return task; }
+        Dictionary<string, Task<string>> sameOuterTasks = new()
+        {
+            ["aes"] = QueueWave2(Encrypt("same-outer-aes", "aes", alpha, await sameInnerTasks["aes"])),
+            ["classic"] = QueueWave2(Encrypt("same-outer-classic", "classic", alpha, await sameInnerTasks["classic"])),
+            ["7z"] = QueueWave2(Encrypt("same-outer-7z", "7z", alpha, await sameInnerTasks["7z"]))
+        };
+        if (rar is not null) sameOuterTasks["rar"] = QueueWave2(Encrypt("same-outer-rar", "rar", alpha, await sameInnerTasks["rar"]));
+        Task<string>? threeMiddleTask = threeInnerTask is not null ? QueueWave2(Encrypt("three-middle", "7z", alpha, await threeInnerTask)) : null;
+        Task<string> nestedDifferentTask = QueueWave2(Encrypt("nested-different", "7z", alpha, betaArchive));
+        Task<string> treeWithSessionInnerTask = QueueWave2(Encrypt("tree-and-session", "7z", treeSecret, betaArchive));
+        await Task.WhenAll(wave2Tasks);
+
+        string nestedDifferent = await nestedDifferentTask;
+        string treeWithSessionInner = await treeWithSessionInnerTask;
+        string? threeOuter = threeMiddleTask is not null ? await Encrypt("three-outer", "aes", alpha, await threeMiddleTask) : null;
+
         Dictionary<string, string> formatArchives = [];
         foreach (string format in new[] { "aes", "classic", "7z", "rar" })
         {
             if (format == "rar" && rar is null) { Program.Skip("0.1.19 RAR密码回归需要RAR"); continue; }
-            string archive = await Encrypt("format-" + format, format, alpha, payload);
+            string archive = await formatTasks[format];
             formatArchives[format] = archive;
             V0119PasswordProvider provider = new((r, _) => Candidates(r, [wrong, wrong, alpha]));
             V0119PasswordProgress progress = new();
@@ -169,7 +225,7 @@ internal static partial class Program
         foreach (string format in new[] { "7z", "rar" })
         {
             if (!formatArchives.TryGetValue(format, out string? archive)) continue;
-            string laterEncrypted = await Encrypt("decode-budget-next-" + format, format, beta, payload);
+            string laterEncrypted = await decodeBudgetNextTasks[format];
             using ContentScanner scanner = new(fixtureRules);
             using CancellationTokenSource budgetTimeout = new(TimeSpan.FromSeconds(45));
             ScanReport limitedReport = new();
@@ -209,8 +265,7 @@ internal static partial class Program
         foreach ((string outerFormat, string innerFormat) in new[] { ("aes", "classic"), ("classic", "7z"), ("7z", "aes"), ("rar", "7z") })
         {
             if (outerFormat == "rar" && rar is null) continue;
-            string inner = await Encrypt("same-inner-" + outerFormat, innerFormat, alpha, payload);
-            string outer = await Encrypt("same-outer-" + outerFormat, outerFormat, alpha, inner);
+            string outer = await sameOuterTasks[outerFormat];
             foreach (ArchivePasswordReuseScope scope in new[] { ArchivePasswordReuseScope.ArchiveTree, ArchivePasswordReuseScope.Session })
             {
                 V0119PasswordProvider provider = new((r, n) => n == 1
@@ -220,18 +275,14 @@ internal static partial class Program
                     provider.Requests.Count == 1 && report.Metrics.ArchiveEntriesVisited == 2 && PayloadCount(report) == 1);
             }
         }
-        if (rar is not null)
+        if (threeOuter is not null)
         {
-            string inner = await Encrypt("three-inner", "rar", alpha, payload);
-            string middle = await Encrypt("three-middle", "7z", alpha, inner);
-            string outer = await Encrypt("three-outer", "aes", alpha, middle);
             V0119PasswordProvider provider = new((r, n) => n == 1 ? Candidates(r, [wrong, alpha], ArchivePasswordReuseScope.ArchiveTree) : Skip(r));
-            ScanReport report = await Scan([outer], provider);
+            ScanReport report = await Scan([threeOuter], provider);
             Check("0.1.19 AES加7z加RAR三层同密码不重复弹窗", report.Coverage == ScanCoverage.Complete && provider.Requests.Count == 1 &&
                 report.Metrics.ArchiveEntriesVisited == 3 && PayloadCount(report) == 1);
         }
 
-        string betaArchive = await Encrypt("other-password", "aes", beta, payload);
         foreach (ArchivePasswordReuseScope scope in Enum.GetValues<ArchivePasswordReuseScope>())
         {
             V0119PasswordProvider provider = new((r, n) => n == 1 ? Candidates(r, [alpha, beta], scope) : Skip(r));
@@ -240,26 +291,20 @@ internal static partial class Program
             Check($"0.1.19 多候选跨外层归档遵守{scope}作用域", provider.Requests.Count == (session ? 1 : 2) &&
                 report.Coverage == (session ? ScanCoverage.Complete : ScanCoverage.Partial) && PayloadCount(report) == (session ? 2 : 1));
         }
-        string nestedDifferent = await Encrypt("nested-different", "7z", alpha, betaArchive);
         V0119PasswordProvider nestedCandidates = new((r, n) => n == 1 ? Candidates(r, [alpha, beta], ArchivePasswordReuseScope.ArchiveTree) : Skip(r));
         ScanReport different = await Scan([nestedDifferent], nestedCandidates);
         Check("0.1.19 尚未验证的内层候选仍可在原归档树依次尝试", nestedCandidates.Requests.Count == 1 && different.Coverage == ScanCoverage.Complete && PayloadCount(different) == 1);
-        const string treeSecret = "v0119-inert-tree";
-        string treeWithSessionInner = await Encrypt("tree-and-session", "7z", treeSecret, betaArchive);
         V0119PasswordProvider combinedScopes = new((r, n) => n == 1 ? Candidates(r, [alpha, beta]) :
             n == 2 ? Candidates(r, [treeSecret], ArchivePasswordReuseScope.ArchiveTree) : Skip(r));
         ScanReport combinedScopeReport = await Scan([one, treeWithSessionInner], combinedScopes);
         Check("0.1.19 真实嵌套树候选未解开时继续适用会话后备密码", combinedScopes.Requests.Count == 2 &&
             combinedScopeReport.Coverage == ScanCoverage.Complete && PayloadCount(combinedScopeReport) == 2);
 
-        string oversized = await Encrypt("unverified-large", "aes", alpha, large);
         V0119PasswordProvider unverified = new((r, n) => n == 1 ? Candidates(r, [alpha, beta]) : Skip(r));
         ScanReport unverifiedReport = await Scan([oversized, betaArchive], unverified, entryBytes: 128);
         Check("0.1.19 未验证的用户候选保留试用资格但大成员仍记未完成", unverified.Requests.Count == 1 && unverifiedReport.Coverage == ScanCoverage.Partial &&
             unverifiedReport.RootSummaries.Last().Coverage == ScanCoverage.Complete && PayloadCount(unverifiedReport) == 1);
 
-        string unknown = await Encrypt("unknown-password", "classic", "v0119-inert-third", payload);
-        string knownLater = await Encrypt("known-after-skip", "7z", alpha, payload);
         V0119PasswordProvider skipAll = new((r, n) => n == 1 ? Candidates(r, [alpha]) : Skip(r, true));
         ScanReport skipped = await Scan([one, betaArchive, unknown, knownLater, plain], skipAll);
         Check("0.1.19 跳过全部后不同未解密归档不再询问且保留Partial", skipAll.Requests.Count == 2 && skipped.Coverage == ScanCoverage.Partial &&
@@ -277,8 +322,6 @@ internal static partial class Program
         }
         Check("0.1.19 新扫描重置跳过全部及密码会话", reset.Requests.Count == 1 && reset.Requests[0].PreferredReuseScope == ArchivePasswordReuseScope.ArchiveTree && resetReport.Coverage == ScanCoverage.Complete);
 
-        string spacesSecret = "  v0119-spaces  ";
-        string spacesArchive = await Encrypt("space-password", "aes", spacesSecret, payload);
         V0119PasswordProvider spaces = new((r, _) => Candidates(r, [spacesSecret.Trim(), spacesSecret]));
         ScanReport spaced = await Scan([spacesArchive], spaces);
         Check("0.1.19 多候选保留密码前后空格不擅自修剪", spaces.Requests.Count == 1 && spaced.Coverage == ScanCoverage.Complete && PayloadCount(spaced) == 1);
@@ -291,7 +334,7 @@ internal static partial class Program
         try { await Scan([one], cancel); } catch (OperationCanceledException) { cancelled = true; }
         Check("0.1.19 密码提供过程取消仍传播取消状态", cancelled && cancel.Requests.Count == 1);
 
-        string worker = workerOverride ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../SteamSentinel.ArchiveWorker/bin/Release/net10.0-windows10.0.19041.0/SteamSentinel.ArchiveWorker.exe"));
+        string worker = workerOverride ?? DevelopmentWorkerPath();
         V0119PasswordProvider wire = new((r, n) => n == 1 ? Candidates(r, [wrong, alpha, beta]) : Skip(r));
         using CancellationTokenSource workerTimeout = new(TimeSpan.FromSeconds(90));
         ScanReport wireReport = await new ArchiveWorkerClient(worker).RunAsync(V0119PasswordOptions([one, betaArchive]), wire.RequestPasswordAsync, null, workerTimeout.Token);
@@ -312,14 +355,14 @@ internal static partial class Program
         }
         catch (OperationCanceledException) { wireCancelled = true; }
         Check("0.1.19 Low Worker等待密码时取消不会继续扫描", wireCancelled);
-        ArchiveWorkerClient.HardTimeoutOverride = TimeSpan.FromSeconds(2);
+        ArchiveWorkerClient.HardTimeoutOverride = TimeSpan.FromMilliseconds(2000);
         try
         {
             using CancellationTokenSource pauseCancelSource = new(TimeSpan.FromSeconds(20));
             ScanReport pauseReport = await new ArchiveWorkerClient(worker).RunAsync(V0119PasswordOptions([one]),
                 async (request, token) =>
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(3), token);
+                    await Task.Delay(TimeSpan.FromMilliseconds(2500), token);
                     return Candidates(request, [alpha]);
                 }, null, pauseCancelSource.Token);
             Check("0.1.19 Low Worker等待用户输入密码期间暂停硬超时",

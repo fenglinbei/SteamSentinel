@@ -11,6 +11,7 @@ public sealed class ScanResourceSession : IDisposable
     private readonly ScanResourceSession? _previous;
     private readonly Func<ScanLimitRequest, ScanLimitResponse> _decide;
     private readonly CancellationToken _token;
+    private readonly TimeProvider _timeProvider;
     private readonly object _gate = new();
     private readonly HashSet<(string Key, string Target)> _declined = [];
     private ScanReport? _report;
@@ -29,9 +30,19 @@ public sealed class ScanResourceSession : IDisposable
     }
 
     public ScanResourceSession(ScanOptions options, Func<ScanLimitRequest, ScanLimitResponse> decide, CancellationToken token)
+        : this(options, decide, token, null)
     {
-        Options = options; _decide = decide; _token = token;
-        _previous = Active.Value; Active.Value = this;
+    }
+
+    // 仅向内部测试暴露 TimeProvider 注入，默认仍使用 TimeProvider.System。
+    internal ScanResourceSession(ScanOptions options, Func<ScanLimitRequest, ScanLimitResponse> decide, CancellationToken token, TimeProvider? timeProvider = null)
+    {
+        Options = options;
+        _decide = decide;
+        _token = token;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _previous = Active.Value;
+        Active.Value = this;
     }
     public void Bind(ScanReport report) { _report = report; report.ResourceAudit = Audit; }
     public void ObserveResources(Func<ContainerResourceSnapshot> resources) => _resources = resources;
@@ -63,12 +74,13 @@ public sealed class ScanResourceSession : IDisposable
                     (resources?.NativeReservedReadBytes ?? 0) + (resources?.NativeReservedDecodedBytes ?? 0)), resources?.AcceptedExpandedBytes ?? 0);
             request.Validate();
             Audit.Phase = ScanResourcePhase.AwaitingDecision;
-            Stopwatch waiting = Stopwatch.StartNew();
+            long waitStart = _timeProvider.GetTimestamp();
             ScanLimitResponse response;
             try { response = _decide(request); }
             finally
             {
-                Audit.WaitingMilliseconds = checked(Audit.WaitingMilliseconds + waiting.ElapsedMilliseconds);
+                long elapsedMilliseconds = Math.Max(0L, (long)_timeProvider.GetElapsedTime(waitStart).TotalMilliseconds);
+                Audit.WaitingMilliseconds = checked(Audit.WaitingMilliseconds + elapsedMilliseconds);
                 Audit.Phase = ScanResourcePhase.Running;
             }
             if (response.RequestId != request.RequestId || !Enum.IsDefined(response.Decision) || !ResourceDecisionReasons.IsValid(response.ReasonCode) || response.Changes is null ||

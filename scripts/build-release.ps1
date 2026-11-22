@@ -34,6 +34,79 @@ function Invoke-DotNet {
     if ($LASTEXITCODE -ne 0) { throw "dotnet failed with exit code $LASTEXITCODE" }
 }
 
+function Format-ChildArgument {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
+}
+
+function Start-WindowsPowerShellFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [Parameter(Mandatory = $true)][string]$ResultsPath,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    )
+
+    $psi = [Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $Executable
+    $psi.WorkingDirectory = $WorkingDirectory
+    $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-ResultsPath', $ResultsPath)
+    $psi.Arguments = (($arguments | ForEach-Object { Format-ChildArgument -Value $_ }) -join ' ')
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $psi
+    try {
+        if (-not $process.Start()) { throw "Failed to start $ScriptPath." }
+        return [pscustomobject]@{
+            Process = $process
+            Stdout = $process.StandardOutput.ReadToEndAsync()
+            Stderr = $process.StandardError.ReadToEndAsync()
+            Disposed = $false
+        }
+    }
+    catch {
+        $process.Dispose()
+        throw
+    }
+}
+
+function Wait-WindowsPowerShellFile {
+    param([Parameter(Mandatory = $true)]$Handle)
+
+    $process = $Handle.Process
+    try {
+        $process.WaitForExit()
+        $Handle.Stdout.Wait()
+        $Handle.Stderr.Wait()
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Stdout = $Handle.Stdout.Result
+            Stderr = $Handle.Stderr.Result
+        }
+    }
+    finally {
+        $Handle.Disposed = $true
+        $process.Dispose()
+    }
+}
+
+function Stop-WindowsPowerShellFile {
+    param($Handle)
+
+    if ($null -eq $Handle -or $Handle.Disposed -or $null -eq $Handle.Process) { return }
+    try {
+        if (-not $Handle.Process.HasExited) { $Handle.Process.Kill() }
+    }
+    catch {}
+    try { $Handle.Process.Dispose() } catch {}
+    $Handle.Disposed = $true
+}
+
 function Invoke-Git {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
 
@@ -338,6 +411,10 @@ try {
 
     # These installer tests exercise real Windows handle/ACL semantics on inert, temporary
     # fixtures. They require an explicit administrator token; never substitute skipped tests.
+    # PayloadMaintenance uses %TEMP%\SteamSentinel-InstallerTests-* with no registry writes,
+    # whereas MachineStateBootstrap uses $snapshotRoot\artifacts\installer-machine-state-tests\*
+    # and unique HKCU\Software\SteamSentinelMachineStateTests\<guid> keys, so both are isolated
+    # and safe to run concurrently in separate Windows PowerShell 5.1 processes.
     $buildPrincipal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $buildPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw 'Run the release build elevated: mandatory installer file/ACL tests require an administrator token.'
@@ -346,11 +423,34 @@ try {
     $installerTestSource = Join-Path $snapshotRoot 'installer\PayloadMaintenance.cs'
     $installerTestScriptHash = (Get-FileHash -LiteralPath $installerTestScript -Algorithm SHA256).Hash
     $installerTestSourceHash = (Get-FileHash -LiteralPath $installerTestSource -Algorithm SHA256).Hash
+
+    # Machine-state migration is a separate gate: never infer permission safety
+    # from payload-retirement tests or from the application's self-test count.
+    $machineStateTestScript = Join-Path $snapshotRoot 'scripts\Test-InstallerMachineState.ps1'
+    $machineStateTestSource = Join-Path $snapshotRoot 'installer\MachineStateBootstrap.cs'
+    $machineStateTestScriptHash = (Get-FileHash -LiteralPath $machineStateTestScript -Algorithm SHA256).Hash
+    $machineStateTestSourceHash = (Get-FileHash -LiteralPath $machineStateTestSource -Algorithm SHA256).Hash
+
     $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    & $windowsPowerShell '-NoLogo' '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' `
-        '-File' $installerTestScript '-ResultsPath' $installerTestPath
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installerTestPath -PathType Leaf)) {
-        throw "Mandatory installer maintenance tests failed (exit=$LASTEXITCODE)."
+    $installerHandle = $null
+    $machineStateHandle = $null
+    try {
+        $installerHandle = Start-WindowsPowerShellFile -Executable $windowsPowerShell `
+            -ScriptPath $installerTestScript -ResultsPath $installerTestPath -WorkingDirectory $snapshotRoot
+        $machineStateHandle = Start-WindowsPowerShellFile -Executable $windowsPowerShell `
+            -ScriptPath $machineStateTestScript -ResultsPath $machineStateTestPath -WorkingDirectory $snapshotRoot
+        $installerRun = Wait-WindowsPowerShellFile -Handle $installerHandle
+        $machineStateRun = Wait-WindowsPowerShellFile -Handle $machineStateHandle
+    }
+    finally {
+        Stop-WindowsPowerShellFile -Handle $installerHandle
+        Stop-WindowsPowerShellFile -Handle $machineStateHandle
+    }
+
+    if (-not [string]::IsNullOrEmpty($installerRun.Stdout)) { [Console]::Out.Write($installerRun.Stdout) }
+    if (-not [string]::IsNullOrEmpty($installerRun.Stderr)) { [Console]::Error.Write($installerRun.Stderr) }
+    if ($installerRun.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $installerTestPath -PathType Leaf)) {
+        throw "Mandatory installer maintenance tests failed (exit=$($installerRun.ExitCode))."
     }
     $installerTests = Get-Content -LiteralPath $installerTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     foreach ($field in @('schema','passed','failed','skipped','elapsedMs','sourceSha256','testScriptSha256',
@@ -369,16 +469,10 @@ try {
         throw 'Installer maintenance tests did not satisfy the zero-failure, zero-skip, source-bound gate.'
     }
 
-    # Machine-state migration is a separate gate: never infer permission safety
-    # from payload-retirement tests or from the application's self-test count.
-    $machineStateTestScript = Join-Path $snapshotRoot 'scripts\Test-InstallerMachineState.ps1'
-    $machineStateTestSource = Join-Path $snapshotRoot 'installer\MachineStateBootstrap.cs'
-    $machineStateTestScriptHash = (Get-FileHash -LiteralPath $machineStateTestScript -Algorithm SHA256).Hash
-    $machineStateTestSourceHash = (Get-FileHash -LiteralPath $machineStateTestSource -Algorithm SHA256).Hash
-    & $windowsPowerShell '-NoLogo' '-NoProfile' '-NonInteractive' '-ExecutionPolicy' 'Bypass' `
-        '-File' $machineStateTestScript '-ResultsPath' $machineStateTestPath
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $machineStateTestPath -PathType Leaf)) {
-        throw "Mandatory installer machine-state tests failed (exit=$LASTEXITCODE)."
+    if (-not [string]::IsNullOrEmpty($machineStateRun.Stdout)) { [Console]::Out.Write($machineStateRun.Stdout) }
+    if (-not [string]::IsNullOrEmpty($machineStateRun.Stderr)) { [Console]::Error.Write($machineStateRun.Stderr) }
+    if ($machineStateRun.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $machineStateTestPath -PathType Leaf)) {
+        throw "Mandatory installer machine-state tests failed (exit=$($machineStateRun.ExitCode))."
     }
     $machineStateTests = Get-Content -LiteralPath $machineStateTestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     foreach ($field in @('schema','passed','failed','skipped','elapsedMs','sourceSha256','testScriptSha256',

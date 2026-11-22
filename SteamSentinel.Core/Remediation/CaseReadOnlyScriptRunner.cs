@@ -7,8 +7,16 @@ namespace SteamSentinel.Core.Remediation;
 /// <summary>Only receives scripts constructed by WindowsRemediationStateProbe, never saved case commands.</summary>
 public static class CaseReadOnlyScriptRunner
 {
-    public static async Task<string?> RunAsync(string fixedScript, CancellationToken token)
+    public static readonly TimeSpan DefaultTimeout = RemediationVerification.FirewallProbeTimeout;
+
+    public static Task<string?> RunAsync(string fixedScript, CancellationToken token) =>
+        RunAsync(fixedScript, token, null);
+
+    // 仅向内部测试暴露自定义超时覆盖，生产默认超时保持 15 秒不变。
+    internal static async Task<string?> RunAsync(string fixedScript, CancellationToken token, TimeSpan? timeoutOverride = null)
     {
+        if (timeoutOverride is { } overrideValue && overrideValue <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeoutOverride));
         if (fixedScript.Length > 64 * 1024) return null;
         string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
         string psHome = Path.Combine(system, "WindowsPowerShell", "v1.0");
@@ -31,7 +39,7 @@ public static class CaseReadOnlyScriptRunner
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         // Reverification supplies the shorter per-action deadline for ordinary probes.
         // This process-level ceiling must also allow the full program-firewall observation.
-        timeout.CancelAfter(RemediationVerification.FirewallProbeTimeout);
+        timeout.CancelAfter(timeoutOverride ?? DefaultTimeout);
         using Process process = new() { StartInfo = info };
         timeout.Token.ThrowIfCancellationRequested();
         process.Start();

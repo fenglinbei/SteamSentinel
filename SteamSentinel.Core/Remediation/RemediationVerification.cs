@@ -9,8 +9,22 @@ public interface IRemediationStateProbe
 }
 
 /// <summary>Two bounded read-only observations, not a claim that the whole computer is clean.</summary>
-public sealed class RemediationVerification(IRemediationStateProbe probe)
+public sealed class RemediationVerification
 {
+    private readonly IRemediationStateProbe _probe;
+    private readonly TimeProvider _timeProvider;
+
+    public RemediationVerification(IRemediationStateProbe probe) : this(probe, null)
+    {
+    }
+
+    // 仅向内部测试暴露 TimeProvider 注入，生产调用仍默认使用系统时钟。
+    internal RemediationVerification(IRemediationStateProbe probe, TimeProvider? timeProvider = null)
+    {
+        _probe = probe;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
+
     public const int MaximumMessageCharacters = 512;
     public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan FirewallProbeTimeout = TimeSpan.FromSeconds(15);
@@ -29,13 +43,14 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
             result.VerificationSummaryText = MessageText.Create("RemediationVerification.ObserveAsync.02");
             return;
         }
-        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(GetProbeTimeout(action.Type));
+        // 使用基于 TimeProvider 的超时令牌与外部取消令牌链接，确保虚拟时钟与真实取消均可触发。
+        using CancellationTokenSource timeoutDelay = new(GetProbeTimeout(action.Type), _timeProvider);
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutDelay.Token);
         RemediationVerificationObservation observation;
         try
         {
             timeout.Token.ThrowIfCancellationRequested();
-            observation = await probe.ObserveAsync(action, timeout.Token).WaitAsync(timeout.Token).ConfigureAwait(false);
+            observation = await _probe.ObserveAsync(action, timeout.Token).WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -75,9 +90,9 @@ public sealed class RemediationVerification(IRemediationStateProbe probe)
     {
         TimeSpan delay = secondPassDelay ?? TimeSpan.FromSeconds(1);
         if (delay < TimeSpan.Zero || delay > TimeSpan.FromSeconds(2)) throw new ArgumentOutOfRangeException(nameof(secondPassDelay));
-        using CancellationTokenSource budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(SecondPassBudget);
-        try { await Task.Delay(delay, budget.Token).ConfigureAwait(false); }
+        using CancellationTokenSource budgetDelay = new(SecondPassBudget, _timeProvider);
+        using CancellationTokenSource budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budgetDelay.Token);
+        try { await Task.Delay(delay, _timeProvider, budget.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) { }
         await Parallel.ForEachAsync(result.Actions, new ParallelOptions { MaxDegreeOfParallelism = 2 }, async (actionResult, _) =>
         {

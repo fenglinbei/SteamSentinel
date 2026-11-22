@@ -105,9 +105,7 @@ internal static partial class Program
         Check("流式 JSON 导出保留设置与诊断且继续脱敏", exported.Contains("ContentScanSettings") && exported.Contains("WorkerDiagnostics") && !exported.Contains("token=secret"));
         Check("Markdown 显示最后路径、内部阶段和内存", md.Contains("压缩包目录") && md.Contains("inert.zip") && md.Contains("组件私有内存") && !md.Contains("token=secret"));
 
-        string solution = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        string worker = Directory.EnumerateFiles(Path.Combine(solution, "SteamSentinel.ArchiveWorker", "bin"),
-            "SteamSentinel.ArchiveWorker.exe", SearchOption.AllDirectories).OrderByDescending(File.GetLastWriteTimeUtc).First();
+        string worker = ResolveArchiveWorkerPath(allowCoverageEnvOverride: false);
         static Task<ArchivePasswordResponse> NoPassword(ArchivePasswordRequest r, CancellationToken _) =>
             Task.FromResult(new ArchivePasswordResponse(r.RequestId, true, null, false));
         using CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3));
@@ -126,7 +124,9 @@ internal static partial class Program
         Check("真实扫描保留内存诊断且仍在 1 GiB Job 内", lowLarge.WorkerDiagnostics is { PrivateBytes: > 0, PeakPrivateBytes: < 1024L * 1024 * 1024 });
         Console.WriteLine($"V0113_LARGE_PEAK_MIB={lowLarge.WorkerDiagnostics!.PeakPrivateBytes / 1024 / 1024}");
         string manyFiles = Path.Combine(directory, "many"); Directory.CreateDirectory(manyFiles);
-        for (int i = 0; i < 6000; i++) await File.WriteAllTextAsync(Path.Combine(manyFiles, $"item-{i:D5}.dat"), "x");
+        // 限制并发度写入六千个小文件，消除逐个异步状态机开销
+        Parallel.For(0, 6000, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
+            File.WriteAllText(Path.Combine(manyFiles, $"item-{i:D5}.dat"), "x"));
         ScanReport lowMany = await new ArchiveWorkerClient(worker).RunAsync(new ScanOptions
         {
             Mode = ScanMode.Full,

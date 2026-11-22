@@ -35,30 +35,44 @@ internal static partial class Program
             new CaseReverificationLimits().ProbeTimeout == RemediationVerification.ProbeTimeout &&
             RemediationVerification.SecondPassBudget == TimeSpan.FromSeconds(45));
 
-        // Start independent deadline regressions together so the 15-second ceiling is
-        // tested without adding the individual waiting periods to the full suite.
+        // 使用可控虚拟时钟验证 15 秒 / 10 秒超时契约，同时保留并发测试结构。
+        ManualTimeProvider slowClock = new();
+        TaskCompletionSource slowPass1Waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource slowPass2Waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        int slowObserveCalls = 0;
         Task<RemediationRunResult> slow = SequenceAsync(new FirewallBudgetProbe(async (_, token) =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(11500), token);
+            int call = Interlocked.Increment(ref slowObserveCalls);
+            Task delay = Task.Delay(TimeSpan.FromMilliseconds(11500), slowClock, token);
+            if (call == 1) slowPass1Waiting.TrySetResult();
+            else if (call == 2) slowPass2Waiting.TrySetResult();
+            await delay;
             return new() { Status = RemediationVerificationStatus.Verified };
-        }), complete: true);
+        }), complete: true, timeProvider: slowClock);
         Stopwatch timeoutClock = Stopwatch.StartNew();
-        Task<RemediationRunResult> timedOut = TimeoutSequenceAsync();
+        ManualTimeProvider timeoutVirtualClock = new();
+        TaskCompletionSource timeoutWaiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<RemediationRunResult> timedOut = TimeoutSequenceAsync(timeoutVirtualClock, timeoutWaiting);
+        ManualTimeProvider ordinaryClock = new();
+        TaskCompletionSource ordinaryWaiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
         RemediationActionResult ordinary = new() { ExecutionStatus = RemediationExecutionStatus.Succeeded };
         Task ordinaryProbe = new RemediationVerification(new FirewallBudgetProbe(async (_, token) =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(11500), token);
+            Task delay = Task.Delay(TimeSpan.FromMilliseconds(11500), ordinaryClock, token);
+            ordinaryWaiting.TrySetResult();
+            await delay;
             return new() { Status = RemediationVerificationStatus.Verified };
-        })).ObserveAsync(cleanup, ordinary, 1);
+        }), ordinaryClock).ObserveAsync(cleanup, ordinary, 1);
         long slowCaseRunnerElapsedMs = 0;
 
         using (CancellationTokenSource cancelled = new(TimeSpan.FromMilliseconds(100)))
         {
+            ManualTimeProvider cancelClock = new();
             RemediationRunResult cancellation = await SequenceAsync(new FirewallBudgetProbe(async (_, token) =>
             {
-                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancelClock, token);
                 return new() { Status = RemediationVerificationStatus.Verified };
-            }), token: cancelled.Token);
+            }), token: cancelled.Token, timeProvider: cancelClock);
             Check("防火墙完整调用取消保持Unknown且不执行后续隔离", cancellation.Actions.Count == 1 &&
                 cancellation.Actions[0].VerificationStatus == RemediationVerificationStatus.Unknown);
         }
@@ -71,68 +85,136 @@ internal static partial class Program
                 blocked.Actions[1].ExecutionStatus == RemediationExecutionStatus.SkippedDependency);
         }
 
-        // Each fixture invokes the unchanged generated script in a fresh trusted system
-        // PowerShell process. All eight Get-NetFirewall commands are shadowed functions.
+        // 先单独冷启动 1 次真实 powershell.exe 跑 exact，验证进程冷启与 CaseReadOnlyScriptRunner 端到端链路，
+        // 并捕获 WindowsRemediationStateProbe 生成的只读谓词脚本。
         string[] fixtures = ["exact", "prefix-neighbor", "missing", "prefix-only", "case-only", "duplicate", "disabled",
             "allow", "inbound", "limited-profile", "program", "protocol", "port", "address", "service", "interface",
             "interface-type", "profile-disabled", "profile-missing", "profile-error", "provider-error"];
-        // Serialize real process starts; the independent deadline mocks above remain
-        // concurrent. The first predicate still runs without a warm-up or retry.
-        using SemaphoreSlim fixtureGate = new(1);
-        var fixtureResults = await Task.WhenAll(fixtures.Select(async fixture =>
+        string ruleName = $"SteamSentinel-{incident:N}-{firewall.ActionId:N}";
+        string? capturedPredicateScript = null;
+        string coldExactTrace = Path.Combine(traceRoot, "exact-" + Guid.NewGuid().ToString("N") + ".log");
+        string? coldExactOutput = null;
+        WindowsRemediationStateProbe coldExactProbe = new(async (value, token) =>
         {
-            await fixtureGate.WaitAsync();
-            try
+            capturedPredicateScript = value;
+            string fixtureScript = FirewallObjectFixture("exact", ruleName, firewall.Target);
+            coldExactOutput = await CaseReadOnlyScriptRunner.RunAsync(TraceStage(coldExactTrace, "entry") + "try{" +
+                fixtureScript + value + "}finally{" + TraceStage(coldExactTrace, "end") + "}", token);
+            return coldExactOutput;
+        }, incident);
+        RemediationVerificationObservation coldExactObservation = await coldExactProbe.ObserveAsync(firewall, default);
+        if (capturedPredicateScript is null)
+            throw new InvalidOperationException("未能捕获防火墙验证谓词脚本。");
+
+        // 与慢用例测试并发执行 1 次单进程 PowerShell 批跑：在独立局部作用域中依次运行全部 21 个 fixture 分支。
+        Task<CaseVerificationEpisode> caseProbe = SlowCaseAsync();
+        string sharedScriptBody = FirewallObjectFixtureBody(ruleName, firewall.Target) + capturedPredicateScript;
+        string sharedBodyBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sharedScriptBody));
+        string fixtureLiteralList = string.Join(",", fixtures.Select(f => $"'{f}'"));
+        string batchScript = $$$$"""
+            $shared=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{{{sharedBodyBase64}}}}'));
+            $rs=[runspacefactory]::CreateRunspace();
+            $rs.Open();
+            try{
+                $batch=@();
+                foreach($f in @({{{{fixtureLiteralList}}}})){
+                    $ps=[powershell]::Create();
+                    $ps.Runspace=$rs;
+                    try{
+                        $null=$ps.AddScript('$ProgressPreference=''SilentlyContinue'';$ErrorActionPreference=''Stop'';$fixture='''+$f+''';'+$shared,$true);
+                        $ok=$true;$val=$null;$err=$null;
+                        try{
+                            $res=@($ps.Invoke()|ForEach-Object{[string]$_});
+                            if($ps.HadErrors){$ok=$false;$err=($ps.Streams.Error|ForEach-Object{$_.ToString()}) -join '; '}
+                            else{$val=($res -join "`n").Trim()}
+                        }catch{$ok=$false;$err=$_.Exception.Message}
+                        $batch+=[pscustomobject]@{fixture=$f;ok=$ok;output=$val;error=$err}
+                    }finally{$ps.Dispose()}
+                }
+                ConvertTo-Json -InputObject $batch -Compress
+            }finally{$rs.Dispose()}
+            """;
+        string? batchJson = await CaseReadOnlyScriptRunner.RunAsync(batchScript, default);
+        Dictionary<string, BatchFixtureResult> batchByFixture = new(StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(batchJson))
+        {
+            BatchFixtureResult[]? parsed = JsonSerializer.Deserialize<BatchFixtureResult[]>(batchJson, BatchJsonOptions);
+            if (parsed is not null)
             {
-                Stopwatch fixtureClock = Stopwatch.StartNew();
-                string tracePath = Path.Combine(traceRoot, fixture + "-" + Guid.NewGuid().ToString("N") + ".log");
-                string? runnerOutput = null;
-                string fixtureScript = FirewallObjectFixture(fixture, $"SteamSentinel-{incident:N}-{firewall.ActionId:N}", firewall.Target);
-                WindowsRemediationStateProbe probe = new(async (value, token) =>
+                foreach (BatchFixtureResult item in parsed)
                 {
-                    runnerOutput = await CaseReadOnlyScriptRunner.RunAsync(TraceStage(tracePath, "entry") + "try{" +
-                        fixtureScript + value + "}finally{" + TraceStage(tracePath, "end") + "}", token);
-                    return runnerOutput;
-                }, incident);
-                RemediationVerificationObservation observation = await probe.ObserveAsync(firewall, default);
-                return (Fixture: fixture, Observation: observation, ElapsedMs: fixtureClock.ElapsedMilliseconds, TracePath: tracePath, Output: runnerOutput);
+                    if (!string.IsNullOrEmpty(item.fixture)) batchByFixture[item.fixture] = item;
+                }
             }
-            finally { fixtureGate.Release(); }
-        }));
-        foreach (var fixture in fixtureResults)
-        {
-            // 关闭或缺少某项防火墙配置文件时（常见于第三方安全软件接管环境），精确的阻断规则本身存在且有效即返回 Verified。
-            RemediationVerificationStatus expected = fixture.Fixture is "exact" or "prefix-neighbor" or
-                "profile-disabled" or "profile-missing" or "profile-error"
-                ? RemediationVerificationStatus.Verified : fixture.Fixture is "duplicate" or "provider-error"
-                    ? RemediationVerificationStatus.Unknown : RemediationVerificationStatus.ResidualDetected;
-            if (fixture.Observation.Status == RemediationVerificationStatus.Unknown || fixture.Observation.Status != expected)
-                Console.WriteLine("FW_PREDICATE " + JsonSerializer.Serialize(new
-                {
-                    fixture.Fixture,
-                    fixture.ElapsedMs,
-                    status = fixture.Observation.Status.ToString(),
-                    expected = expected.ToString(),
-                    fixture.Observation.Message,
-                    returnedNull = fixture.Output is null,
-                    fixture.Output,
-                    trace = ReadFixtureTrace(fixture.TracePath)
-                }));
-            Check("防火墙真实只读谓词对象回归 " + fixture.Fixture, fixture.Observation.Status == expected);
         }
 
-        Task<CaseVerificationEpisode> caseProbe = SlowCaseAsync();
+        foreach (string fixture in fixtures)
+        {
+            Stopwatch fixtureClock = Stopwatch.StartNew();
+            batchByFixture.TryGetValue(fixture, out BatchFixtureResult? entry);
+            string? branchOutput = entry is { ok: true } ? entry.output : null;
+            WindowsRemediationStateProbe branchProbe = new((_, _) => Task.FromResult(branchOutput), incident);
+            RemediationVerificationObservation observation = await branchProbe.ObserveAsync(firewall, default);
+            long elapsedMs = fixtureClock.ElapsedMilliseconds;
+            // 关闭或缺少某项防火墙配置文件时（常见于第三方安全软件接管环境），精确的阻断规则本身存在且有效即返回 Verified。
+            RemediationVerificationStatus expected = fixture is "exact" or "prefix-neighbor" or
+                "profile-disabled" or "profile-missing" or "profile-error"
+                ? RemediationVerificationStatus.Verified : fixture is "duplicate" or "provider-error"
+                    ? RemediationVerificationStatus.Unknown : RemediationVerificationStatus.ResidualDetected;
+            bool branchValid = entry is not null && fixture switch
+            {
+                "exact" => coldExactObservation.Status == RemediationVerificationStatus.Verified && entry.ok && string.Equals(entry.output, "Verified", StringComparison.Ordinal),
+                "duplicate" => entry.ok && string.Equals(entry.output, "Unknown", StringComparison.Ordinal),
+                "provider-error" => !entry.ok && entry.output is null && (entry.error?.Contains("Inert provider failure", StringComparison.Ordinal) ?? false),
+                _ => entry.ok
+            };
+            if (observation.Status == RemediationVerificationStatus.Unknown || observation.Status != expected || !branchValid)
+                Console.WriteLine("FW_PREDICATE " + JsonSerializer.Serialize(new
+                {
+                    Fixture = fixture,
+                    ElapsedMs = elapsedMs,
+                    status = observation.Status.ToString(),
+                    expected = expected.ToString(),
+                    observation.Message,
+                    returnedNull = branchOutput is null,
+                    Output = branchOutput,
+                    coldExactStatus = fixture == "exact" ? coldExactObservation.Status.ToString() : null,
+                    coldExactOutput = fixture == "exact" ? coldExactOutput : null,
+                    trace = fixture == "exact" ? ReadFixtureTrace(coldExactTrace) : entry?.error ?? "batch-isolated-scope"
+                }));
+            Check("防火墙真实只读谓词对象回归 " + fixture, observation.Status == expected && branchValid);
+        }
+
+        await slowPass1Waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        slowClock.Advance(TimeSpan.FromMilliseconds(11500));
+        await slowPass2Waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        slowClock.Advance(TimeSpan.FromMilliseconds(11500));
         RemediationRunResult slowResult = await slow;
         Check("防火墙大于10秒的两轮观察通过并放行依赖隔离", slowResult.Actions.Count == 2 && slowResult.Actions.All(a => a.Success) &&
             slowResult.Actions[0].Verifications.Count == 2 && slowResult.Actions[0].Verifications.All(v => v.Status == RemediationVerificationStatus.Verified));
+
+        await timeoutWaiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        timeoutVirtualClock.Advance(TimeSpan.FromMilliseconds(14900));
+        bool timedOutPendingBefore15s = !timedOut.IsCompleted;
+        timeoutVirtualClock.Advance(TimeSpan.FromMilliseconds(100));
         RemediationRunResult timeoutResult = await timedOut;
-        Check("防火墙15秒上限到达保持Unknown且依赖不执行", timeoutResult.Actions[0].VerificationStatus == RemediationVerificationStatus.Unknown &&
+        Check("防火墙15秒上限到达保持Unknown且依赖不执行", timedOutPendingBefore15s &&
+            timeoutResult.Actions[0].VerificationStatus == RemediationVerificationStatus.Unknown &&
             timeoutResult.Actions[1].ExecutionStatus == RemediationExecutionStatus.SkippedDependency && timeoutClock.Elapsed < TimeSpan.FromSeconds(25));
+
+        await ordinaryWaiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        ordinaryClock.Advance(TimeSpan.FromMilliseconds(9999));
+        bool ordinaryPendingBefore10s = !ordinaryProbe.IsCompleted;
+        ordinaryClock.Advance(TimeSpan.FromMilliseconds(1));
         await ordinaryProbe;
-        Check("防火墙专属预算不延长普通动作", ordinary.VerificationStatus == RemediationVerificationStatus.Unknown);
+        Check("防火墙专属预算不延长普通动作", ordinaryPendingBefore10s && ordinary.VerificationStatus == RemediationVerificationStatus.Unknown);
+
         CaseVerificationEpisode episode = await caseProbe;
         Check("防火墙跨会话复验与真实脚本runner均允许超过4秒", episode.Targets.Single().Status == RemediationVerificationStatus.Verified &&
-            episode.State == CaseReverificationState.SelectedTargetsVerified && slowCaseRunnerElapsedMs >= 4500);
+            episode.State == CaseReverificationState.SelectedTargetsVerified &&
+            CaseReadOnlyScriptRunner.DefaultTimeout == TimeSpan.FromSeconds(15) &&
+            CaseReadOnlyScriptRunner.DefaultTimeout == RemediationVerification.FirewallProbeTimeout &&
+            slowCaseRunnerElapsedMs >= 350);
 
         static string TraceStage(string path, string stage) =>
             "[IO.File]::AppendAllText([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" +
@@ -145,26 +227,30 @@ internal static partial class Program
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "trace-read-error:" + ex.GetType().Name; }
         }
 
-        async Task<RemediationRunResult> TimeoutSequenceAsync()
+        async Task<RemediationRunResult> TimeoutSequenceAsync(ManualTimeProvider clock, TaskCompletionSource waiting)
         {
             try
             {
                 return await SequenceAsync(new FirewallBudgetProbe(async (_, token) =>
                 {
-                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                    Task wait = Task.Delay(Timeout.InfiniteTimeSpan, clock, token);
+                    waiting.TrySetResult();
+                    await wait;
                     return new() { Status = RemediationVerificationStatus.Verified };
-                }));
+                }), timeProvider: clock);
             }
             finally { timeoutClock.Stop(); }
         }
 
-        async Task<RemediationRunResult> SequenceAsync(IRemediationStateProbe firewallProbe, bool complete = false, CancellationToken token = default)
+        async Task<RemediationRunResult> SequenceAsync(IRemediationStateProbe firewallProbe, bool complete = false,
+            CancellationToken token = default, TimeProvider? timeProvider = null)
         {
             RemediationPlan plan = new() { Actions = [firewall, cleanup] };
             RemediationRunResult result = new() { PlanId = plan.PlanId };
             RemediationVerification verification = new(new FirewallBudgetProbe((action, bounded) => action == firewall
                 ? firewallProbe.ObserveAsync(action, bounded)
-                : Task.FromResult(new RemediationVerificationObservation { Status = RemediationVerificationStatus.NoResidual })));
+                : Task.FromResult(new RemediationVerificationObservation { Status = RemediationVerificationStatus.NoResidual })),
+                timeProvider);
             try
             {
                 await BrokerActionSequencer.RunAsync(plan, result, new Dictionary<Guid, string>(),
@@ -247,7 +333,7 @@ internal static partial class Program
                 {
                     output = await CaseReadOnlyScriptRunner.RunAsync(
                         TraceStage(tracePath, "entry") + "try{" + TraceStage(tracePath, "beforeSleep") +
-                        "[System.Threading.Thread]::Sleep(4500);" + TraceStage(tracePath, "afterSleep") +
+                        "[System.Threading.Thread]::Sleep(400);" + TraceStage(tracePath, "afterSleep") +
                         "'Verified'}catch{'FixtureError:'+($_.Exception.GetType().FullName)+':'+$_.Exception.Message}finally{" +
                         TraceStage(tracePath, "end") + "}", token);
                     return output;
@@ -274,13 +360,19 @@ internal static partial class Program
         }
     }
 
+    private static readonly JsonSerializerOptions BatchJsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    private sealed record BatchFixtureResult(string fixture, bool ok, string? output, string? error);
+
     private sealed class FirewallBudgetProbe(Func<RemediationAction, CancellationToken, Task<RemediationVerificationObservation>> observe) : IRemediationStateProbe
     {
         public Task<RemediationVerificationObservation> ObserveAsync(RemediationAction action, CancellationToken token) => observe(action, token);
     }
 
-    private static string FirewallObjectFixture(string fixture, string ruleName, string target) => $$$$"""
-        $fixture='{{{{fixture}}}}';
+    private static string FirewallObjectFixture(string fixture, string ruleName, string target) =>
+        $"$fixture='{fixture}';\n" + FirewallObjectFixtureBody(ruleName, target);
+
+    private static string FirewallObjectFixtureBody(string ruleName, string target) => $$$$"""
         $expectedName=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{{{Convert.ToBase64String(Encoding.UTF8.GetBytes(ruleName))}}}}'));
         $expectedTarget=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{{{Convert.ToBase64String(Encoding.UTF8.GetBytes(target))}}}}'));
         function Get-NetFirewallRule {

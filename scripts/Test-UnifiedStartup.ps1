@@ -19,12 +19,13 @@ $tests = [Collections.Generic.List[object]]::new()
 $watch = [Diagnostics.Stopwatch]::StartNew()
 $isAdministrator = ([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $needsElevated = -not $isAdministrator
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
 
 function Quote-Argument([string]$Value) {
     # CommandLineToArgvW / CRT quoting, including trailing backslashes.
     '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
 }
-function Invoke-Child([string]$File, [string[]]$Arguments, [int]$TimeoutMs = 45000) {
+function Start-Child([string]$File, [string[]]$Arguments, [int]$TimeoutMs = 45000) {
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $File
     $start.WorkingDirectory = Split-Path -Parent $File
@@ -39,15 +40,49 @@ function Invoke-Child([string]$File, [string[]]$Arguments, [int]$TimeoutMs = 450
         if (-not $process.Start()) { throw 'Child did not start.' }
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutMs)) {
-            $process.Kill()
+        [pscustomobject]@{
+            process = $process
+            stdout = $stdout
+            stderr = $stderr
+            timeoutMs = $TimeoutMs
+            clock = [Diagnostics.Stopwatch]::StartNew()
+            disposed = $false
+        }
+    }
+    catch {
+        $process.Dispose()
+        throw
+    }
+}
+function Wait-Child($Child) {
+    $process = $Child.process
+    try {
+        $remaining = [int][Math]::Max(0L, [long]$Child.timeoutMs - $Child.clock.ElapsedMilliseconds)
+        if (-not $process.WaitForExit($remaining)) {
+            try { $process.Kill() } catch {}
             $process.WaitForExit(5000) | Out-Null
             throw 'Startup child exceeded the test timeout.'
         }
-        if (-not $stdout.Wait(5000) -or -not $stderr.Wait(5000)) { throw 'Startup output pipes did not close.' }
-        [pscustomobject]@{ exitCode = $process.ExitCode; stdout = $stdout.Result; stderr = $stderr.Result }
+        if (-not $Child.stdout.Wait(5000) -or -not $Child.stderr.Wait(5000)) { throw 'Startup output pipes did not close.' }
+        [pscustomobject]@{ exitCode = $process.ExitCode; stdout = $Child.stdout.Result; stderr = $Child.stderr.Result }
     }
-    finally { $process.Dispose() }
+    finally {
+        $Child.disposed = $true
+        $process.Dispose()
+    }
+}
+function Stop-Child($Child) {
+    if ($null -eq $Child -or $Child.disposed -or $null -eq $Child.process) { return }
+    try {
+        if (-not $Child.process.HasExited) { $Child.process.Kill() }
+    }
+    catch {}
+    try { $Child.process.Dispose() } catch {}
+    $Child.disposed = $true
+}
+function Invoke-Child([string]$File, [string[]]$Arguments, [int]$TimeoutMs = 45000) {
+    $child = Start-Child $File $Arguments $TimeoutMs
+    Wait-Child $child
 }
 function Check([string]$TestName, [scriptblock]$Body) {
     try {
@@ -61,41 +96,100 @@ function Check([string]$TestName, [scriptblock]$Body) {
     }
 }
 function Assert([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
-function Write-Text([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, [Text.UTF8Encoding]::new($false)) }
+function Write-Text([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, $utf8NoBom) }
+function Get-BytesSha256([byte[]]$Bytes) {
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try { [BitConverter]::ToString($sha256.ComputeHash($Bytes)).Replace('-', '') }
+    finally { $sha256.Dispose() }
+}
 function Write-Manifest([string]$Root) {
     $lines = @(Get-ChildItem -LiteralPath $Root -File -Recurse | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object FullName | ForEach-Object {
         '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash, $_.FullName.Substring($Root.Length + 1)
     })
-    [IO.File]::WriteAllLines((Join-Path $Root 'SHA256SUMS.txt'), [string[]]$lines, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllLines((Join-Path $Root 'SHA256SUMS.txt'), [string[]]$lines, $utf8NoBom)
 }
 
+$realEntries = [Collections.Generic.List[object]]::new()
+$activeFixtureSlots = [Collections.Generic.List[object]]::new()
+$timeoutFixtureCase = $null
+
 try {
+    # Phase 1: 并发拉起互不依赖的真实宿主探测，并在子进程启动期间执行导入表静态审计，最终按原顺序写回 $tests。
     foreach ($entry in @(@('SteamSentinel','app'), @('SteamSentinel.ArchiveWorker','worker'), @('SteamSentinel.Broker','broker'))) {
         foreach ($mode in @('Standard', 'Compat')) {
             $name = "$($entry[0]).$mode"
+            $testName = "real-$name-probe"
             if ($entry[1] -eq 'broker' -and -not $isAdministrator) {
-                $tests.Add([pscustomobject]@{ name = "real-$name-probe"; passed = $false; skipped = $true; error = 'Requires an elevated test session; the Broker manifest remains requireAdministrator.' })
+                $realEntries.Add([pscustomobject]@{
+                    kind = 'Skipped'
+                    name = $testName
+                    result = [pscustomobject]@{ name = $testName; passed = $false; skipped = $true; error = 'Requires an elevated test session; the Broker manifest remains requireAdministrator.' }
+                })
                 continue
             }
-            Check "real-$name-probe" {
-                $nonce = [Guid]::NewGuid().ToString('N')
-                $result = Invoke-Child (Join-Path $PublishRoot ($name + '.exe')) @('--startup-probe', $nonce)
-                $expected = "STEAMSENTINEL_STARTUP_READY/1|$($entry[1])|$($mode.ToLowerInvariant())|$nonce"
-                Assert ($result.exitCode -eq 0 -and $result.stdout.TrimEnd("`r", "`n") -ceq $expected) "Published host did not acknowledge its exact role, mode and nonce: $($result.exitCode), $($result.stdout), $($result.stderr)"
-            }
+            $nonce = [Guid]::NewGuid().ToString('N')
+            $expected = "STEAMSENTINEL_STARTUP_READY/1|$($entry[1])|$($mode.ToLowerInvariant())|$nonce"
+            $realEntries.Add([pscustomobject]@{
+                kind = 'Child'
+                name = $testName
+                file = Join-Path $PublishRoot ($name + '.exe')
+                arguments = @('--startup-probe', $nonce)
+                timeoutMs = 45000
+                expected = $expected
+                child = $null
+                startError = $null
+                verify = {
+                    param($Item, $Result)
+                    Assert ($Result.exitCode -eq 0 -and $Result.stdout.TrimEnd("`r", "`n") -ceq $Item.expected) "Published host did not acknowledge its exact role, mode and nonce: $($Result.exitCode), $($Result.stdout), $($Result.stderr)"
+                }
+            })
         }
     }
-    Check 'real-native-package-preflight' {
-        $result = Invoke-Child (Join-Path $PublishRoot 'SteamSentinel.exe') @('--startup-check') 90000
-        Assert ($result.exitCode -eq 0 -and $result.stdout -match '(?m)^STEAMSENTINEL_STARTUP_SELECTED/1\|(standard|compat)\r?$') "Native package preflight failed: $($result.stdout) $($result.stderr)"
-    }
+    $realEntries.Add([pscustomobject]@{
+        kind = 'Child'
+        name = 'real-native-package-preflight'
+        file = Join-Path $PublishRoot 'SteamSentinel.exe'
+        arguments = @('--startup-check')
+        timeoutMs = 90000
+        expected = $null
+        child = $null
+        startError = $null
+        verify = {
+            param($Item, $Result)
+            Assert ($Result.exitCode -eq 0 -and $Result.stdout -match '(?m)^STEAMSENTINEL_STARTUP_SELECTED/1\|(standard|compat)\r?$') "Native package preflight failed: $($Result.stdout) $($Result.stderr)"
+        }
+    })
     if ($isAdministrator) {
-        Check 'real-elevated-broker-preflight' {
-            $result = Invoke-Child (Join-Path $PublishRoot 'SteamSentinel.Broker.exe') @('--startup-check') 60000
-            Assert ($result.exitCode -eq 0 -and $result.stdout -match 'STEAMSENTINEL_STARTUP_SELECTED/1\|') "Broker preflight failed: $($result.stdout) $($result.stderr)"
+        $realEntries.Add([pscustomobject]@{
+            kind = 'Child'
+            name = 'real-elevated-broker-preflight'
+            file = Join-Path $PublishRoot 'SteamSentinel.Broker.exe'
+            arguments = @('--startup-check')
+            timeoutMs = 60000
+            expected = $null
+            child = $null
+            startError = $null
+            verify = {
+                param($Item, $Result)
+                Assert ($Result.exitCode -eq 0 -and $Result.stdout -match 'STEAMSENTINEL_STARTUP_SELECTED/1\|') "Broker preflight failed: $($Result.stdout) $($Result.stderr)"
+            }
+        })
+    }
+
+    foreach ($item in $realEntries) {
+        if ($item.kind -ne 'Child') { continue }
+        try {
+            $item.child = Start-Child $item.file $item.arguments $item.timeoutMs
+        }
+        catch {
+            $item.startError = $_.Exception.Message
         }
     }
-    Check 'real-worker-no-gui-imports' {
+
+    # 在已启动的子进程初始化 CLR 期间同步完成无副作用 PE 导入表审计。
+    $importAuditPassed = $true
+    $importAuditError = $null
+    try {
         Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -134,6 +228,30 @@ public static class WorkerImportAudit {
         foreach ($workerFile in @('SteamSentinel.ArchiveWorker.Standard.exe', 'SteamSentinel.ArchiveWorker.Compat.exe', 'SteamSentinel.ArchiveWorker.exe')) {
             [WorkerImportAudit]::AssertOnlyKernel32((Join-Path $PublishRoot $workerFile))
         }
+    }
+    catch {
+        $importAuditPassed = $false
+        $importAuditError = $_.Exception.Message
+    }
+
+    foreach ($item in $realEntries) {
+        if ($item.kind -eq 'Skipped') {
+            $tests.Add($item.result)
+            continue
+        }
+        Check $item.name {
+            if ($null -ne $item.startError) { throw $item.startError }
+            $result = Wait-Child $item.child
+            & $item.verify $item $result
+        }
+    }
+    if ($importAuditPassed) {
+        $tests.Add([pscustomobject]@{ name = 'real-worker-no-gui-imports'; passed = $true; skipped = $false; error = $null })
+        Write-Host 'PASS real-worker-no-gui-imports'
+    }
+    else {
+        $tests.Add([pscustomobject]@{ name = 'real-worker-no-gui-imports'; passed = $false; skipped = $false; error = $importAuditError })
+        Write-Host "FAIL real-worker-no-gui-imports : $importAuditError"
     }
 
     # Synthetic hosts exercise the production native launcher's failure state
@@ -208,18 +326,58 @@ class Fixture {
     & $compiler '/nologo' '/target:winexe' '/platform:x64' "/out:$fixtureExe" $fixtureSource | Out-Host
     if ($LASTEXITCODE -ne 0) { throw 'Could not compile the harmless .NET Framework test fixture.' }
 
+    # 预计算所有不变夹具文件的 SHA-256 与排序清单模板，避免每个场景重复哈希 22 个相同文件。
+    $placeholderBytes = $utf8NoBom.GetBytes('Test-only placeholder, never loaded.')
+    $placeholderHash = Get-BytesSha256 $placeholderBytes
+    $launcherExeSource = Join-Path $PublishRoot 'SteamSentinel.exe'
+    $brokerExeSource = Join-Path $PublishRoot 'SteamSentinel.Broker.exe'
+    $fixtureExeHash = (Get-FileHash -LiteralPath $fixtureExe -Algorithm SHA256).Hash
+    $fixedCopySources = [ordered]@{
+        'SteamSentinel.exe' = $launcherExeSource
+        'SteamSentinel.Broker.exe' = $brokerExeSource
+    }
+    $fixedFileHashes = [ordered]@{
+        'SteamSentinel.exe' = (Get-FileHash -LiteralPath $launcherExeSource -Algorithm SHA256).Hash
+        'SteamSentinel.Broker.exe' = (Get-FileHash -LiteralPath $brokerExeSource -Algorithm SHA256).Hash
+    }
+    $placeholderFiles = [Collections.Generic.List[string]]::new()
+    foreach ($role in @('SteamSentinel','SteamSentinel.Broker','SteamSentinel.ArchiveWorker')) {
+        foreach ($mode in @('Standard','Compat')) {
+            $hostName = "$role.$mode.exe"
+            $fixedCopySources[$hostName] = $fixtureExe
+            $fixedFileHashes[$hostName] = $fixtureExeHash
+        }
+        foreach ($extension in @('.dll','.deps.json','.runtimeconfig.json')) {
+            $placeholderName = $role + $extension
+            $placeholderFiles.Add($placeholderName)
+            $fixedFileHashes[$placeholderName] = $placeholderHash
+        }
+    }
+    foreach ($file in @('SteamSentinel.Core.dll','coreclr.dll','hostfxr.dll','hostpolicy.dll','System.Private.CoreLib.dll')) {
+        $placeholderFiles.Add($file)
+        $fixedFileHashes[$file] = $placeholderHash
+    }
+    $sortedManifestNames = @(@($fixedFileHashes.Keys) + @('fixture-case.txt') | Sort-Object)
+
     function New-Fixture([string]$Scenario) {
         $root = Join-Path $fixtureRoot ($Scenario + '-' + [Guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Path $root | Out-Null
-        Copy-Item -LiteralPath (Join-Path $PublishRoot 'SteamSentinel.exe') -Destination (Join-Path $root 'SteamSentinel.exe')
-        Copy-Item -LiteralPath (Join-Path $PublishRoot 'SteamSentinel.Broker.exe') -Destination (Join-Path $root 'SteamSentinel.Broker.exe')
-        foreach ($role in @('SteamSentinel','SteamSentinel.Broker','SteamSentinel.ArchiveWorker')) {
-            foreach ($mode in @('Standard','Compat')) { Copy-Item -LiteralPath $fixtureExe -Destination (Join-Path $root "$role.$mode.exe") }
-            foreach ($extension in @('.dll','.deps.json','.runtimeconfig.json')) { Write-Text (Join-Path $root ($role + $extension)) 'Test-only placeholder, never loaded.' }
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        foreach ($pair in $fixedCopySources.GetEnumerator()) {
+            [IO.File]::Copy($pair.Value, (Join-Path $root $pair.Key), $true)
         }
-        foreach ($file in @('SteamSentinel.Core.dll','coreclr.dll','hostfxr.dll','hostpolicy.dll','System.Private.CoreLib.dll')) { Write-Text (Join-Path $root $file) 'Test-only placeholder, never loaded.' }
-        Write-Text (Join-Path $root 'fixture-case.txt') $Scenario
-        Write-Manifest $root
+        foreach ($file in $placeholderFiles) {
+            [IO.File]::WriteAllBytes((Join-Path $root $file), $placeholderBytes)
+        }
+        $scenarioBytes = $utf8NoBom.GetBytes($Scenario)
+        [IO.File]::WriteAllBytes((Join-Path $root 'fixture-case.txt'), $scenarioBytes)
+        $scenarioHash = Get-BytesSha256 $scenarioBytes
+        $lines = [string[]]::new($sortedManifestNames.Count)
+        for ($i = 0; $i -lt $sortedManifestNames.Count; $i++) {
+            $fileName = $sortedManifestNames[$i]
+            $hash = if ($fileName -eq 'fixture-case.txt') { $scenarioHash } else { $fixedFileHashes[$fileName] }
+            $lines[$i] = '{0} *{1}' -f $hash, $fileName
+        }
+        [IO.File]::WriteAllLines((Join-Path $root 'SHA256SUMS.txt'), $lines, $utf8NoBom)
         return $root
     }
     function Read-StartupReport($Result) {
@@ -228,113 +386,299 @@ class Fixture {
         Get-Content -LiteralPath $line.Substring(7).TrimEnd("`r") -Raw -Encoding UTF8
     }
 
+    $fixtureCases = [Collections.Generic.List[object]]::new()
     foreach ($scenario in @('success','cet','worker-cet')) {
-        Check "fixture-$scenario-selects-correct-mode" {
-            $root = New-Fixture $scenario
-            $result = Invoke-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
-            $expected = if ($scenario -eq 'success') { 'standard' } else { 'compat' }
-            Assert ($result.exitCode -eq 0 -and $result.stdout.Contains("STEAMSENTINEL_STARTUP_SELECTED/1|$expected")) "Wrong selection: $($result.stdout)"
-            Assert (-not (Test-Path -LiteralPath (Join-Path $root 'fixture-business.txt'))) 'Preflight entered business code.'
-            $report = Read-StartupReport $result
-            Assert ($report.Contains("Probe=worker/$expected ready=1")) 'Worker was not checked in the selected mode.'
-        }
+        $fixtureCases.Add([pscustomobject]@{
+            name = "fixture-$scenario-selects-correct-mode"
+            scenario = $scenario
+            isBackgroundTimeout = $false
+            state = $null
+            result = $null
+            setup = {
+                param($Case)
+                $root = New-Fixture $Case.scenario
+                $child = Start-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
+                [pscustomobject]@{ child = $child; root = $root }
+            }
+            verify = {
+                param($Case, $State, $ChildResult)
+                $expected = if ($Case.scenario -eq 'success') { 'standard' } else { 'compat' }
+                Assert ($ChildResult.exitCode -eq 0 -and $ChildResult.stdout.Contains("STEAMSENTINEL_STARTUP_SELECTED/1|$expected")) "Wrong selection: $($ChildResult.stdout)"
+                Assert (-not (Test-Path -LiteralPath (Join-Path $State.root 'fixture-business.txt'))) 'Preflight entered business code.'
+                $report = Read-StartupReport $ChildResult
+                Assert ($report.Contains("Probe=worker/$expected ready=1")) 'Worker was not checked in the selected mode.'
+            }
+        })
     }
     foreach ($scenario in @('unknown','wrong-code','ready-then-fatal','timeout','overflow','no-ready','wrong-nonce','compat-fails')) {
-        Check "fixture-$scenario-does-not-replay-or-misclassify" {
-            $root = New-Fixture $scenario
-            $result = Invoke-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
-            Assert ($result.exitCode -eq 125) "Expected a diagnosed failure, got $($result.exitCode)."
-            $report = Read-StartupReport $result
-            if ($scenario -ne 'compat-fails') { Assert (-not $report.Contains('Probe=app/compat')) 'Unrelated failure caused a security downgrade.' }
-            else { Assert (([regex]::Matches($report, 'Probe=app/compat')).Count -eq 1) 'Compatibility failure caused repeated retries.' }
-            Assert (-not (Test-Path -LiteralPath (Join-Path $root 'fixture-business.txt'))) 'Failed probe entered business code.'
-        }
-    }
-    Check 'fixture-long-path-metadata-is-verified-before-probing' {
-        # Keep the .NET Framework fixture hosts at the proven success-case path
-        # length; only the metadata directory should exercise extended paths.
-        $root = New-Fixture 'success'
-        $manifestPath = Join-Path $root 'SHA256SUMS.txt'
-        $originalEntries = @(Get-Content -LiteralPath $manifestPath).Count
-        $created = Invoke-Child $fixtureExe @('--make-long-metadata', $root)
-        $relative = 'long-metadata-' + ('x' * 170) + '\metadata.txt'
-        Assert ($created.exitCode -eq 0 -and $created.stdout.TrimEnd("`r", "`n") -ceq ('LONG_METADATA/1|' + $relative)) "Long metadata fixture creation failed: $($created.stderr)"
-        Assert ((Join-Path $root $relative).Length -gt 260) 'The fixture did not exceed MAX_PATH.'
-        # Hash known inert bytes and append the relative path directly. Windows
-        # PowerShell 5.1 cannot safely enumerate the new extended-length directory.
-        $bytes = [Text.Encoding]::UTF8.GetBytes("SteamSentinel harmless long-path metadata.`n")
-        $sha256 = [Security.Cryptography.SHA256]::Create()
-        try { $digest = [BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '') }
-        finally { $sha256.Dispose() }
-        [IO.File]::AppendAllText($manifestPath, "$digest *$relative`r`n", [Text.UTF8Encoding]::new($false))
-        $result = Invoke-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
-        Assert ($result.exitCode -eq 0 -and $result.stdout.Contains('STEAMSENTINEL_STARTUP_SELECTED/1|standard')) "Long metadata was rejected: $($result.stdout) $($result.stderr)"
-        $report = Read-StartupReport $result
-        Assert ($report -match ('(?m)^ManifestVerified=' + ($originalEntries + 1) + '\r?$')) 'The long metadata file was not included in manifest verification.'
-        Assert ($report.Contains('Probe=worker/standard ready=1')) 'Long metadata bypassed normal startup probing.'
-        Assert (-not (Test-Path -LiteralPath (Join-Path $root 'fixture-business.txt'))) 'Long-path preflight entered business code.'
-    }
-    foreach ($scenario in @('tampered','missing','unlisted','traversal','duplicate')) {
-        Check "fixture-integrity-$scenario-blocks-before-execution" {
-            $root = New-Fixture 'success'
-            switch ($scenario) {
-                'tampered' { [IO.File]::AppendAllText((Join-Path $root 'SteamSentinel.Standard.exe'), 'tampered') }
-                'missing' { Remove-Item -LiteralPath (Join-Path $root 'SteamSentinel.Compat.exe') }
-                'unlisted' { Write-Text (Join-Path $root 'Unlisted.dll') 'Not part of package.' }
-                'traversal' { [IO.File]::AppendAllText((Join-Path $root 'SHA256SUMS.txt'), ('0' * 64) + " *..\outside.dll`r`n") }
-                'duplicate' { $first = Get-Content -LiteralPath (Join-Path $root 'SHA256SUMS.txt') -TotalCount 1; [IO.File]::AppendAllText((Join-Path $root 'SHA256SUMS.txt'), $first + "`r`n") }
+        $fixtureCases.Add([pscustomobject]@{
+            name = "fixture-$scenario-does-not-replay-or-misclassify"
+            scenario = $scenario
+            isBackgroundTimeout = ($scenario -eq 'timeout')
+            state = $null
+            result = $null
+            setup = {
+                param($Case)
+                $root = New-Fixture $Case.scenario
+                $child = Start-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
+                [pscustomobject]@{ child = $child; root = $root }
             }
-            $result = Invoke-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
-            Assert ($result.exitCode -eq 125) 'Corrupt or ambiguous package was accepted.'
-            $report = Read-StartupReport $result
-            Assert (-not $report.Contains('Probe=')) 'Package was executed before validation completed.'
+            verify = {
+                param($Case, $State, $ChildResult)
+                Assert ($ChildResult.exitCode -eq 125) "Expected a diagnosed failure, got $($ChildResult.exitCode)."
+                $report = Read-StartupReport $ChildResult
+                if ($Case.scenario -ne 'compat-fails') { Assert (-not $report.Contains('Probe=app/compat')) 'Unrelated failure caused a security downgrade.' }
+                else { Assert (([regex]::Matches($report, 'Probe=app/compat')).Count -eq 1) 'Compatibility failure caused repeated retries.' }
+                Assert (-not (Test-Path -LiteralPath (Join-Path $State.root 'fixture-business.txt'))) 'Failed probe entered business code.'
+            }
+        })
+    }
+    $fixtureCases.Add([pscustomobject]@{
+        name = 'fixture-long-path-metadata-is-verified-before-probing'
+        scenario = 'success'
+        isBackgroundTimeout = $false
+        state = $null
+        result = $null
+        setup = {
+            param($Case)
+            # Keep the .NET Framework fixture hosts at the proven success-case path
+            # length; only the metadata directory should exercise extended paths.
+            $root = New-Fixture 'success'
+            $manifestPath = Join-Path $root 'SHA256SUMS.txt'
+            $originalEntries = @(Get-Content -LiteralPath $manifestPath).Count
+            $created = Invoke-Child $fixtureExe @('--make-long-metadata', $root)
+            $relative = 'long-metadata-' + ('x' * 170) + '\metadata.txt'
+            Assert ($created.exitCode -eq 0 -and $created.stdout.TrimEnd("`r", "`n") -ceq ('LONG_METADATA/1|' + $relative)) "Long metadata fixture creation failed: $($created.stderr)"
+            Assert ((Join-Path $root $relative).Length -gt 260) 'The fixture did not exceed MAX_PATH.'
+            # Hash known inert bytes and append the relative path directly. Windows
+            # PowerShell 5.1 cannot safely enumerate the new extended-length directory.
+            $digest = Get-BytesSha256 ([Text.Encoding]::UTF8.GetBytes("SteamSentinel harmless long-path metadata.`n"))
+            [IO.File]::AppendAllText($manifestPath, "$digest *$relative`r`n", $utf8NoBom)
+            $child = Start-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
+            [pscustomobject]@{ child = $child; root = $root; originalEntries = $originalEntries }
+        }
+        verify = {
+            param($Case, $State, $ChildResult)
+            Assert ($ChildResult.exitCode -eq 0 -and $ChildResult.stdout.Contains('STEAMSENTINEL_STARTUP_SELECTED/1|standard')) "Long metadata was rejected: $($ChildResult.stdout) $($ChildResult.stderr)"
+            $report = Read-StartupReport $ChildResult
+            Assert ($report -match ('(?m)^ManifestVerified=' + ($State.originalEntries + 1) + '\r?$')) 'The long metadata file was not included in manifest verification.'
+            Assert ($report.Contains('Probe=worker/standard ready=1')) 'Long metadata bypassed normal startup probing.'
+            Assert (-not (Test-Path -LiteralPath (Join-Path $State.root 'fixture-business.txt'))) 'Long-path preflight entered business code.'
+        }
+    })
+    foreach ($scenario in @('tampered','missing','unlisted','traversal','duplicate')) {
+        $fixtureCases.Add([pscustomobject]@{
+            name = "fixture-integrity-$scenario-blocks-before-execution"
+            scenario = $scenario
+            isBackgroundTimeout = $false
+            state = $null
+            result = $null
+            setup = {
+                param($Case)
+                $root = New-Fixture 'success'
+                switch ($Case.scenario) {
+                    'tampered' { [IO.File]::AppendAllText((Join-Path $root 'SteamSentinel.Standard.exe'), 'tampered') }
+                    'missing' { Remove-Item -LiteralPath (Join-Path $root 'SteamSentinel.Compat.exe') }
+                    'unlisted' { Write-Text (Join-Path $root 'Unlisted.dll') 'Not part of package.' }
+                    'traversal' { [IO.File]::AppendAllText((Join-Path $root 'SHA256SUMS.txt'), ('0' * 64) + " *..\outside.dll`r`n") }
+                    'duplicate' { $first = Get-Content -LiteralPath (Join-Path $root 'SHA256SUMS.txt') -TotalCount 1; [IO.File]::AppendAllText((Join-Path $root 'SHA256SUMS.txt'), $first + "`r`n") }
+                }
+                $child = Start-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
+                [pscustomobject]@{ child = $child; root = $root }
+            }
+            verify = {
+                param($Case, $State, $ChildResult)
+                Assert ($ChildResult.exitCode -eq 125) 'Corrupt or ambiguous package was accepted.'
+                $report = Read-StartupReport $ChildResult
+                Assert (-not $report.Contains('Probe=')) 'Package was executed before validation completed.'
+            }
+        })
+    }
+    $fixtureCases.Add([pscustomobject]@{
+        name = 'fixture-installer-uninstaller-does-not-block-startup'
+        scenario = 'success'
+        isBackgroundTimeout = $false
+        state = $null
+        result = $null
+        setup = {
+            param($Case)
+            $root = New-Fixture 'success'
+            Write-Text (Join-Path $root 'unins000.exe') 'Inno-created placeholder, never executed.'
+            $child = Start-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
+            [pscustomobject]@{ child = $child; root = $root }
+        }
+        verify = {
+            param($Case, $State, $ChildResult)
+            Assert ($ChildResult.exitCode -eq 0) 'The installed uninstaller was incorrectly rejected.'
+        }
+    })
+    $fixtureCases.Add([pscustomobject]@{
+        name = 'fixture-arguments-are-forwarded-once-without-reinterpretation'
+        scenario = 'success'
+        isBackgroundTimeout = $false
+        state = $null
+        result = $null
+        setup = {
+            param($Case)
+            $root = New-Fixture 'success'
+            $arguments = @('space value', 'C:\path with spaces\', 'literal"quote', '', '中文', '& % !')
+            $child = Start-Child (Join-Path $root 'SteamSentinel.exe') $arguments
+            [pscustomobject]@{ child = $child; root = $root; arguments = $arguments }
+        }
+        verify = {
+            param($Case, $State, $ChildResult)
+            Assert ($ChildResult.exitCode -eq 0) 'UI host was not dispatched.'
+            $business = Join-Path $State.root 'fixture-business.txt'
+            $deadline = [DateTime]::UtcNow.AddSeconds(5)
+            while (-not (Test-Path -LiteralPath $business) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+            $actual = @(Get-Content -LiteralPath $business)
+            Assert ($actual.Count -eq $State.arguments.Count + 1 -and $actual[0] -eq 'SteamSentinel.Standard.exe') 'Unexpected business dispatch.'
+            for ($i = 0; $i -lt $State.arguments.Count; $i++) {
+                Assert ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($actual[$i + 1])) -ceq $State.arguments[$i]) "Argument $i changed."
+            }
+        }
+    })
+    $fixtureCases.Add([pscustomobject]@{
+        name = 'fixture-broker-preserves-mode-and-business-exit-without-replay'
+        scenario = 'success'
+        isBackgroundTimeout = $false
+        state = $null
+        result = $null
+        setup = {
+            param($Case)
+            $root = New-Fixture 'success'
+            $child = Start-Child (Join-Path $root 'SteamSentinel.Broker.exe') @('--startup-mode','compat','plan path','plan hash')
+            [pscustomobject]@{ child = $child; root = $root }
+        }
+        verify = {
+            param($Case, $State, $ChildResult)
+            Assert ($ChildResult.exitCode -eq 37) 'Broker business exit was lost or retried.'
+            $actual = @(Get-Content -LiteralPath (Join-Path $State.root 'fixture-business.txt'))
+            Assert ($actual.Count -eq 3 -and $actual[0] -eq 'SteamSentinel.Broker.Compat.exe') 'Broker dispatched the wrong host or leaked private arguments.'
+            Assert ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($actual[1])) -ceq 'plan path') 'Broker plan argument changed.'
+        }
+    })
+    $fixtureCases.Add([pscustomobject]@{
+        name = 'fixture-broker-preflight-failure-is-distinct-from-business-failure'
+        scenario = 'broker-fails'
+        isBackgroundTimeout = $false
+        state = $null
+        result = $null
+        setup = {
+            param($Case)
+            $root = New-Fixture 'broker-fails'
+            $child = Start-Child (Join-Path $root 'SteamSentinel.Broker.exe') @('--startup-check')
+            [pscustomobject]@{ child = $child; root = $root }
+        }
+        verify = {
+            param($Case, $State, $ChildResult)
+            Assert ($ChildResult.exitCode -eq 0x53530001) 'Broker did not identify that business never started.'
+            Assert (-not (Test-Path -LiteralPath (Join-Path $State.root 'fixture-business.txt'))) 'Broker preflight executed a plan.'
+        }
+    })
+    $fixtureCases.Add([pscustomobject]@{
+        name = 'fixture-broker-business-cannot-spoof-preflight-not-started'
+        scenario = 'exit-collision'
+        isBackgroundTimeout = $false
+        state = $null
+        result = $null
+        setup = {
+            param($Case)
+            $root = New-Fixture 'exit-collision'
+            $child = Start-Child (Join-Path $root 'SteamSentinel.Broker.exe') @('plan path','plan hash')
+            [pscustomobject]@{ child = $child; root = $root }
+        }
+        verify = {
+            param($Case, $State, $ChildResult)
+            Assert ($ChildResult.exitCode -eq 126) 'Business exit collided with the reserved preflight result.'
+            Assert (Test-Path -LiteralPath (Join-Path $State.root 'fixture-business.txt')) 'Business fixture was not run.'
+        }
+    })
+
+    # 先第一时间后台拉起等待 20s 探针超时的 fixture-timeout，让它与其余 21 个夹具用例充分重叠。
+    $timeoutFixtureCase = $fixtureCases | Where-Object { $_.isBackgroundTimeout } | Select-Object -First 1
+    if ($null -ne $timeoutFixtureCase) {
+        try {
+            $timeoutFixtureCase.state = & $timeoutFixtureCase.setup $timeoutFixtureCase
+        }
+        catch {
+            $timeoutFixtureCase.result = [pscustomobject]@{ name = $timeoutFixtureCase.name; passed = $false; skipped = $false; error = $_.Exception.Message }
         }
     }
-    Check 'fixture-installer-uninstaller-does-not-block-startup' {
-        $root = New-Fixture 'success'
-        Write-Text (Join-Path $root 'unins000.exe') 'Inno-created placeholder, never executed.'
-        $result = Invoke-Child (Join-Path $root 'SteamSentinel.exe') @('--startup-check')
-        Assert ($result.exitCode -eq 0) 'The installed uninstaller was incorrectly rejected.'
-    }
-    Check 'fixture-arguments-are-forwarded-once-without-reinterpretation' {
-        $root = New-Fixture 'success'
-        $arguments = @('space value', 'C:\path with spaces\', 'literal"quote', '', '中文', '& % !')
-        $result = Invoke-Child (Join-Path $root 'SteamSentinel.exe') $arguments
-        Assert ($result.exitCode -eq 0) 'UI host was not dispatched.'
-        $business = Join-Path $root 'fixture-business.txt'
-        $deadline = [DateTime]::UtcNow.AddSeconds(5)
-        while (-not (Test-Path -LiteralPath $business) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-        $actual = @(Get-Content -LiteralPath $business)
-        Assert ($actual.Count -eq $arguments.Count + 1 -and $actual[0] -eq 'SteamSentinel.Standard.exe') 'Unexpected business dispatch.'
-        for ($i = 0; $i -lt $arguments.Count; $i++) {
-            Assert ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($actual[$i + 1])) -ceq $arguments[$i]) "Argument $i changed."
+
+    $concurrentFixtureCases = @($fixtureCases | Where-Object { -not $_.isBackgroundTimeout })
+    $maxFixtureConcurrency = 4
+    $nextCaseIndex = 0
+    while ($nextCaseIndex -lt $concurrentFixtureCases.Count -or $activeFixtureSlots.Count -gt 0) {
+        while ($activeFixtureSlots.Count -lt $maxFixtureConcurrency -and $nextCaseIndex -lt $concurrentFixtureCases.Count) {
+            $case = $concurrentFixtureCases[$nextCaseIndex++]
+            try {
+                $case.state = & $case.setup $case
+                $activeFixtureSlots.Add($case)
+            }
+            catch {
+                $case.result = [pscustomobject]@{ name = $case.name; passed = $false; skipped = $false; error = $_.Exception.Message }
+            }
+        }
+
+        $reapedAny = $false
+        for ($slotIndex = $activeFixtureSlots.Count - 1; $slotIndex -ge 0; $slotIndex--) {
+            $slotCase = $activeFixtureSlots[$slotIndex]
+            $slotChild = $slotCase.state.child
+            if ($slotChild.process.HasExited -or $slotChild.clock.ElapsedMilliseconds -ge $slotChild.timeoutMs) {
+                $activeFixtureSlots.RemoveAt($slotIndex)
+                $reapedAny = $true
+                try {
+                    $childResult = Wait-Child $slotChild
+                    & $slotCase.verify $slotCase $slotCase.state $childResult
+                    $slotCase.result = [pscustomobject]@{ name = $slotCase.name; passed = $true; skipped = $false; error = $null }
+                }
+                catch {
+                    $slotCase.result = [pscustomobject]@{ name = $slotCase.name; passed = $false; skipped = $false; error = $_.Exception.Message }
+                }
+            }
+        }
+
+        if (-not $reapedAny -and $activeFixtureSlots.Count -gt 0 -and
+            ($activeFixtureSlots.Count -ge $maxFixtureConcurrency -or $nextCaseIndex -ge $concurrentFixtureCases.Count)) {
+            Start-Sleep -Milliseconds 20
         }
     }
-    Check 'fixture-broker-preserves-mode-and-business-exit-without-replay' {
-        $root = New-Fixture 'success'
-        $result = Invoke-Child (Join-Path $root 'SteamSentinel.Broker.exe') @('--startup-mode','compat','plan path','plan hash')
-        Assert ($result.exitCode -eq 37) 'Broker business exit was lost or retried.'
-        $actual = @(Get-Content -LiteralPath (Join-Path $root 'fixture-business.txt'))
-        Assert ($actual.Count -eq 3 -and $actual[0] -eq 'SteamSentinel.Broker.Compat.exe') 'Broker dispatched the wrong host or leaked private arguments.'
-        Assert ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($actual[1])) -ceq 'plan path') 'Broker plan argument changed.'
+
+    if ($null -ne $timeoutFixtureCase -and $null -eq $timeoutFixtureCase.result) {
+        try {
+            $timeoutResult = Wait-Child $timeoutFixtureCase.state.child
+            & $timeoutFixtureCase.verify $timeoutFixtureCase $timeoutFixtureCase.state $timeoutResult
+            $timeoutFixtureCase.result = [pscustomobject]@{ name = $timeoutFixtureCase.name; passed = $true; skipped = $false; error = $null }
+        }
+        catch {
+            $timeoutFixtureCase.result = [pscustomobject]@{ name = $timeoutFixtureCase.name; passed = $false; skipped = $false; error = $_.Exception.Message }
+        }
     }
-    Check 'fixture-broker-preflight-failure-is-distinct-from-business-failure' {
-        $root = New-Fixture 'broker-fails'
-        $result = Invoke-Child (Join-Path $root 'SteamSentinel.Broker.exe') @('--startup-check')
-        Assert ($result.exitCode -eq 0x53530001) 'Broker did not identify that business never started.'
-        Assert (-not (Test-Path -LiteralPath (Join-Path $root 'fixture-business.txt'))) 'Broker preflight executed a plan.'
-    }
-    Check 'fixture-broker-business-cannot-spoof-preflight-not-started' {
-        $root = New-Fixture 'exit-collision'
-        $result = Invoke-Child (Join-Path $root 'SteamSentinel.Broker.exe') @('plan path','plan hash')
-        Assert ($result.exitCode -eq 126) 'Business exit collided with the reserved preflight result.'
-        Assert (Test-Path -LiteralPath (Join-Path $root 'fixture-business.txt')) 'Business fixture was not run.'
+
+    foreach ($case in $fixtureCases) {
+        $tests.Add($case.result)
+        if ($case.result.passed) {
+            Write-Host "PASS $($case.result.name)"
+        }
+        else {
+            Write-Host "FAIL $($case.result.name) : $($case.result.error)"
+        }
     }
 }
 catch {
     $tests.Add([pscustomobject]@{ name = 'test-harness'; passed = $false; skipped = $false; error = $_.Exception.Message })
 }
 finally {
+    foreach ($item in $realEntries) {
+        if ($null -ne $item.PSObject.Properties['child']) { Stop-Child $item.child }
+    }
+    foreach ($slotCase in $activeFixtureSlots) {
+        if ($null -ne $slotCase.state -and $null -ne $slotCase.state.child) { Stop-Child $slotCase.state.child }
+    }
+    if ($null -ne $timeoutFixtureCase -and $null -ne $timeoutFixtureCase.state -and $null -ne $timeoutFixtureCase.state.child) {
+        Stop-Child $timeoutFixtureCase.state.child
+    }
     $watch.Stop()
     $result = [ordered]@{
         schema = 'SteamSentinel.UnifiedStartupTests/1'

@@ -175,12 +175,18 @@ internal static partial class Program
         static Task<ArchivePasswordResponse> NoPassword(ArchivePasswordRequest request, CancellationToken _) => Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false));
         HashSet<string> beforeFolders = Directory.Exists(AppPaths.WorkerTemporaryRoot)
             ? Directory.GetDirectories(AppPaths.WorkerTemporaryRoot).ToHashSet(StringComparer.OrdinalIgnoreCase) : [];
-        foreach (string mode in new[] { "exit0142", "exit259", "flood", "invalidhello", "reportfail", "checkpointoom", "checkpointexit" })
+        // 并行拉起 7 个互不依赖的故障模式夹具，完成后按原顺序逐一校验诊断结果。
+        string[] failureModes = ["exit0142", "exit259", "flood", "invalidhello", "reportfail", "checkpointoom", "checkpointexit"];
+        var modeResults = await Task.WhenAll(failureModes.Select(async mode =>
         {
             WorkerFailureException? failure = null;
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
             try { await new ArchiveWorkerClient(Fixture(mode)).RunAsync(options, NoPassword, null, timeout.Token); }
             catch (WorkerFailureException ex) { failure = ex; }
+            return (Mode: mode, Failure: failure);
+        }));
+        foreach (var (mode, failure) in modeResults)
+        {
             Check($"工作进程故障诊断：{mode}", failure is not null && mode switch
             {
                 "exit0142" or "flood" => failure.Stage == WorkerStage.Handshake && failure.NativeExitCode == unchecked((int)0xC0000142) && failure.Message.Contains("0xC0000142", StringComparison.Ordinal),
@@ -191,10 +197,17 @@ internal static partial class Program
                 _ => failure.Stage == WorkerStage.Exit && failure.NativeExitCode == 23
             });
         }
-        using (CancellationTokenSource cancel = new(TimeSpan.FromSeconds(2)))
+        using (CancellationTokenSource cancel = new(TimeSpan.FromSeconds(15)))
         {
             WorkerCancelledException? failure = null;
-            try { await new ArchiveWorkerClient(Fixture("checkpointcancel")).RunAsync(options, NoPassword, null, cancel.Token); }
+            int cancelScheduled = 0;
+            // 收到 Checkpoint 之后紧邻上报的 Progress 即触发 <=400ms 的短等待取消，避免进程冷启波动导致偶发失败。
+            IProgress<ScanProgress> checkpointProgress = new V018InlineProgress(_ =>
+            {
+                if (Interlocked.Exchange(ref cancelScheduled, 1) == 0)
+                    cancel.CancelAfter(TimeSpan.FromMilliseconds(50));
+            });
+            try { await new ArchiveWorkerClient(Fixture("checkpointcancel")).RunAsync(options, NoPassword, checkpointProgress, cancel.Token); }
             catch (WorkerCancelledException ex) { failure = ex; }
             Check("取消后保留已交回内容批次", failure?.PartialReport?.Metrics.FilesVisited == 4 && failure.PartialReport.Findings.Count == 1);
         }
@@ -211,7 +224,7 @@ internal static partial class Program
             ArchiveWorkerClient.DefaultHandshakeTimeout == TimeSpan.FromSeconds(45) &&
             ArchiveWorkerClient.HandshakeTimeout == ArchiveWorkerClient.DefaultHandshakeTimeout);
         WorkerFailureException? timedOut = null;
-        ArchiveWorkerClient.HandshakeTimeout = TimeSpan.FromSeconds(2);
+        ArchiveWorkerClient.HandshakeTimeout = TimeSpan.FromMilliseconds(400);
         try
         {
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
@@ -292,7 +305,16 @@ internal static partial class Program
             new ReportBatchWriter(batch => Console.Out.WriteLine(JsonSerializer.Serialize(new WorkerMessage
             { Type = WorkerMessageTypes.Checkpoint, Batch = batch }))).Send(partial);
             await Console.Out.FlushAsync();
-            if (mode == "checkpointcancel") await Task.Delay(TimeSpan.FromSeconds(30));
+            if (mode == "checkpointcancel")
+            {
+                await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new WorkerMessage
+                {
+                    Type = WorkerMessageTypes.Progress,
+                    Progress = new("压缩包目录", "inert.zip!/next.rar", 4, null, "读取目录")
+                }));
+                await Console.Out.FlushAsync();
+                await Task.Delay(TimeSpan.FromSeconds(30));
+            }
             if (mode == "checkpointoom") await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new WorkerMessage
             {
                 Type = WorkerMessageTypes.Failed,
@@ -396,4 +418,9 @@ internal static partial class Program
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetUserObjectInformation(IntPtr objectHandle, int index, [Out] byte[]? info, uint length, out uint lengthNeeded);
+
+    private sealed class V018InlineProgress(Action<ScanProgress> report) : IProgress<ScanProgress>
+    {
+        public void Report(ScanProgress value) => report(value);
+    }
 }

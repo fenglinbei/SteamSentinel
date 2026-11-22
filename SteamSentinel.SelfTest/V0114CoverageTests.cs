@@ -94,7 +94,9 @@ internal static partial class Program
         // Exercise >14k real inert paths, not just synthetic report entries. No content is executed.
         string manyRoot = Path.Combine(directory, "many", new string('a', 90)); Directory.CreateDirectory(manyRoot);
         const int files = 14_050;
-        for (int i = 0; i < files; i++) File.WriteAllText(Path.Combine(manyRoot, $"item-{i:D5}.dat"), "x");
+        // 限制并发度写入大量独立空文件，缩短初始化耗时并保留完整路径结构
+        Parallel.For(0, files, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
+            File.WriteAllText(Path.Combine(manyRoot, $"item-{i:D5}.dat"), "x"));
         ScanOptions zero = new()
         {
             Mode = ScanMode.Full,
@@ -111,12 +113,8 @@ internal static partial class Program
         Check("聚合缺口使根摘要保持 Partial", many.RootSummaries.Single().Coverage == ScanCoverage.Partial &&
             many.RootSummaries.Single().FilesVisited == files);
 
-        string solution = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
         // The release smoke helper selects an installed/signed worker without changing older evidence tests.
-        string worker = Environment.GetEnvironmentVariable("STEAMSENTINEL_COVERAGE_WORKER_PATH") is { Length: > 0 } configuredWorker
-            ? Path.GetFullPath(configuredWorker)
-            : Directory.EnumerateFiles(Path.Combine(solution, "SteamSentinel.ArchiveWorker", "bin"),
-                "SteamSentinel.ArchiveWorker.exe", SearchOption.AllDirectories).OrderByDescending(File.GetLastWriteTimeUtc).First();
+        string worker = ResolveArchiveWorkerPath(allowCoverageEnvOverride: true);
         static Task<ArchivePasswordResponse> NoPassword(ArchivePasswordRequest request, CancellationToken _) =>
             Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false));
         using (CancellationTokenSource timeout = new(TimeSpan.FromMinutes(3)))
@@ -189,5 +187,45 @@ internal static partial class Program
         CoverageAggregation.Add(capped, "CONTENT-BYTE-BUDGET", Path.Combine(directory, "root-0"), "another");
         Check("不同根原因分组上限明确停止且既有组仍可准确累加", rejected &&
             capped.CoverageAggregates.Count == CoverageAggregate.MaximumGroups && CoverageAggregation.OccurrenceCount(capped) == CoverageAggregate.MaximumGroups + 1);
+    }
+
+    /// <summary>按环境变量覆盖、当前同配置产物与最新构建产物顺序定位 ArchiveWorker 可执行文件。</summary>
+    private static string ResolveArchiveWorkerPath(bool allowCoverageEnvOverride)
+    {
+        if (allowCoverageEnvOverride &&
+            Environment.GetEnvironmentVariable("STEAMSENTINEL_COVERAGE_WORKER_PATH") is { Length: > 0 } configuredWorker)
+            return Path.GetFullPath(configuredWorker);
+
+        string baseDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
+        string marker = Path.DirectorySeparatorChar + "SteamSentinel.SelfTest" + Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar;
+        int markerIndex = baseDirectory.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex >= 0)
+        {
+            string matchedConfigurationWorker = Path.Combine(
+                baseDirectory[..markerIndex],
+                "SteamSentinel.ArchiveWorker",
+                "bin",
+                baseDirectory[(markerIndex + marker.Length)..],
+                "SteamSentinel.ArchiveWorker.exe");
+            if (File.Exists(matchedConfigurationWorker))
+                return matchedConfigurationWorker;
+        }
+
+        string adjacentWorker = Path.Combine(baseDirectory, "SteamSentinel.ArchiveWorker.exe");
+        if (File.Exists(adjacentWorker))
+            return adjacentWorker;
+
+        for (string? current = baseDirectory; current is not null; current = Path.GetDirectoryName(current))
+        {
+            string workerBin = Path.Combine(current, "SteamSentinel.ArchiveWorker", "bin");
+            if (!Directory.Exists(workerBin)) continue;
+            string? newest = Directory.EnumerateFiles(workerBin, "SteamSentinel.ArchiveWorker.exe", SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+            if (newest is not null)
+                return newest;
+        }
+
+        throw new FileNotFoundException("未找到可用的 SteamSentinel.ArchiveWorker.exe 构建产物。");
     }
 }
