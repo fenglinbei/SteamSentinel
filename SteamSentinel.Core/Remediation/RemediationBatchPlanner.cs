@@ -140,10 +140,10 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         RemediationPlanBuilder planBuilder = _steamLayout is null ? new(rules) : new(rules, _steamLayout);
         foreach (Finding finding in verified.Where(f => !f.UserSelectedRisk && RemediationEvidencePolicy.IsReviewOnlyEvidence(f)))
             Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
-        // Source groups precede independent script repairs. Completed earlier batches are
-        // verified before the next runs, and the Broker rechecks live sources for every repair.
+        // Source groups precede Steam configuration/UI repairs. Completed earlier batches are
+        // verified before the next runs, and the Broker rechecks live state for every repair.
         foreach (Finding[] group in DependencyGroups(verified.Where(CanPrepare).ToArray())
-            .OrderBy(group => group.Any(f => f.SuggestedActions.Contains(SuggestedActionKind.RepairSteamScript))))
+            .OrderBy(group => group.Any(f => f.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration))))
         {
             token.ThrowIfCancellationRequested();
             try
@@ -299,7 +299,6 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
 
         void CompletePlan()
         {
-            SteamScriptRepairTarget.AddSourceDependencies(current.Actions, rules ?? SteamSentinel.Core.Rules.RuleLoader.LoadEmbedded());
             RemediationPlanBuilder.OrderActionsForSafeExecution(current.Actions);
             plans.Add(current);
         }

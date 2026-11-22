@@ -215,11 +215,6 @@ internal sealed partial class BrokerEngine
             await VerifySteamConfigurationRecordedContentAsync(record, token);
             return;
         }
-        if (record.Type == RemediationActionType.RepairSteamScript)
-        {
-            if (record.FileMutationAttempted) _ = await ReadVerifiedSteamScriptBackupAsync(record, token);
-            return;
-        }
         if (record.VerifiedContentRuleId == SteamAlertEmbeddedEvidence.RuleId && !SupportsEmbeddedRegistryRecord(record))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerBoundActions.VerifyRecordedContentAsync.03"), sourceText => new InvalidDataException(sourceText));
         if (!HasHeuristicRecord(record)) return;

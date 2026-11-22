@@ -57,7 +57,6 @@ public enum SuggestedActionKind
     DisableService,
     RemoveRelatedDefenderExclusion,
     DisableRelatedFirewallRule,
-    RepairSteamScript,
     RepairSteamConfiguration
 }
 

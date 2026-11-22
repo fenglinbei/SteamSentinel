@@ -25,8 +25,11 @@ internal static partial class Program
         }.All(expected => production.KnownHashes.Any(rule => rule.Malware && rule.Sha256 == expected.Item1 && rule.Id == expected.Item2)));
         Check("Watchdog resident version retains the resident family role",
             SteamAlertInstallation.FamilyRole(SteamAlertInstallation.UpdatedResidentRule) == SteamAlertInstallation.ResidentRule);
-        Check("Watchdog rebuilt resident and scripts remain Steam repair source prerequisites",
-            new[] { watchHash, updateHash, launchHash, payloadHash }.All(SteamScriptRepairTarget.SourceHashes(production).Contains));
+        Check("Watchdog rebuilt resident and scripts map cleanly to family roles",
+            SteamAlertWatchdog.RoleForHash(watchHash) == SteamAlertWatchdog.WatchdogRole &&
+            SteamAlertWatchdog.RoleForHash(updateHash) == SteamAlertWatchdog.UpdaterRole &&
+            SteamAlertWatchdog.RoleForHash(launchHash) == SteamAlertWatchdog.LauncherRole &&
+            production.KnownHashes.Any(rule => rule.Sha256 == payloadHash && SteamAlertInstallation.FamilyRole(rule.Id) == SteamAlertInstallation.ResidentRule));
         Check("Watchdog BOM-free resources keep precise rules and the same script family roles", new[]
         {
             ("STEAMALERT-WATCHDOG-NOBOM", "4D68A9C6F0C2802339BC572CF3E4EFF0462C01D1E894CFF9E8B578F9C2736FFF", SteamAlertWatchdog.WatchdogRole),

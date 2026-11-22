@@ -270,7 +270,6 @@ public static class ReportExporter
         RemediationActionType.QuarantineFile => MessageText.Create("Report.ActionLabel.QuarantineFile.01"),
         RemediationActionType.RepairSteamConfiguration => MessageText.Create("Report.ActionLabel.RepairSteamConfiguration"),
         RemediationActionType.QuarantineDirectory => MessageText.Create("Report.ActionLabel.QuarantineDirectory.01"),
-        RemediationActionType.RepairSteamScript => MessageText.Create("SteamScript.ActionName"),
         RemediationActionType.AddProgramFirewallBlock => MessageText.Create("Report.ActionLabel.AddProgramFirewallBlock.01"),
         RemediationActionType.BlockKnownDomains => MessageText.Create("Report.ActionLabel.BlockKnownDomains.01"),
         RemediationActionType.RestoreSecurityControls => MessageText.Create("Report.ActionLabel.RestoreSecurityControls.01"),

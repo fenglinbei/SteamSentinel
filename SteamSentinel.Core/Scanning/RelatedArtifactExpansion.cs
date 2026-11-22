@@ -137,26 +137,6 @@ public sealed partial class RelatedArtifactScanner
         foreach (Finding finding in selected)
         {
             token.ThrowIfCancellationRequested();
-            if (finding.SuggestedActions.Contains(SuggestedActionKind.RepairSteamScript))
-            {
-                familyLayout ??= layout ?? SteamLocator.Discover();
-                try
-                {
-                    if (finding.RuleId != SteamScriptRepair.RuleId || finding.Category != FindingCategory.Steam ||
-                        finding.RelatedFilePath is not null || finding.ContentPath is not null &&
-                        !RelatedArtifactRelations.SamePath(finding.Target, finding.ContentPath))
-                        throw MessageExceptions.Create(MessageText.Create("SteamScript.Unconfirmed"), text => new InvalidDataException(text));
-                    SteamScriptRepairSnapshot proof = await SteamScriptRepairTarget.CaptureAsync(finding.Target,
-                        finding.TargetSha256 ?? finding.Sha256, familyLayout, token);
-                    report.Findings.Add(SteamScriptRepairTarget.CreateFinding(finding.Target, proof.OriginalSha256, proof.RepairedSha256));
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception)
-                {
-                    if (ContentDiscovery.IsLocalSafePath(finding.Target)) _blockedPaths.Add(Path.GetFullPath(finding.Target));
-                    Note(report, MessageExceptions.Describe(ex));
-                }
-                continue;
-            }
             foreach (string path in await GetCandidatePathsCoreAsync(finding, report, token))
             {
                 if (candidates.Count < 64) candidates.Add(path);
@@ -216,7 +196,9 @@ public sealed partial class RelatedArtifactScanner
 
         if (SteamSecurityScanner.IsCurrentUserReport(input))
         {
-            if (report.Findings.Any(finding => finding.RuleId == SteamScriptRepair.RuleId))
+            if (report.Findings.Any(finding =>
+                finding.ConfigurationKind == SteamConfigurationRepair.UiFile ||
+                finding.RuleId is "STEAM-UI-LOOPBACK-SCRIPT" or "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING"))
             {
                 _installedFamilyScope = true;
                 familyLayout ??= layout ?? SteamLocator.Discover();
@@ -299,9 +281,14 @@ public sealed partial class RelatedArtifactScanner
             ScanReport scripts = new();
             foreach (string steamRoot in familyLayout.SteamRoots)
                 await new SteamSecurityScanner(rules).ScanSteamUiAsync(steamRoot, scripts, token);
-            foreach (Finding repair in scripts.Findings.Where(f => f.RuleId == SteamScriptRepair.RuleId &&
+            foreach (Finding repair in scripts.Findings.Where(f =>
+                (f.ConfigurationKind == SteamConfigurationRepair.UiFile ||
+                 f.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING") &&
                 !_blockedPaths.Contains(Path.GetFullPath(f.Target))))
-                if (!report.Findings.Any(f => f.RuleId == SteamScriptRepair.RuleId && RelatedArtifactRelations.SamePath(f.Target, repair.Target)))
+                if (!report.Findings.Any(f =>
+                    (f.ConfigurationKind == SteamConfigurationRepair.UiFile ||
+                     f.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING") &&
+                    RelatedArtifactRelations.SamePath(f.Target, repair.Target)))
                     report.Findings.Add(repair);
             foreach (MessageText note in scripts.CoverageTexts) Note(report, note);
         }
@@ -328,7 +315,9 @@ public sealed partial class RelatedArtifactScanner
                 if (!await PreserveOrphanEntryAsync(finding, report, token))
                     Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.19") + finding.Target);
             }
-        report.Findings.RemoveAll(finding => finding.RuleId == SteamScriptRepair.RuleId &&
+        report.Findings.RemoveAll(finding =>
+            (finding.ConfigurationKind == SteamConfigurationRepair.UiFile ||
+             finding.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING") &&
             _blockedPaths.Contains(Path.GetFullPath(finding.Target)));
         report.AddScopeNote(MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.20"));
         return new(report.Findings.DistinctBy(f => f.Id).ToArray(), candidates.ToArray(), report.CoverageNotes.Distinct().ToArray())

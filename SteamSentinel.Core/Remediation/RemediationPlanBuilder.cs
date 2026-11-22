@@ -131,7 +131,6 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.RemoveRelatedDefenderExclusion => BoundAction(finding, RemediationActionType.RemoveRelatedDefenderExclusion, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveRelatedDefenderExclusion.01")),
                     SuggestedActionKind.DisableRelatedFirewallRule => BoundAction(finding, RemediationActionType.DisableRelatedFirewallRule, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableRelatedFirewallRule.01")),
                     SuggestedActionKind.QuarantineFile when File.Exists(finding.Target) => await CreateFileActionAsync(finding, cancellationToken, requestExplicitFileTargets),
-                    SuggestedActionKind.RepairSteamScript => await CreateScriptRepairAsync(finding, cancellationToken),
                     SuggestedActionKind.RepairSteamConfiguration => await SteamConfigurationRepairTarget.CaptureAsync(finding, _steamLayout.Value, cancellationToken),
                     SuggestedActionKind.QuarantineDirectory when Directory.Exists(finding.Target) =>
                         await CreateDirectoryActionAsync(finding, cancellationToken),
@@ -197,7 +196,6 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
         foreach (RemediationAction file in plan.Actions.Where(a => a.UserSelectedRisk && a.Type == RemediationActionType.QuarantineFile).ToArray())
             plan.Actions.AddRange(UserRiskCompanions.Discover(file, cancellationToken));
         if (plan.Actions.Count > RemediationLimits.MaximumActionsPerPlan) throw MessageExceptions.Create(MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.07"), sourceText => new InvalidDataException(sourceText));
-        SteamScriptRepairTarget.AddSourceDependencies(plan.Actions, rules);
         OrderActionsForSafeExecution(plan.Actions);
 
         return plan;
@@ -261,28 +259,6 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             ExpectedParentIdentity = requestExplicitFileTargets || embeddedProof || handoffProof ? FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(path)!, true) : null,
             IsKnownMalware = finding.IsKnownMalware,
             ConfidenceScore = finding.Score
-        };
-    }
-
-    private async Task<RemediationAction> CreateScriptRepairAsync(Finding finding, CancellationToken token)
-    {
-        if (finding.RuleId != SteamSentinel.Core.Inspection.SteamScriptRepair.RuleId || finding.Category != FindingCategory.Steam ||
-            finding.RelatedFilePath is not null || finding.ContentPath is not null &&
-            !RelatedArtifactRelations.SamePath(finding.Target, finding.ContentPath))
-            throw MessageExceptions.Create(MessageText.Create("SteamScript.Unconfirmed"), text => new InvalidDataException(text));
-        SteamScriptRepairSnapshot proof = await SteamScriptRepairTarget.CaptureAsync(finding.Target,
-            finding.TargetSha256 ?? finding.Sha256, _steamLayout.Value, token);
-        return new()
-        {
-            Type = RemediationActionType.RepairSteamScript,
-            Target = Path.GetFullPath(finding.Target),
-            ExpectedSha256 = proof.OriginalSha256,
-            RepairedSha256 = proof.RepairedSha256,
-            ExpectedFileIdentity = proof.FileIdentity,
-            ExpectedParentIdentity = proof.ParentIdentity,
-            DisplayNameText = MessageText.Create("SteamScript.ActionName"),
-            IsKnownMalware = true,
-            ConfidenceScore = 95
         };
     }
 

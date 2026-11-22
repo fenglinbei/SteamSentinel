@@ -135,10 +135,7 @@ internal static partial class Program
             await TestSteamAlertHandoffBrokerAsync(root);
             await TestSteamAlertHandoffDiscoveryAsync(root);
             await TestSteamAlertClosureAsync(root);
-            await TestSteamScriptRepairAsync(root);
-            await TestSteamScriptRepairIntegrationAsync(root);
-            await TestSteamScriptBatchRegressionAsync(root);
-            await TestBrokerSteamScriptRepairAsync(root);
+            await TestP2BSteamRecoveryAsync(root);
             await TestRemediationModesAsync(root);
             await TestSteamConfigurationRepairAsync(root);
             await TestSteamAlertEmbeddedEvidenceAsync(root);
@@ -952,18 +949,15 @@ internal static partial class Program
                 catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
                 await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "remediation-mode-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
                 return Failures.Count == 0 ? 0 : 1;
-            case "--steam-script-repair-tests" when args.Length == 2:
+            case "--steam-recovery-tests" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));
                 try
                 {
-                    string repairRoot = Path.GetFullPath(args[1]);
-                    await TestSteamScriptRepairAsync(repairRoot);
-                    await TestSteamScriptRepairIntegrationAsync(repairRoot);
-                    await TestSteamScriptBatchRegressionAsync(repairRoot);
-                    await TestBrokerSteamScriptRepairAsync(repairRoot);
+                    string recoveryRoot = Path.GetFullPath(args[1]);
+                    await TestP2BSteamRecoveryAsync(recoveryRoot);
                 }
                 catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
-                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "script-repair-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "steam-recovery-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
                 return Failures.Count == 0 ? 0 : 1;
             case "--steamalert-watchdog-tests" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));

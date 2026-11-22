@@ -22,7 +22,6 @@ public enum RemediationActionType
     DisableRelatedFirewallRule,
     RemoveBoundCertificate,
     RestoreBoundProxyConfiguration,
-    RepairSteamScript,
     RepairSteamConfiguration
 }
 

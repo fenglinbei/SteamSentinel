@@ -64,7 +64,6 @@ internal sealed partial class BrokerEngine
         _requestedBySid = plan.RequestedBySid;
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         ValidateConfigurationPlan(plan);
-        ValidateSteamScriptPlan(plan);
         RequireSteamAlertClosure(plan);
         if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration))
             RequireSteamConfigurationClosed();
@@ -121,7 +120,7 @@ internal sealed partial class BrokerEngine
             token => _persistOwnManifest ? PersistManifestAsync(token) : Task.CompletedTask,
             (action, actionResult, ex) =>
             {
-                if (action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory or RemediationActionType.RepairSteamScript &&
+                if (action.Type is RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory or RemediationActionType.RepairSteamConfiguration &&
                     ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
                 {
                     actionResult.Occupancy = FileOccupancy.Inspect(action.Target, action.Type == RemediationActionType.QuarantineDirectory);
@@ -192,9 +191,6 @@ internal sealed partial class BrokerEngine
                 break;
             case RemediationActionType.QuarantineFile:
                 ValidateQuarantinePath(action.Target, isDirectory: false, action.ExpectedSha256, action);
-                break;
-            case RemediationActionType.RepairSteamScript:
-                ValidateSteamScriptAction(action, _steamLayout);
                 break;
             case RemediationActionType.RepairSteamConfiguration:
                 ValidateSteamConfigurationAction(action, _steamLayout);
@@ -268,7 +264,6 @@ internal sealed partial class BrokerEngine
     {
         RemediationActionType.StopProcess => await StopProcessAsync(action, cancellationToken),
         RemediationActionType.QuarantineFile => await QuarantineFileAsync(action, cancellationToken),
-        RemediationActionType.RepairSteamScript => await RepairSteamScriptAsync(action, cancellationToken),
         RemediationActionType.RepairSteamConfiguration => await RepairSteamConfigurationAsync(action, cancellationToken),
         RemediationActionType.QuarantineDirectory => await QuarantineDirectoryAsync(action, cancellationToken),
         RemediationActionType.RemoveRegistryValue => await RemoveRegistryValueAsync(action, cancellationToken),
@@ -607,8 +602,6 @@ internal sealed partial class BrokerEngine
         QuarantineManifest manifest = await LoadTrustedManifestAsync(incidentId, incidentRoot, manifestPath, cancellationToken);
         SetConfigurationRollbackContext(manifest, manifestPath);
         await ValidateRollbackManifestAsync(manifest, incidentRoot, incidentId, cancellationToken);
-        if (manifest.Records.Any(record => record.Type == RemediationActionType.RepairSteamScript && !record.RolledBack))
-            RequireSteamClosed();
         if (manifest.Records.Any(record => record.Type == RemediationActionType.RepairSteamConfiguration && !record.RolledBack))
             RequireSteamConfigurationClosed();
 
@@ -622,13 +615,9 @@ internal sealed partial class BrokerEngine
                 await PersistTrustedManifestAsync(manifestPath, manifest, cancellationToken);
                 continue;
             }
-            if (!record.MutationConfirmed && !record.UserSelectedRisk && !configurationRecord && record.Type is not (RemediationActionType.RepairSteamScript or RemediationActionType.RepairSteamConfiguration)) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RollbackIncidentAsync.01"), sourceText => new InvalidOperationException(sourceText));
+            if (!record.MutationConfirmed && !record.UserSelectedRisk && !configurationRecord && record.Type != RemediationActionType.RepairSteamConfiguration) throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.RollbackIncidentAsync.01"), sourceText => new InvalidOperationException(sourceText));
             switch (record.Type)
             {
-                case RemediationActionType.RepairSteamScript:
-                    await RestoreSteamScriptFileAsync(record, _steamLayout, cancellationToken,
-                        (_, token) => PersistTrustedManifestAsync(manifestPath, manifest, token));
-                    break;
                 case RemediationActionType.RepairSteamConfiguration:
                     await RestoreSteamConfigurationAsync(record, cancellationToken,
                         (_, token) => PersistTrustedManifestAsync(manifestPath, manifest, token));
@@ -825,9 +814,6 @@ sourceText));
 
         switch (record.Type)
         {
-            case RemediationActionType.RepairSteamScript:
-                ValidateSteamScriptRecord(record, _steamLayout);
-                break;
             case RemediationActionType.RepairSteamConfiguration:
                 ValidateSteamConfigurationRecord(record, _steamLayout);
                 break;

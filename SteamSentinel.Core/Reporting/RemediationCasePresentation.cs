@@ -79,8 +79,6 @@ public static class RemediationCasePresentation
     {
         string identity = (action.ExpectedSha256 ?? action.ExpectedValueData ?? string.Empty) +
             (action.RelatedFilePath is null ? "" : DisplayText.Format("RemediationCase.ActionIdentity.01", (action.RelatedFilePath), (action.RelatedFileSha256)));
-        if (action.Type == RemediationActionType.RepairSteamScript)
-            identity += "\n" + DisplayText.Format("SteamScript.RepairedIdentity", action.RepairedSha256 ?? string.Empty);
         if (action.Type == RemediationActionType.StopHostProcess &&
             action.ConfigurationKind is SteamAlertWatchdog.ScriptHostKind or SteamAlertUpdateHandoff.ScriptHostKind)
             identity += "\n" + DisplayText.Format("SteamAlert.Watchdog.HostIdentity", action.ProcessId,
@@ -90,7 +88,7 @@ public static class RemediationCasePresentation
             identity = action.ConfigurationKind == SteamConfigurationRepair.Run
                 ? DisplayText.Format("SteamConfig.OriginalValue", identity) : "SHA-256: " + identity;
             if (action.RepairedSha256 is { } repairedHash)
-                identity += "\n" + DisplayText.Format("SteamScript.RepairedIdentity", repairedHash);
+                identity += "\n" + DisplayText.Format("SteamConfig.RepairedIdentity", repairedHash);
             if (action.ConfigurationKind == SteamConfigurationRepair.Run)
             {
                 try

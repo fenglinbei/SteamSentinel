@@ -46,28 +46,6 @@ public sealed class WindowsRemediationStateProbe(Func<string, CancellationToken,
                     return State(repaired ? RemediationVerificationStatus.Verified : RemediationVerificationStatus.Unknown,
                         MessageText.Create(repaired ? "SteamConfig.Verified" : "SteamConfig.VerificationUnavailable"));
                 }
-            case RemediationActionType.RepairSteamScript:
-                if (!Validation.IsHexSha256(action.RepairedSha256) || !FileScopeSafety.IsValidIdentity(action.ExpectedFileIdentity) ||
-                    !FileScopeSafety.IsValidIdentity(action.ExpectedParentIdentity))
-                    return State(RemediationVerificationStatus.Unknown, MessageText.Create("SteamScript.VerificationUnavailable"));
-                if (!File.Exists(action.Target))
-                    return State(RemediationVerificationStatus.Unknown, MessageText.Create("SteamScript.Missing"));
-                await using (FileStream input = RelatedArtifactReader.Open(action.Target))
-                {
-                    if (input.Length <= 0 || input.Length > SteamScriptRepair.MaximumBytes)
-                        return State(RemediationVerificationStatus.Unknown, MessageText.Create("SteamScript.Changed"));
-                    string hash = Convert.ToHexString(await SHA256.HashDataAsync(input, cancellationToken));
-                    RelatedArtifactReader.ValidatePath(input.SafeFileHandle, Path.GetFullPath(action.Target));
-                    if (FileScopeSafety.ReadIdentity(input.SafeFileHandle) != action.ExpectedFileIdentity ||
-                        FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(action.Target)!, true) != action.ExpectedParentIdentity)
-                        return State(RemediationVerificationStatus.Unknown, MessageText.Create("SteamScript.Changed"));
-                    if (hash.Equals(action.RepairedSha256, StringComparison.OrdinalIgnoreCase))
-                        return State(RemediationVerificationStatus.Verified, MessageText.Create("SteamScript.Verified"));
-                    return State(hash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase)
-                        ? RemediationVerificationStatus.ResidualDetected : RemediationVerificationStatus.Unknown,
-                        MessageText.Create(hash.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase)
-                            ? "SteamScript.Residual" : "SteamScript.Changed"));
-                }
             case RemediationActionType.RemoveBoundCertificate:
                 if (action.BoundCertificate is null) return State(RemediationVerificationStatus.Unknown, MessageText.Create("WindowsRemediationStateProbe.ObserveAsync.01"));
                 BoundCertificateProbe certificate = await Task.Run(() => new BoundCertificateRepair(new WindowsBoundCertificateStore(),

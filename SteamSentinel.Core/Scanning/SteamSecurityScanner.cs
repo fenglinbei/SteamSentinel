@@ -308,10 +308,10 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                     continue;
                 }
 
-                string text, sha256; long capturedLength; string? repairedHash;
+                string text, sha256; long capturedLength;
                 try
                 {
-                    (text, sha256, capturedLength, repairedHash) = await ReadSteamUiSnapshotAsync(path,
+                    (text, sha256, capturedLength) = await ReadSteamUiSnapshotAsync(path,
                         Math.Min(MaximumScriptBytes, MaximumTotalScriptBytes - totalBytes), cancellationToken);
                     report.Metrics.BytesHashed += capturedLength;
                 }
@@ -327,34 +327,38 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 HashRule? known = FindKnownHash(sha256);
                 bool isScript = Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase);
                 LoopbackScriptReference? loopback = isScript ? SteamUiLoopbackInspector.Find(text) : null;
-                if (isScript && repairedHash is not null)
-                    report.Findings.Add(SteamScriptRepairTarget.CreateFinding(path, sha256, repairedHash));
-                else if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback));
+                if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback));
                 LoopbackScriptReference? external = isScript ? SteamUiLoopbackInspector.FindExternal(text) : null;
                 if (external is not null) report.Findings.Add(CreateExternalScriptFinding(path, sha256, external));
                 List<MessageText> signals = isScript ? AnalyzeSteamUiMessages(text) : [];
                 if (known?.Malware != true && signals.Count == 0) continue;
 
                 bool highConfidence = known?.Malware == true || signals.Count >= 2;
-                // A script loader can be a small edit in an otherwise necessary Steam chunk.
-                // Existing semantic observations of that same chunk must not propose deleting it.
-                bool canQuarantine = repairedHash is null && highConfidence && (loopback is null || known?.Malware == true);
+                bool isMalwareFile = known?.Malware == true;
+                // 本机回环脚本加载器可能属于本地 UI 扩展或对 Steam 核心 chunk 的小幅注入；
+                // 非已知恶意文件且命中回环加载器时保留仅复核，避免直接移除核心 chunk，改由恢复指引引导官方客户端修复。
+                bool isRemediableUiFile = !isMalwareFile && highConfidence && isScript && loopback is null &&
+                    (ContentDiscovery.IsWithin(path, Path.Combine(steamRoot, "steamui")) ||
+                     ContentDiscovery.IsWithin(path, Path.Combine(steamRoot, "clientui")));
                 report.Findings.Add(new Finding
                 {
                     RuleId = known?.Id ?? "STEAM-UI-SEMANTIC-TAMPERING",
                     Category = FindingCategory.Steam,
-                    Severity = known?.Malware == true ? FindingSeverity.Critical : highConfidence ? FindingSeverity.High : FindingSeverity.Medium,
-                    Score = known?.Malware == true ? 100 : highConfidence ? 90 : 55,
-                    TitleText = known?.Malware == true ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.03") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.04"),
+                    Severity = isMalwareFile ? FindingSeverity.Critical : highConfidence ? FindingSeverity.High : FindingSeverity.Medium,
+                    Score = isMalwareFile ? 100 : highConfidence ? 90 : 55,
+                    TitleText = isMalwareFile ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.03") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.04"),
                     DescriptionText = MessageText.List(signals.Count == 0 ? [known!.LabelText] : signals),
                     Target = path,
                     EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.05", (sha256), (System.FormattableString.Invariant($"{capturedLength:N0}"))),
+                    HandlingDetailsText = isRemediableUiFile ? MessageText.Create("SteamConfig.UiFileHandling") : (MessageText)"",
                     Sha256 = sha256,
-                    IsKnownMalware = known?.Malware == true,
-                    CanRemediate = canQuarantine,
-                    SuggestedActions = canQuarantine
+                    TargetSha256 = isRemediableUiFile || isMalwareFile ? sha256 : null,
+                    ConfigurationKind = isRemediableUiFile ? SteamConfigurationRepair.UiFile : null,
+                    IsKnownMalware = isMalwareFile,
+                    CanRemediate = isMalwareFile || isRemediableUiFile,
+                    SuggestedActions = isMalwareFile
                         ? [SuggestedActionKind.QuarantineFile, SuggestedActionKind.BlockKnownDomains]
-                        : [SuggestedActionKind.ReviewOnly]
+                        : isRemediableUiFile ? [SuggestedActionKind.RepairSteamConfiguration] : [SuggestedActionKind.ReviewOnly]
                 });
             }
         }
@@ -390,7 +394,7 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         if (skippedFiles > 0) report.Coverage = ScanCoverage.Partial;
     }
 
-    private static async Task<(string Text, string Hash, long Length, string? RepairedHash)> ReadSteamUiSnapshotAsync(string path, long maximumBytes, CancellationToken token)
+    private static async Task<(string Text, string Hash, long Length)> ReadSteamUiSnapshotAsync(string path, long maximumBytes, CancellationToken token)
     {
         await using FileStream stream = RelatedArtifactReader.Open(path);
         if (stream.Length > maximumBytes || stream.Length > int.MaxValue) throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadSteamUiSnapshotAsync.01"), sourceText => new IOException(sourceText));
@@ -402,9 +406,7 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
             string text = new UTF8Encoding(false, true).GetString(bytes);
             string hash = Convert.ToHexString(SHA256.HashData(bytes));
             RelatedArtifactReader.ValidatePath(stream.SafeFileHandle, Path.GetFullPath(path));
-            string? repairedHash = SteamScriptRepair.TryRepair(bytes, out byte[] repaired)
-                ? Convert.ToHexString(SHA256.HashData(repaired)) : null;
-            return (text, hash, bytes.Length, repairedHash);
+            return (text, hash, bytes.Length);
         }
         finally { Array.Clear(bytes); }
     }

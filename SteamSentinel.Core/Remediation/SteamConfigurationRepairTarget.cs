@@ -30,8 +30,18 @@ public static class SteamConfigurationRepairTarget
             SteamConfigurationRepair.Cfg => layout.SteamRoots.Any(root => full.Equals(Path.GetFullPath(Path.Combine(root, "steam.cfg")), StringComparison.OrdinalIgnoreCase)),
             SteamConfigurationRepair.Marker => layout.SteamRoots.Any(root => full.Equals(Path.GetFullPath(Path.Combine(root, ".cef-enable-remote-debugging")), StringComparison.OrdinalIgnoreCase)),
             SteamConfigurationRepair.Shortcut => Path.GetExtension(full).Equals(".lnk", StringComparison.OrdinalIgnoreCase),
+            SteamConfigurationRepair.UiFile => IsUiFileTarget(full, layout),
             _ => false
         };
+    }
+
+    private static bool IsUiFileTarget(string full, SteamLayout layout)
+    {
+        if (Path.GetExtension(full).ToLowerInvariant() is not (".js" or ".html" or ".htm" or ".css" or ".mjs" or ".cjs"))
+            return false;
+        return layout.SteamRoots.Any(root =>
+            ContentDiscovery.IsWithin(full, Path.Combine(root, "steamui")) ||
+            ContentDiscovery.IsWithin(full, Path.Combine(root, "clientui")));
     }
 
     public static bool IsRunTarget(string? hive, string? view, string? key, string? name) =>
@@ -73,11 +83,11 @@ public static class SteamConfigurationRepairTarget
         if (!IsFileTarget(finding.Target, finding.ConfigurationKind, layout) || !FileScopeSafety.EvaluatePath(finding.Target).Allowed ||
             !Validation.IsHexSha256(finding.Sha256)) throw Denied();
         await using FileStream input = RelatedArtifactReader.Open(finding.Target);
-        byte[] bytes = await ReadBytesAsync(input, token);
+        byte[] bytes = await ReadBytesAsync(input, token, SteamConfigurationRepair.MaximumBytesFor(finding.ConfigurationKind));
         string hash = SteamConfigurationRepair.Hash(bytes);
         if (!hash.Equals(finding.Sha256, StringComparison.OrdinalIgnoreCase)) throw Denied("SteamConfig.Changed");
         string? repairedHash = null, target = null;
-        if (finding.ConfigurationKind != SteamConfigurationRepair.Marker)
+        if (!SteamConfigurationRepair.IsRemovedOnRepair(finding.ConfigurationKind))
         {
             if (!TryRepair(finding.ConfigurationKind!, bytes, layout, out byte[] repaired, out target)) throw Denied();
             repairedHash = SteamConfigurationRepair.Hash(repaired);
@@ -138,23 +148,23 @@ public static class SteamConfigurationRepairTarget
         }
         if (!IsFileTarget(action.Target, action.ConfigurationKind, layout) ||
             FileScopeSafety.CaptureIdentity(Path.GetDirectoryName(action.Target)!, true) != action.ExpectedParentIdentity) return false;
-        if (action.ConfigurationKind == SteamConfigurationRepair.Marker)
+        if (SteamConfigurationRepair.IsRemovedOnRepair(action.ConfigurationKind))
         {
             try { _ = File.GetAttributes(action.Target); return false; }
             catch (FileNotFoundException) { return true; }
             catch (DirectoryNotFoundException) { return false; }
         }
         await using FileStream input = RelatedArtifactReader.Open(action.Target);
-        byte[] bytes = await ReadBytesAsync(input, token);
+        byte[] bytes = await ReadBytesAsync(input, token, SteamConfigurationRepair.MaximumBytesFor(action.ConfigurationKind));
         RelatedArtifactReader.ValidatePath(input.SafeFileHandle, Path.GetFullPath(action.Target));
         return FileScopeSafety.ReadIdentity(input.SafeFileHandle) == action.ExpectedFileIdentity &&
             SteamConfigurationRepair.Hash(bytes).Equals(action.RepairedSha256, StringComparison.OrdinalIgnoreCase) &&
             !TryRepair(action.ConfigurationKind!, bytes, layout, out _, out _);
     }
 
-    internal static async Task<byte[]> ReadBytesAsync(FileStream input, CancellationToken token)
+    internal static async Task<byte[]> ReadBytesAsync(FileStream input, CancellationToken token, int maximumBytes = SteamConfigurationRepair.MaximumBytes)
     {
-        if (input.Length < 0 || input.Length > SteamConfigurationRepair.MaximumBytes) throw Denied();
+        if (input.Length < 0 || input.Length > maximumBytes) throw Denied();
         byte[] bytes = new byte[checked((int)input.Length)];
         await input.ReadExactlyAsync(bytes, token);
         if (input.ReadByte() != -1) throw Denied("SteamConfig.Changed");

@@ -146,6 +146,7 @@ internal sealed class BrokerConfirmationWindow : Form
                 {
                     SteamConfigurationRepair.Cfg => "SteamConfig.CfgDescription",
                     SteamConfigurationRepair.Marker => "SteamConfig.MarkerDescription",
+                    SteamConfigurationRepair.UiFile => "SteamConfig.UiFileDescription",
                     SteamConfigurationRepair.Run or SteamConfigurationRepair.Shortcut => "SteamConfig.ArgumentsDescription",
                     _ => "SteamConfig.InvalidTarget"
                 };
@@ -153,11 +154,6 @@ internal sealed class BrokerConfirmationWindow : Form
                     DisplayText.Format("SteamConfig.PreviewIntent", DisplayText.Get(description)),
                     Sanitize(RemediationCasePresentation.ActionIdentity(action)));
             }
-            if (action.Type == RemediationActionType.RepairSteamScript)
-                return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target),
-                    DisplayText.Get("SteamScript.Confirmation"),
-                    "SHA-256: " + Sanitize(action.ExpectedSha256 ?? string.Empty) + Environment.NewLine +
-                    DisplayText.Format("SteamScript.RepairedIdentity", Sanitize(action.RepairedSha256 ?? string.Empty)));
             return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target), verification,
                 file is null ? string.Empty : "SHA-256: " + file.Sha256);
         }).ToArray();

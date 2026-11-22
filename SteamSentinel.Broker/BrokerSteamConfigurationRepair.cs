@@ -27,7 +27,7 @@ internal sealed partial class BrokerEngine
         else if (!SteamConfigurationRepairTarget.IsFileTarget(action.Target, action.ConfigurationKind, layout) ||
             !FileScopeSafety.EvaluatePath(action.Target).Allowed || !Validation.IsHexSha256(action.ExpectedSha256) ||
             !FileScopeSafety.IsValidIdentity(action.ExpectedFileIdentity) || !FileScopeSafety.IsValidIdentity(action.ExpectedParentIdentity) ||
-            snapshot.Kind != SteamConfigurationRepair.Marker && (!Validation.IsHexSha256(action.RepairedSha256) ||
+            !SteamConfigurationRepair.IsRemovedOnRepair(snapshot.Kind) && (!Validation.IsHexSha256(action.RepairedSha256) ||
                 action.ExpectedSha256!.Equals(action.RepairedSha256, StringComparison.OrdinalIgnoreCase)))
             throw ConfigDenied("SteamConfig.InvalidTarget");
         if (snapshot.Kind is SteamConfigurationRepair.Run or SteamConfigurationRepair.Shortcut)
@@ -40,7 +40,8 @@ internal sealed partial class BrokerEngine
             throw ConfigDenied("SteamConfig.InvalidTarget");
         if (snapshot.Kind == SteamConfigurationRepair.Shortcut &&
             (snapshot.OriginalValue is not null || snapshot.RepairedValue is not null || snapshot.RegistryValueKind is not null) ||
-            snapshot.Kind == SteamConfigurationRepair.Marker && action.RepairedSha256 is not null)
+            (snapshot.Kind is SteamConfigurationRepair.Cfg or SteamConfigurationRepair.UiFile && snapshot.SteamExecutable is not null) ||
+            SteamConfigurationRepair.IsRemovedOnRepair(snapshot.Kind) && action.RepairedSha256 is not null)
             throw ConfigDenied("SteamConfig.InvalidTarget");
     }
 
@@ -82,7 +83,7 @@ internal sealed partial class BrokerEngine
             string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
             MachineStateSecurity.PreparePayloadDirectory(itemRoot);
             string destination = Path.Combine(itemRoot, SafeName(Path.GetFileName(action.Target)) + ".original");
-            if (action.ConfigurationKind == SteamConfigurationRepair.Marker)
+            if (SteamConfigurationRepair.IsRemovedOnRepair(action.ConfigurationKind))
                 await QuarantineSteamMarkerAsync(action, _steamLayout, destination, Persist, MachineStateSecurity.ProtectPayloadFile, token);
             else await RepairSteamConfigurationFileAsync(action, _steamLayout, destination, Persist, MachineStateSecurity.ProtectPayloadFile, token);
         }
@@ -166,11 +167,11 @@ internal sealed partial class BrokerEngine
         string destination, Func<QuarantineRecord, CancellationToken, Task> persist, Action<string> protect, CancellationToken token)
     {
         ValidateSteamConfigurationAction(action, layout);
-        if (action.ConfigurationKind != SteamConfigurationRepair.Marker) throw ConfigDenied("SteamConfig.InvalidTarget");
+        if (!SteamConfigurationRepair.IsRemovedOnRepair(action.ConfigurationKind)) throw ConfigDenied("SteamConfig.InvalidTarget");
         using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity);
         await using SecureFileLease source = SecureFileLease.OpenWithSecurity(action.Target);
         RequireConfigurationIdentity(source, action.Target, action.ExpectedFileIdentity!);
-        if (source.Length > SteamConfigurationRepair.MaximumBytes || !(await source.ComputeSha256Async(token)).Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied();
+        if (source.Length > SteamConfigurationRepair.MaximumBytesFor(action.ConfigurationKind) || !(await source.ComputeSha256Async(token)).Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied();
         BrokerFileMetadata metadata = BrokerFileMetadata.CaptureLocked(source.Handle);
         QuarantineRecord record = CreateConfigurationFileRecord(action, source, parent, metadata, destination);
         await persist(record, token);
@@ -271,7 +272,7 @@ internal sealed partial class BrokerEngine
             if (!SteamConfigurationRepairTarget.IsFileTarget(record.OriginalTarget, record.ConfigurationKind, layout) || record.QuarantinedPath is null ||
                 !Validation.IsHexSha256(record.Sha256) || !FileScopeSafety.IsValidIdentity(record.OriginalFileIdentity) ||
                 !FileScopeSafety.IsValidIdentity(record.OriginalParentIdentity) ||
-                snapshot.Kind != SteamConfigurationRepair.Marker && !Validation.IsHexSha256(record.RepairedSha256)) throw ConfigDenied("SteamConfig.InvalidTarget");
+                !SteamConfigurationRepair.IsRemovedOnRepair(snapshot.Kind) && !Validation.IsHexSha256(record.RepairedSha256)) throw ConfigDenied("SteamConfig.InvalidTarget");
             _ = BrokerFileMetadata.FromRecord(record);
         }
         if (snapshot.Kind is SteamConfigurationRepair.Run or SteamConfigurationRepair.Shortcut &&
@@ -280,8 +281,8 @@ internal sealed partial class BrokerEngine
             throw ConfigDenied("SteamConfig.InvalidTarget");
         if (snapshot.Kind != SteamConfigurationRepair.Run &&
             (snapshot.OriginalValue is not null || snapshot.RepairedValue is not null || snapshot.RegistryValueKind is not null) ||
-            snapshot.Kind is SteamConfigurationRepair.Cfg or SteamConfigurationRepair.Marker && snapshot.SteamExecutable is not null ||
-            snapshot.Kind == SteamConfigurationRepair.Marker && record.RepairedSha256 is not null)
+            snapshot.Kind is SteamConfigurationRepair.Cfg or SteamConfigurationRepair.Marker or SteamConfigurationRepair.UiFile && snapshot.SteamExecutable is not null ||
+            SteamConfigurationRepair.IsRemovedOnRepair(snapshot.Kind) && record.RepairedSha256 is not null)
             throw ConfigDenied("SteamConfig.InvalidTarget");
     }
 
@@ -297,11 +298,12 @@ internal sealed partial class BrokerEngine
     private static async Task<(byte[] Original, byte[] Repaired)> ReadVerifiedSteamConfigurationBackupAsync(QuarantineRecord record, SteamLayout layout, CancellationToken token)
     {
         await using SecureFileLease backup = SecureFileLease.Open(record.QuarantinedPath!);
-        if (backup.Length > SteamConfigurationRepair.MaximumBytes || FileScopeSafety.ReadLinkCount(backup.Handle) != 1) throw ConfigDenied("SteamConfig.BackupFailed");
+        int maximumBytes = SteamConfigurationRepair.MaximumBytesFor(record.ConfigurationKind);
+        if (backup.Length > maximumBytes || FileScopeSafety.ReadLinkCount(backup.Handle) != 1) throw ConfigDenied("SteamConfig.BackupFailed");
         BrokerFileMetadata.EnsureOnlyDefaultStream(backup.Handle);
-        byte[] original = backup.Length == 0 ? [] : await backup.ReadBytesAsync(SteamConfigurationRepair.MaximumBytes, token);
+        byte[] original = backup.Length == 0 ? [] : await backup.ReadBytesAsync(maximumBytes, token);
         if (!SteamConfigurationRepair.Hash(original).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied("SteamConfig.BackupFailed");
-        if (record.ConfigurationKind == SteamConfigurationRepair.Marker) return (original, []);
+        if (SteamConfigurationRepair.IsRemovedOnRepair(record.ConfigurationKind)) return (original, []);
         if (!SteamConfigurationRepairTarget.TryRepair(record.ConfigurationKind!, original, layout, out byte[] repaired, out string? executable) ||
             !SteamConfigurationRepair.Hash(repaired).Equals(record.RepairedSha256, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(executable, record.RelatedFilePath, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied("SteamConfig.BackupFailed");
@@ -315,9 +317,17 @@ internal sealed partial class BrokerEngine
         ValidateSteamConfigurationRecord(record, _steamLayout);
         if (record.ConfigurationKind == SteamConfigurationRepair.Run)
             RestoreSteamRunValue(record, _steamLayout);
-        else if (record.ConfigurationKind == SteamConfigurationRepair.Marker)
+        else if (SteamConfigurationRepair.IsRemovedOnRepair(record.ConfigurationKind))
             await RestoreSteamMarkerAsync(record, _steamLayout, token);
         else await RestoreSteamConfigurationFileAsync(record, _steamLayout, token, persistBeforeWrite);
+    }
+
+    internal static bool IsInterruptedScriptImage(byte[] current, byte[] original, byte[] repaired)
+    {
+        if (current.Length != original.Length || repaired.Length != original.Length) return false;
+        for (int i = 0; i < current.Length; i++)
+            if (current[i] != original[i] && current[i] != repaired[i]) return false;
+        return true;
     }
 
     internal static async Task RestoreSteamConfigurationFileAsync(QuarantineRecord record, SteamLayout layout, CancellationToken token,
@@ -362,7 +372,7 @@ internal sealed partial class BrokerEngine
     {
         ValidateSteamConfigurationRecord(record, layout);
         if (!record.FileMutationAttempted) return;
-        if (record.ConfigurationKind != SteamConfigurationRepair.Marker) throw ConfigDenied("SteamConfig.InvalidTarget");
+        if (!SteamConfigurationRepair.IsRemovedOnRepair(record.ConfigurationKind)) throw ConfigDenied("SteamConfig.InvalidTarget");
         using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(record.OriginalTarget, record.OriginalParentIdentity);
         _ = await ReadVerifiedSteamConfigurationBackupAsync(record, layout, token);
         BrokerFileMetadata metadata = BrokerFileMetadata.FromRecord(record);

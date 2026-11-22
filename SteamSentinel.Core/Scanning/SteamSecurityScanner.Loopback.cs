@@ -52,10 +52,13 @@ public sealed partial class SteamSecurityScanner
         TitleText = MessageText.Create("Steam.UiExternalScript.Title"),
         DescriptionText = MessageText.Create("Steam.UiExternalScript.Description"),
         EvidenceText = MessageText.Create("Steam.UiExternalScript.Evidence", external.Endpoint, sha256),
+        HandlingDetailsText = MessageText.Create("SteamConfig.UiFileHandling"),
         Sha256 = sha256,
+        TargetSha256 = sha256,
+        ConfigurationKind = SteamConfigurationRepair.UiFile,
         Target = path,
-        CanRemediate = false,
-        SuggestedActions = [SuggestedActionKind.ReviewOnly]
+        CanRemediate = true,
+        SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
     };
 
     internal static bool IsCurrentUserReport(ScanReport report) =>

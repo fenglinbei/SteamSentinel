@@ -28,8 +28,9 @@ public partial class RemediationPreviewWindow : Window
         ModeSummary = RemediationModePresentation.Summary(plan);
         NoticeText = DisplayText.Get("Ui.Xaml.RemediationPreviewWindow.003") + (plan.ExplicitFileTargetsRequested
             ? "\n" + DisplayText.Get("Scope.Ui.PreviewNotice") : string.Empty);
-        if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamScript))
-            NoticeText += "\n" + DisplayText.Get("SteamScript.PreviewNotice");
+        if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration &&
+            action.ConfigurationKind == SteamSentinel.Core.Inspection.SteamConfigurationRepair.UiFile))
+            NoticeText += "\n" + DisplayText.Get("SteamConfig.UiFilePreviewNotice");
         if (isPortableInstallation)
             NoticeText += "\n" + DisplayText.Get("Ui.RemediationPreviewWindow.PortableRiskNotice");
         ConfirmationText = DisplayText.Get(plan.ExplicitFileTargetsRequested ? "Scope.Ui.PreviewConfirm" : "Ui.Xaml.RemediationPreviewWindow.020");
@@ -109,8 +110,10 @@ public partial class RemediationPreviewWindow : Window
     private static string ConfidenceLabel(RemediationAction action) => action.UserSelectedRisk
         ? DisplayText.Get("RemediationMode.RiskLabel") : action.Type switch
         {
-            RemediationActionType.RepairSteamScript => DisplayText.Get("SteamScript.PreviewEvidence"),
-            RemediationActionType.RepairSteamConfiguration => DisplayText.Get("SteamConfig.Handling"),
+            RemediationActionType.RepairSteamConfiguration => DisplayText.Get(
+                action.ConfigurationKind == SteamSentinel.Core.Inspection.SteamConfigurationRepair.UiFile
+                    ? "SteamConfig.UiFileHandling"
+                    : "SteamConfig.Handling"),
             RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory =>
                 action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.01") : DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.02", (action.ConfidenceScore)),
             _ => action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.03") : action.RelatedFilePath is not null ? DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.04", (action.ConfidenceScore)) : DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.05")

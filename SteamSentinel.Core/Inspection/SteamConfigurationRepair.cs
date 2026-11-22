@@ -17,7 +17,13 @@ public static class SteamConfigurationRepair
     public const string Run = "SteamRunDebugArguments";
     public const string Shortcut = "SteamShortcutDebugArguments";
     public const string ShortcutReviewRule = "STEAM-SHORTCUT-DEBUG-UNVERIFIED";
+    public const string UiFile = "SteamUiFile";
+    public const int MaximumUiFileBytes = 32 * 1024 * 1024;
     public const string DebugArgument = "-cef-enable-debugging";
+    public const string DebugPortArgument = "--remote-debugging-port";
+
+    public static int MaximumBytesFor(string? kind) => kind == UiFile ? MaximumUiFileBytes : MaximumBytes;
+    public static bool IsRemovedOnRepair(string? kind) => kind is Marker or UiFile;
     private static readonly Guid UsersFilesRoot = new("59031a47-3f72-44a7-89c5-5595fe6b30ee");
     private static readonly Guid UsersFilesKnownFolder = new("f3ce0f7c-4901-4acc-8648-d5d44b04ef8f");
     private static readonly Regex Setting = new(@"^(?<prefix>\s*)(?<key>BootStrapperInhibitAll|BootStrapperInhibitV3|BootStrapperForceSelfUpdate|ForceOfflineMode)\s*=\s*(?<value>[A-Za-z0-9]+)\s*(?:(?:;|#|//).*)?$",
@@ -35,12 +41,9 @@ public static class SteamConfigurationRepair
         if (original.Length is <= 0 or > MaximumBytes) return false;
         try
         {
-            Encoding encoding; int bom;
-            if (original.StartsWith(new byte[] { 0xff, 0xfe })) { encoding = new UnicodeEncoding(false, false, true); bom = 2; }
-            else if (original.StartsWith(new byte[] { 0xfe, 0xff })) { encoding = new UnicodeEncoding(true, false, true); bom = 2; }
-            else { encoding = new UTF8Encoding(false, true); bom = original.StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0; }
-            string text = encoding.GetString(original[bom..]);
-            if (text.Contains('\0') || !encoding.GetBytes(text).AsSpan().SequenceEqual(original[bom..])) return false;
+            if (!TryDecodeCfgText(original, out string text, out int bom, out Encoding? encoding, out uint codePage))
+                return false;
+            if (text.Contains('\0')) return false;
             char[] changed = text.ToCharArray(); bool any = false, inhibit = false, second = false;
             int start = 0;
             while (start < text.Length)
@@ -68,7 +71,9 @@ public static class SteamConfigurationRepair
                 while (start < text.Length && text[start] is '\r' or '\n') start++;
             }
             if (!any) return false;
-            byte[] body = encoding.GetBytes(changed);
+            byte[] body = encoding is not null
+                ? encoding.GetBytes(changed)
+                : EncodeCodePage(codePage, new string(changed));
             if (body.Length != original.Length - bom) return false;
             repaired = original.ToArray(); body.CopyTo(repaired, bom); paired = inhibit && second; return true;
         }
@@ -82,7 +87,7 @@ public static class SteamConfigurationRepair
         if (!TryTokens(command, out List<(int Start, int End, string Value)> tokens) || tokens.Count < 2) return false;
         string executable = Environment.ExpandEnvironmentVariables(tokens[0].Value);
         if (!IsSteamExecutable(executable, layout)) return false;
-        if (!TryRemoveDebugArgument(command, tokens.Skip(1), out repaired)) return false;
+        if (!TryRemoveDebugArgument(command, tokens, 1, out repaired)) return false;
         steamExecutable = Path.GetFullPath(executable); return true;
     }
 
@@ -141,7 +146,9 @@ public static class SteamConfigurationRepair
                     if (signature == 0xA000000Bu && new Guid(original.Slice(position + 8, 16)) == UsersFilesKnownFolder)
                         profileKnownAlias = true;
                 }
-                else if (signature is not (0xA0000003u or 0xA0000009u)) return false;
+                // 仅放行纯外观展示或元数据块（Console/ConsoleFE/Tracker/IconEnvironment/PropertyStore），
+                // 继续严格拒绝 EnvironmentVariable/Darwin/Shim 等可重定向目标的块。
+                else if (signature is not (0xA0000002u or 0xA0000003u or 0xA0000004u or 0xA0000007u or 0xA0000009u)) return false;
                 position += checked((int)size);
             }
             if (position + 4 != original.Length || profileSpecialAlias && !profileKnownAlias) return false;
@@ -154,7 +161,7 @@ public static class SteamConfigurationRepair
             else if (target is null) return false;
             Encoding encoding = unicode ? new UnicodeEncoding(false, false, true) : Encoding.Latin1;
             string arguments = encoding.GetString(original.Slice(argumentOffset, argumentBytes));
-            if (!TryTokens(arguments, out var tokens) || !TryRemoveDebugArgument(arguments, tokens, out string changed)) return false;
+            if (!TryTokens(arguments, out var tokens) || !TryRemoveDebugArgument(arguments, tokens, 0, out string changed)) return false;
             byte[] changedBytes = encoding.GetBytes(changed);
             if (changedBytes.Length != argumentBytes) return false;
             repaired = original.ToArray(); changedBytes.CopyTo(repaired, argumentOffset);
@@ -199,7 +206,7 @@ public static class SteamConfigurationRepair
                 if (flag == 32)
                 {
                     string arguments = (unicode ? new UnicodeEncoding(false, false, true) : Encoding.Latin1).GetString(text);
-                    found = TryTokens(arguments, out var tokens) && tokens.Any(token => token.Value.Equals(DebugArgument, StringComparison.OrdinalIgnoreCase));
+                    found = TryTokens(arguments, out var tokens) && ContainsDebugArgument(tokens, 0);
                 }
                 position += size;
             }
@@ -433,12 +440,127 @@ public static class SteamConfigurationRepair
     [DllImport("netapi32.dll")]
     private static extern uint NetApiBufferFree(IntPtr data);
 
-    private static bool TryRemoveDebugArgument(string input, IEnumerable<(int Start, int End, string Value)> tokens, out string repaired)
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern int WideCharToMultiByte(uint codePage, uint flags,
+        [MarshalAs(UnmanagedType.LPWStr)] string characters, int characterCount,
+        [Out] byte[]? bytes, int byteCount, IntPtr defaultChar, IntPtr usedDefaultChar);
+
+    private const uint MultiByteErrorInvalidChars = 0x00000008;
+
+    private static bool TryDecodeCfgText(ReadOnlySpan<byte> original, out string text, out int bom,
+        out Encoding? encoding, out uint codePage)
+    {
+        text = string.Empty; bom = 0; encoding = null; codePage = 0;
+        if (original.StartsWith(new byte[] { 0xff, 0xfe })) { encoding = new UnicodeEncoding(false, false, true); bom = 2; }
+        else if (original.StartsWith(new byte[] { 0xfe, 0xff })) { encoding = new UnicodeEncoding(true, false, true); bom = 2; }
+        else if (original.StartsWith(new byte[] { 0xef, 0xbb, 0xbf })) { encoding = new UTF8Encoding(false, true); bom = 3; }
+
+        if (encoding is not null)
+        {
+            text = encoding.GetString(original[bom..]);
+            return encoding.GetBytes(text).AsSpan().SequenceEqual(original[bom..]);
+        }
+
+        Encoding utf8Strict = new UTF8Encoding(false, true);
+        try
+        {
+            string utf8Text = utf8Strict.GetString(original);
+            if (utf8Strict.GetBytes(utf8Text).AsSpan().SequenceEqual(original))
+            {
+                text = utf8Text; encoding = utf8Strict; return true;
+            }
+        }
+        catch (DecoderFallbackException)
+        {
+            // 非 BOM 的本地 ANSI/GBK steam.cfg 包含中文注释时回退到精确往返的 Win32 代码页解码。
+        }
+
+        byte[] raw = original.ToArray();
+        foreach (uint candidate in new uint[] { 936u, 0u })
+        {
+            if (TryDecodeCodePage(candidate, raw, out string decoded) &&
+                TryEncodeCodePage(candidate, decoded, out byte[] roundtrip) &&
+                roundtrip.AsSpan().SequenceEqual(raw))
+            {
+                text = decoded; codePage = candidate; return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool TryDecodeCodePage(uint codePage, byte[] bytes, out string text)
+    {
+        text = string.Empty;
+        if (bytes.Length == 0) return true;
+        int charCount = MultiByteToWideChar(codePage, MultiByteErrorInvalidChars, bytes, bytes.Length, null, 0);
+        if (charCount <= 0) return false;
+        char[] buffer = new char[charCount];
+        int written = MultiByteToWideChar(codePage, MultiByteErrorInvalidChars, bytes, bytes.Length, buffer, charCount);
+        if (written != charCount) return false;
+        text = new string(buffer);
+        return true;
+    }
+
+    private static bool TryEncodeCodePage(uint codePage, string text, out byte[] bytes)
+    {
+        bytes = [];
+        if (text.Length == 0) return true;
+        int byteCount = WideCharToMultiByte(codePage, 0, text, text.Length, null, 0, IntPtr.Zero, IntPtr.Zero);
+        if (byteCount <= 0) return false;
+        byte[] buffer = new byte[byteCount];
+        int written = WideCharToMultiByte(codePage, 0, text, text.Length, buffer, byteCount, IntPtr.Zero, IntPtr.Zero);
+        if (written != byteCount) return false;
+        bytes = buffer;
+        return true;
+    }
+
+    private static byte[] EncodeCodePage(uint codePage, string text) =>
+        TryEncodeCodePage(codePage, text, out byte[] encoded)
+            ? encoded
+            : throw new EncoderFallbackException();
+
+    private static bool IsPortDigits(string value) =>
+        value.Length is >= 1 and <= 5 && value.All(char.IsAsciiDigit) &&
+        ushort.TryParse(value, global::System.Globalization.NumberStyles.None, global::System.Globalization.CultureInfo.InvariantCulture, out _);
+
+    private static bool IsDebugPortEqualsToken(string token) =>
+        token.StartsWith(DebugPortArgument + "=", StringComparison.OrdinalIgnoreCase) &&
+        IsPortDigits(token[(DebugPortArgument.Length + 1)..]);
+
+    private static bool ContainsDebugArgument(IReadOnlyList<(int Start, int End, string Value)> tokens, int startIndex)
+    {
+        for (int i = startIndex; i < tokens.Count; i++)
+        {
+            string value = tokens[i].Value;
+            if (value.Equals(DebugArgument, StringComparison.OrdinalIgnoreCase) || IsDebugPortEqualsToken(value))
+                return true;
+            if (value.Equals(DebugPortArgument, StringComparison.OrdinalIgnoreCase) &&
+                i + 1 < tokens.Count && IsPortDigits(tokens[i + 1].Value))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool TryRemoveDebugArgument(string input, IReadOnlyList<(int Start, int End, string Value)> tokens, int startIndex, out string repaired)
     {
         char[] chars = input.ToCharArray(); bool changed = false;
-        foreach (var token in tokens)
-            if (token.Value.Equals(DebugArgument, StringComparison.OrdinalIgnoreCase))
-            { Array.Fill(chars, ' ', token.Start, token.End - token.Start); changed = true; }
+        for (int i = startIndex; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (token.Value.Equals(DebugArgument, StringComparison.OrdinalIgnoreCase) || IsDebugPortEqualsToken(token.Value))
+            {
+                Array.Fill(chars, ' ', token.Start, token.End - token.Start);
+                changed = true;
+            }
+            else if (token.Value.Equals(DebugPortArgument, StringComparison.OrdinalIgnoreCase) &&
+                i + 1 < tokens.Count && IsPortDigits(tokens[i + 1].Value))
+            {
+                var portToken = tokens[++i];
+                Array.Fill(chars, ' ', token.Start, token.End - token.Start);
+                Array.Fill(chars, ' ', portToken.Start, portToken.End - portToken.Start);
+                changed = true;
+            }
+        }
         repaired = new(chars); return changed;
     }
 
