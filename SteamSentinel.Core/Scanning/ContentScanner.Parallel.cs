@@ -88,7 +88,6 @@ public sealed partial class ContentScanner
             }
             preparedSuccessfully = true;
             bool eligible = recognized && prepared.All(item => item.Length <= options.MaximumStringScanBytes &&
-                (!ScanEnhancements.UseAmsi(options) || item.Length <= options.MaximumAmsiBytes) &&
                 (options.Mode != ScanMode.Quick || item.Length <= options.MaximumQuickFileBytes)) &&
                 total <= options.MaximumContentBytes - charged;
             long reserved = checked(prepared.Sum(item => Math.Max(1, item.Length * 3)));
@@ -178,7 +177,7 @@ public sealed partial class ContentScanner
         report.Findings.AddRange(part.Findings);
         foreach (var note in part.CoverageTexts) report.AddCoverageNote(note);
         report.CoverageNotices.AddRange(part.CoverageNotices.Where(n => n.ReasonCode != ReasonCodes.AmsiUnavailable));
-        report.CoverageAggregates.AddRange(part.CoverageAggregates);
+        CoverageAggregation.Merge(report, part.CoverageAggregates);
         report.Metrics.FilesVisited += part.Metrics.FilesVisited;
         report.Metrics.BytesHashed += part.Metrics.BytesHashed;
         report.Metrics.QuickPriorityBytesHashed += part.Metrics.QuickPriorityBytesHashed;

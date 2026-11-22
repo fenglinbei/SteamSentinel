@@ -42,6 +42,22 @@ public sealed partial class SteamSecurityScanner
         return finding;
     }
 
+    private static Finding CreateExternalScriptFinding(string path, string sha256, LoopbackScriptReference external) => new()
+    {
+        RuleId = "STEAM-UI-EXTERNAL-SCRIPT",
+        ReasonCode = "SteamUiExternalScript",
+        Category = FindingCategory.Steam,
+        Severity = FindingSeverity.High,
+        Score = 85,
+        TitleText = MessageText.Create("Steam.UiExternalScript.Title"),
+        DescriptionText = MessageText.Create("Steam.UiExternalScript.Description"),
+        EvidenceText = MessageText.Create("Steam.UiExternalScript.Evidence", external.Endpoint, sha256),
+        Sha256 = sha256,
+        Target = path,
+        CanRemediate = false,
+        SuggestedActions = [SuggestedActionKind.ReviewOnly]
+    };
+
     internal static bool IsCurrentUserReport(ScanReport report) =>
         string.Equals(report.MachineName, Environment.MachineName, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(report.UserName, Environment.UserName, StringComparison.OrdinalIgnoreCase);
@@ -62,7 +78,7 @@ public sealed partial class SteamSecurityScanner
         }
         if (scripts.Count == 0 || !report.Findings.Any(f =>
             f.RuleId is SteamAlertInstallation.ResidentRule or SteamAlertInstallation.UpdatedResidentRule)) return;
-        Dictionary<string, HashRule> residentsByHash = (rules ?? RuleLoader.LoadEmbedded()).KnownHashes.Where(
+        Dictionary<string, HashRule> residentsByHash = (rules ?? RuleLoader.LoadActive().Rules).KnownHashes.Where(
             entry => entry.Id is SteamAlertInstallation.ResidentRule or SteamAlertInstallation.UpdatedResidentRule &&
                 entry.Malware && Validation.IsHexSha256(entry.Sha256))
             .ToDictionary(entry => entry.Sha256, StringComparer.OrdinalIgnoreCase);

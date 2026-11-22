@@ -51,5 +51,55 @@ public static class CoverageAggregation
         }
     }
 
+    /// <summary>合并并行或分批子报告中的覆盖率聚合，消除重复 (RuleId, Root) 分组。</summary>
+    public static void Merge(ScanReport report, IEnumerable<CoverageAggregate> aggregates)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(aggregates);
+        Index? index = null;
+        foreach (CoverageAggregate incoming in aggregates)
+        {
+            if (incoming is null || incoming.Count <= 0) continue;
+            report.Coverage = ScanCoverage.Partial;
+            index ??= Indexes.GetOrCreateValue(report);
+            while (index.Indexed < report.CoverageAggregates.Count)
+            {
+                CoverageAggregate existing = report.CoverageAggregates[index.Indexed];
+                index.Groups.TryAdd(existing.RuleId + "\0" + existing.Root, index.Indexed++);
+            }
+            string key = incoming.RuleId + "\0" + incoming.Root;
+            if (index.Groups.TryGetValue(key, out int offset))
+            {
+                CoverageAggregate current = report.CoverageAggregates[offset];
+                if (incoming.Count > long.MaxValue - current.Count)
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.CoverageAggregation.Add.02"), sourceText => new ScanResourceLimitException(sourceText));
+                List<string> mergedExamples = [.. current.Examples];
+                foreach (string example in incoming.Examples)
+                {
+                    if (mergedExamples.Count >= CoverageAggregate.MaximumExamples) break;
+                    string bounded = example.Length <= CoverageAggregate.MaximumExampleCharacters ? example :
+                        example[..(CoverageAggregate.MaximumExampleCharacters - 1)] + "…";
+                    if (!mergedExamples.Contains(bounded, StringComparer.OrdinalIgnoreCase))
+                        mergedExamples.Add(bounded);
+                }
+                report.CoverageAggregates[offset] = current with { Count = current.Count + incoming.Count, Examples = mergedExamples };
+            }
+            else
+            {
+                if (report.CoverageAggregates.Count >= CoverageAggregate.MaximumGroups)
+                    throw MessageExceptions.Create(MessageText.Create("Backend.Core.CoverageAggregation.Add.03"), sourceText => new ScanResourceLimitException(sourceText));
+                string[] examples = incoming.Examples
+                    .Select(example => example.Length <= CoverageAggregate.MaximumExampleCharacters ? example :
+                        example[..(CoverageAggregate.MaximumExampleCharacters - 1)] + "…")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(CoverageAggregate.MaximumExamples)
+                    .ToArray();
+                index.Groups.Add(key, report.CoverageAggregates.Count);
+                report.CoverageAggregates.Add(new(incoming.RuleId, incoming.Root, incoming.Count, examples));
+                index.Indexed++;
+            }
+        }
+    }
+
     public static long OccurrenceCount(ScanReport report) => report.CoverageAggregates.Sum(a => a.Count);
 }

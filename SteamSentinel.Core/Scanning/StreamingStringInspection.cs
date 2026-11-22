@@ -32,6 +32,22 @@ internal static class StreamingStringInspection
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         string[] needles = ruleTokens.Concat(domains).Concat(ContentHeuristics.Tokens)
             .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        List<(string Needle, byte[] Pattern)> nonAsciiLePatterns = [];
+        List<(string Needle, byte[] Pattern)> nonAsciiBePatterns = [];
+        bool hasCaseSensitiveNonAscii = false;
+        foreach (string needle in needles)
+        {
+            if (needle.All(char.IsAscii)) continue;
+            if (needle.All(ch => char.ToUpperInvariant(ch) == ch && char.ToLowerInvariant(ch) == ch))
+            {
+                nonAsciiLePatterns.Add((needle, Encoding.Unicode.GetBytes(needle)));
+                nonAsciiBePatterns.Add((needle, Encoding.BigEndianUnicode.GetBytes(needle)));
+            }
+            else
+            {
+                hasCaseSensitiveNonAscii = true;
+            }
+        }
         HashSet<string> raw = new(StringComparer.OrdinalIgnoreCase), script = new(StringComparer.OrdinalIgnoreCase);
         List<TokenObservation> observations = [];
         byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkBytes + OverlapBytes);
@@ -39,19 +55,41 @@ internal static class StreamingStringInspection
         {
             long total = 0;
             int retained = 0;
+            bool seenUtf16LeBom = false;
+            bool seenUtf16BeBom = false;
             while (true)
             {
                 token.ThrowIfCancellationRequested();
                 int read = await stream.ReadAsync(buffer.AsMemory(retained, (int)Math.Min(ChunkBytes, limit - total + 1)), token);
                 if (read == 0) break;
+                bool firstWindow = total == 0;
                 total += read;
                 if (total > limit) throw MessageExceptions.Create(MessageText.Create("Backend.Core.StreamingStringInspection.ReadAsync.01"), sourceText => new InvalidDataException(sourceText));
                 int count = retained + read;
+                if (firstWindow && count >= 2)
+                {
+                    seenUtf16LeBom = buffer[0] == 0xFF && buffer[1] == 0xFE;
+                    seenUtf16BeBom = buffer[0] == 0xFE && buffer[1] == 0xFF;
+                }
                 Inspect(Encoding.UTF8.GetString(buffer, 0, count), total - count, "UTF-8");
-                // Preserve UTF-16LE byte alignment even if the stream returns a short, odd-sized read.
+                // 保持 UTF-16 偶字节对齐；仅在存在对应零字节特征、BOM 或大小写敏感非 ASCII 规则时才解码，避免无条件三编码复制内存。
                 int alignment = (int)((total - count) & 1);
-                Inspect(Encoding.Unicode.GetString(buffer, alignment, (count - alignment) & ~1), total - count + alignment, "UTF-16LE");
-                Inspect(Encoding.BigEndianUnicode.GetString(buffer, alignment, (count - alignment) & ~1), total - count + alignment, "UTF-16BE");
+                int length16 = (count - alignment) & ~1;
+                if (length16 > 0)
+                {
+                    ReadOnlySpan<byte> slice16 = buffer.AsSpan(alignment, length16);
+                    bool decodeLe = seenUtf16LeBom || hasCaseSensitiveNonAscii || HasZeroAtParity(slice16, parity: 1);
+                    if (decodeLe)
+                        Inspect(Encoding.Unicode.GetString(buffer, alignment, length16), total - count + alignment, "UTF-16LE");
+                    else if (nonAsciiLePatterns.Count > 0)
+                        MatchNonAsciiBytes(slice16, nonAsciiLePatterns, raw);
+
+                    bool decodeBe = seenUtf16BeBom || hasCaseSensitiveNonAscii || HasZeroAtParity(slice16, parity: 0);
+                    if (decodeBe)
+                        Inspect(Encoding.BigEndianUnicode.GetString(buffer, alignment, length16), total - count + alignment, "UTF-16BE");
+                    else if (nonAsciiBePatterns.Count > 0)
+                        MatchNonAsciiBytes(slice16, nonAsciiBePatterns, raw);
+                }
                 retained = Math.Min(OverlapBytes, count);
                 Buffer.BlockCopy(buffer, count - retained, buffer, 0, retained);
             }
@@ -75,6 +113,37 @@ internal static class StreamingStringInspection
                     observations.Add(new(needle, windowByteOffset, encoding,
                         !text.Contains(needle, StringComparison.OrdinalIgnoreCase)));
                 }
+        }
+    }
+
+    private static bool HasZeroAtParity(ReadOnlySpan<byte> slice, int parity)
+    {
+        int firstZero = slice.IndexOf((byte)0);
+        if (firstZero < 0) return false;
+        int start = (firstZero & 1) == parity ? firstZero : firstZero + 1;
+        for (int i = start; i < slice.Length; i += 2)
+            if (slice[i] == 0) return true;
+        return false;
+    }
+
+    private static void MatchNonAsciiBytes(ReadOnlySpan<byte> slice, List<(string Needle, byte[] Pattern)> patterns, HashSet<string> raw)
+    {
+        foreach (var (needle, pattern) in patterns)
+        {
+            if (raw.Contains(needle) || pattern.Length == 0 || pattern.Length > slice.Length) continue;
+            int offset = 0;
+            while (offset <= slice.Length - pattern.Length)
+            {
+                int hit = slice[offset..].IndexOf(pattern);
+                if (hit < 0) break;
+                int absolute = offset + hit;
+                if ((absolute & 1) == 0)
+                {
+                    raw.Add(needle);
+                    break;
+                }
+                offset = absolute + 1;
+            }
         }
     }
 

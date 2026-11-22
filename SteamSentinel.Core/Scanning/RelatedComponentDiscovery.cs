@@ -163,6 +163,8 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
         HashSet<string> scriptSnapshots = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, RelatedPathRead> pathSnapshots = new(StringComparer.OrdinalIgnoreCase);
         IReadOnlyDictionary<string, string> environment = new Dictionary<string, string>();
+        int identityChecks = 0;
+        bool isWindowsSource = _source is WindowsRelatedComponentDataSource;
 
         void Check(string code, MessageText name, DiagnosticReadStatus status, MessageText detail, string? observation = null, bool required = true)
         {
@@ -177,6 +179,8 @@ public sealed class RelatedComponentDiscovery(IRelatedComponentDataSource? dataS
             { stopped = true; Check("related.collection", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.03"), DiagnosticReadStatus.Cancelled, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.04")); return false; }
             if (_time.GetElapsedTime(started) >= limits.MaximumDiscoveryDuration)
             { stopped = true; Check("related.discovery_time", MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.05"), DiagnosticReadStatus.LimitReached, MessageText.Create("Backend.Core.RelatedComponentDiscovery.Collect.06")); return false; }
+            // 在真实 Windows 数据源上仅首轮及每隔 64 次调用复核用户 SID，避免循环内数千次系统令牌查询；测试数据源保持每次均验证。
+            if (isWindowsSource && (identityChecks++ & 63) != 0) return true;
             try
             {
                 string? current = _source.ReadCurrentUserSid();

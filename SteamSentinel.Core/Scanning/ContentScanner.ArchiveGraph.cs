@@ -238,7 +238,8 @@ public sealed partial class ContentScanner
         public string Identity { get; private set; } = string.Empty;
         public string PhysicalIdentity { get; private set; } = string.Empty;
         public List<ArchiveVolumeIdentity> Volumes { get; } = [];
-        public static async Task<ContainerGroupLease> CaptureAsync(ArchiveVolumePlan plan, ContainerContext context)
+        public static async Task<ContainerGroupLease> CaptureAsync(ArchiveVolumePlan plan, ContainerContext context,
+            (string FileId, long FileLength, string FullSha256)? knownPrimaryHash = null)
         {
             ContainerGroupLease lease = new();
             try
@@ -258,8 +259,17 @@ public sealed partial class ContentScanner
                     total = checked(total + file.Length);
                     if (total > plan.Limits.MaximumTotalBytes) throw MessageExceptions.Create(MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.CaptureAsync.02"), sourceText => new ScanResourceLimitException(sourceText));
                     long length = member.Length ?? checked(file.Length - member.Offset);
-                    using BoundedReadOnlyStream full = new(file, 0, file.Length, budget: context.Budget);
-                    string fullHash = Convert.ToHexString(await SHA256.HashDataAsync(full, context.Token));
+                    // 若与扫描前同一锁定句柄的文件身份和长度完全匹配，直接复用其整包 SHA-256，避免二次整盘哈希。
+                    string fullHash;
+                    if (knownPrimaryHash is { } known && fileId == known.FileId && file.Length == known.FileLength)
+                    {
+                        fullHash = known.FullSha256;
+                    }
+                    else
+                    {
+                        using BoundedReadOnlyStream full = new(file, 0, file.Length, budget: context.Budget);
+                        fullHash = Convert.ToHexString(await SHA256.HashDataAsync(full, context.Token));
+                    }
                     string rangeHash = fullHash;
                     if (member.Offset != 0 || length != file.Length)
                     {
@@ -404,7 +414,8 @@ public sealed partial class ContentScanner
         return attempt;
     }
 
-    private async Task ScanContainerArchiveAsync(ArchiveVolumePlan plan, ContainerContext context, ContainerScanNode node)
+    private async Task ScanContainerArchiveAsync(ArchiveVolumePlan plan, ContainerContext context, ContainerScanNode node,
+        (string FileId, long FileLength, string FullSha256)? knownPrimaryHash = null)
     {
         if (plan.Status != ArchiveVolumeStatus.Ready)
         {
@@ -414,7 +425,7 @@ public sealed partial class ContentScanner
         node.DirectoryRead = node.Integrity = ContainerStageStatus.Pending;
         if (plan.Layout != ArchiveVolumeLayout.Single) node.Kind = ContainerNodeKind.VolumeGroup;
         node.FormatText = plan.Format.ToString() + (plan.Members.Count > 1 ? MessageText.Create("Backend.Core.ContentScanner.ArchiveGraph.ScanContainerArchiveAsync.01", (plan.Members.Count)) : (MessageText)"");
-        using ContainerGroupLease lease = await ContainerGroupLease.CaptureAsync(plan, context);
+        using ContainerGroupLease lease = await ContainerGroupLease.CaptureAsync(plan, context, knownPrimaryHash);
         node.VolumeGroupSha256 = lease.Identity;
         node.Volumes.Clear();
         foreach (ArchiveVolumeIdentity volume in lease.Volumes)

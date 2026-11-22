@@ -18,7 +18,7 @@ internal sealed partial class BrokerEngine
     internal static readonly MessageText DirectoryRollbackSafetyMessage =
         MessageText.Create("Backend.Broker.BrokerEngine.DirectoryRollbackSafetyMessage.01");
     private const int MaximumManifestBytes = RemediationLimits.MaximumManifestBytes;
-    private readonly RuleSet _rules = RuleLoader.LoadEmbedded();
+    private readonly RuleSet _rules = RuleLoader.LoadActive().Rules;
     private readonly SteamLayout _steamLayout = SteamLocator.Discover();
     private readonly IIncidentTrustStore _incidentTrustStore;
     private readonly IIncidentStateSecurity _incidentStateSecurity;

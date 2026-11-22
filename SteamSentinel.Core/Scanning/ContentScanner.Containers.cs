@@ -253,7 +253,16 @@ public sealed partial class ContentScanner
                 else if (depth >= context.Budget.Limits.MaximumDepth &&
                     !ScanResourceSession.Allow("ContainerLimits.MaximumDepth", (long)depth + 1, depth, known: false))
                     ContainerGap(context, node, ContainerStageStatus.LimitReached, MessageText.Create("Backend.Core.ContentScanner.Containers.ScanContainerFileAsync.13"));
-                else await ScanContainerArchiveAsync(plan, context, node);
+                else
+                {
+                    (string FileId, long FileLength, string FullSha256)? knownPrimaryHash = null;
+                    if (node.Sha256 is not null && source.Offset == 0 && length == file.Length)
+                    {
+                        string primaryFileId = ArchiveVolumeSession.VerifyHandle(file, Path.GetFullPath(source.PhysicalPath));
+                        knownPrimaryHash = (primaryFileId, file.Length, node.Sha256);
+                    }
+                    await ScanContainerArchiveAsync(plan, context, node, knownPrimaryHash);
+                }
             }
             else if (type.Type is DetectedFileType.Cabinet or DetectedFileType.CompoundDocument)
             {
@@ -458,10 +467,10 @@ public sealed partial class ContentScanner
         }
         if (ScanEnhancements.UseAmsi(context.Options) && (type.IsExecutableOrScript || archive || suspicious))
         {
-            if (stream.Length > context.Options.MaximumAmsiBytes && !ScanResourceSession.Allow("MaximumAmsiBytes", stream.Length))
+            if (stream.Length > context.Options.MaximumAmsiBytes)
             {
-                node.Engines.Add(new() { Engine = "AMSI", Status = ContainerStageStatus.LimitReached, Length = 0, DetailText = MessageText.Create("Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.05", (System.FormattableString.Invariant($"{context.Options.MaximumAmsiBytes:N0}"))) });
-                AddCoverage(context.Report, MessageText.Create("Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.06") + node.DisplayPath, node.OriginalTarget, context.WorkshopId, "AMSI-ENGINE-SIZE-LIMIT");
+                // 超出单文件 AMSI 预算时静默跳过，不弹窗打断、不标为 Partial
+                node.Engines.Add(new() { Engine = "AMSI", Status = ContainerStageStatus.Skipped, Length = 0, DetailText = MessageText.Create("Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.05", (System.FormattableString.Invariant($"{context.Options.MaximumAmsiBytes:N0}"))) });
             }
             else
             {
@@ -528,7 +537,11 @@ public sealed partial class ContentScanner
         }
         if (type.Type == DetectedFileType.PortableExecutable && context.Options.InspectDeepSignatures)
             InspectContainerSignature(file, source, context, node);
-        node.ContentCheck = node.Engines.Where(engine => engine.Engine != "SHA-256").All(engine => StageComplete(engine.Status))
+        // 可选 AMSI 静默降级/超限跳过不应将节点内容检查判为 Partial
+        node.ContentCheck = node.Engines
+            .Where(engine => engine.Engine != "SHA-256" &&
+                !(engine.Engine == "AMSI" && engine.Status is ContainerStageStatus.Failed or ContainerStageStatus.Skipped))
+            .All(engine => StageComplete(engine.Status))
             ? ContainerStageStatus.Complete : ContainerStageStatus.Partial;
     }
 }

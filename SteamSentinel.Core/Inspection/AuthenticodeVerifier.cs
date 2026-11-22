@@ -1,6 +1,8 @@
 using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.Win32.SafeHandles;
 
 namespace SteamSentinel.Core.Inspection;
@@ -20,6 +22,12 @@ public sealed record SignatureResult(SignatureStatus Status, string Detail)
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public SteamSentinel.Core.Models.DisplayMessage? DetailMessage { get => SteamSentinel.Core.Reporting.MessageText.BoundDescriptor(field, Detail); init => field = value; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SignerSubject { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool IsValveSigner { get; init; }
 
     [System.Text.Json.Serialization.JsonIgnore]
     public SteamSentinel.Core.Reporting.MessageText DetailText
@@ -78,7 +86,14 @@ public static class AuthenticodeVerifier
             data = new(pointer) { ProviderFlags = OfflineProviderFlags, StateAction = 1 };
             verificationRequested = true;
             int result = WinVerifyTrust(new IntPtr(-1), GenericVerifyV2, ref data);
-            return InterpretOfflineResult(result);
+            SignatureResult interpreted = InterpretOfflineResult(result);
+            if (interpreted.Status != SignatureStatus.Valid) return interpreted;
+            string? subject = TryGetSignerSubject(filePath);
+            return interpreted with
+            {
+                SignerSubject = subject,
+                IsValveSigner = IsTrustedValveSigner(interpreted.Status, subject)
+            };
         }
         catch (Exception ex)
         {
@@ -125,12 +140,20 @@ public static class AuthenticodeVerifier
             Marshal.StructureToPtr(fileInfo, fileInfoPointer, false);
             WinTrustData data = new(fileInfoPointer);
             int result = WinVerifyTrust(IntPtr.Zero, GenericVerifyV2, ref data);
-            return result switch
+            switch (result)
             {
-                0 => new SignatureResult(SignatureStatus.Valid, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.01")),
-                unchecked((int)0x800B0100) => new SignatureResult(SignatureStatus.Unsigned, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.02")),
-                _ => new SignatureResult(SignatureStatus.Invalid, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.03", (System.FormattableString.Invariant($"{result:X8}"))))
-            };
+                case 0:
+                    string? subject = TryGetSignerSubject(filePath);
+                    return new SignatureResult(SignatureStatus.Valid, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.01"))
+                    {
+                        SignerSubject = subject,
+                        IsValveSigner = IsTrustedValveSigner(SignatureStatus.Valid, subject)
+                    };
+                case unchecked((int)0x800B0100):
+                    return new SignatureResult(SignatureStatus.Unsigned, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.02"));
+                default:
+                    return new SignatureResult(SignatureStatus.Invalid, MessageText.Create("Backend.Core.AuthenticodeVerifier.Verify.03", (System.FormattableString.Invariant($"{result:X8}"))));
+            }
         }
         catch (Exception ex)
         {
@@ -143,6 +166,52 @@ public static class AuthenticodeVerifier
                 Marshal.DestroyStructure<WinTrustFileInfo>(fileInfoPointer);
                 Marshal.FreeHGlobal(fileInfoPointer);
             }
+        }
+    }
+
+    /// <summary>校验有效 Authenticode 签名的单值 CN/O 字段是否为 Valve Corp.，拒绝子串冒充与无效签名。</summary>
+    public static bool IsTrustedValveSigner(SignatureStatus status, string? subject)
+    {
+        if (status != SignatureStatus.Valid || string.IsNullOrWhiteSpace(subject)) return false;
+        try
+        {
+            X500DistinguishedName name = new(subject);
+            bool identityFound = false;
+            foreach (X500RelativeDistinguishedName attribute in name.EnumerateRelativeDistinguishedNames())
+            {
+                if (attribute.HasMultipleElements) return false;
+                string? oid = attribute.GetSingleElementType().Value;
+                if (oid is not ("2.5.4.3" or "2.5.4.10")) continue;
+                string? value = attribute.GetSingleElementValue();
+                if (!string.Equals(value, "Valve Corp.", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(value, "Valve Corp", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(value, "Valve Corporation", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+                identityFound = true;
+            }
+            return identityFound;
+        }
+        catch (Exception ex) when (ex is CryptographicException or ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static string? TryGetSignerSubject(string path)
+    {
+        try
+        {
+#pragma warning disable SYSLIB0057
+            using X509Certificate certificate = X509Certificate.CreateFromSignedFile(path);
+            using X509Certificate2 certificate2 = new(certificate);
+#pragma warning restore SYSLIB0057
+            return certificate2.Subject;
+        }
+        catch
+        {
+            return null;
         }
     }
 

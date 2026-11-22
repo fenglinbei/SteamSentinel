@@ -19,6 +19,7 @@ public sealed partial class SystemScanner
     private const int MaximumRandomProgramDepth = 16;
     private readonly RuleSet _rules;
     private readonly Dictionary<string, HashRule> _hashRules;
+    private readonly string[] _expandedKnownPaths;
 
     [GeneratedRegex("^[a-z0-9]{12,32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex RandomDirectoryNameRegex();
@@ -29,6 +30,11 @@ public sealed partial class SystemScanner
         _hashRules = rules.KnownHashes.Where(rule => Validation.IsHexSha256(rule.Sha256))
             .GroupBy(rule => rule.Sha256, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        // 构造时预展开路径模板，避免在遍历上千条服务与自启动项时重复展开环境变量
+        _expandedKnownPaths = rules.KnownPathTemplates
+            .Select(Environment.ExpandEnvironmentVariables)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
     }
 
     public async Task ScanAsync(
@@ -76,9 +82,13 @@ public sealed partial class SystemScanner
                 if (path is not null && File.Exists(path) && (knownName || IsSuspiciousProgramPath(path)))
                 {
                     long length = new FileInfo(path).Length;
-                    sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
-                        bytes => report.Metrics.BytesHashed += bytes, maximumBytes: length);
-                    _hashRules.TryGetValue(sha256, out hashRule);
+                    // 非已知进程名且超过 64 MiB 的大型宿主进程跳过全量哈希，防止拖慢常规扫描
+                    if (knownName || length <= 64L * 1024 * 1024)
+                    {
+                        sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
+                            bytes => report.Metrics.BytesHashed += bytes, maximumBytes: length);
+                        _hashRules.TryGetValue(sha256, out hashRule);
+                    }
                 }
 
                 if (knownName || hashRule is not null)
@@ -352,22 +362,38 @@ public sealed partial class SystemScanner
                     Validation.TryNormalizeScheduledTaskName(name, out string normalizedKnown) &&
                     normalizedTask.Equals(normalizedKnown, StringComparison.OrdinalIgnoreCase));
                 string text = string.Empty;
+                byte[]? taskBytes = null;
                 try
                 {
-                    FileInfo info = new(file);
-                    if (info.Length <= 2 * 1024 * 1024) text = await File.ReadAllTextAsync(file, cancellationToken);
+                    await using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read,
+                        64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    if (stream.Length <= 2 * 1024 * 1024)
+                    {
+                        taskBytes = new byte[checked((int)stream.Length)];
+                        await stream.ReadExactlyAsync(taskBytes, cancellationToken);
+                        using StreamReader reader = new(new MemoryStream(taskBytes, writable: false), System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                        text = await reader.ReadToEndAsync(cancellationToken);
+                    }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
                 if (!knownName && !ContainsKnownIndicator(text)) continue;
                 string? taskSha256 = null;
-                try
+                if (taskBytes is not null)
                 {
-                    taskSha256 = await Hashing.Sha256FileAsync(file, cancellationToken,
-                        bytes => report.Metrics.BytesHashed += bytes, maximumBytes: new FileInfo(file).Length);
+                    taskSha256 = Hashing.Sha256Bytes(taskBytes);
+                    report.Metrics.BytesHashed += taskBytes.Length;
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                else
                 {
-                    // The finding remains visible, but an unbound task is not offered for removal.
+                    try
+                    {
+                        taskSha256 = await Hashing.Sha256FileAsync(file, cancellationToken,
+                            bytes => report.Metrics.BytesHashed += bytes, maximumBytes: new FileInfo(file).Length);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // The finding remains visible, but an unbound task is not offered for removal.
+                    }
                 }
 
                 report.Findings.Add(new Finding
@@ -627,8 +653,7 @@ public sealed partial class SystemScanner
                _rules.KnownRunValueNames.Any(name => value.Contains(name, StringComparison.OrdinalIgnoreCase)) ||
                _rules.KnownTaskNames.Any(name => value.Contains(name, StringComparison.OrdinalIgnoreCase)) ||
                _rules.KnownDomains.Any(domain => ContainsDomain(value, domain)) ||
-               _rules.KnownPathTemplates.Any(template => value.Contains(
-                   Environment.ExpandEnvironmentVariables(template), StringComparison.OrdinalIgnoreCase));
+               _expandedKnownPaths.Any(path => value.Contains(path, StringComparison.OrdinalIgnoreCase));
     }
 
     public bool IsConfirmedRunIndicator(string valueName, string value) =>
@@ -655,11 +680,18 @@ public sealed partial class SystemScanner
 
     private static bool IsSuspiciousProgramPath(string path)
     {
-        string localPrograms = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        string? publicDirectory = Environment.GetEnvironmentVariable("PUBLIC");
         string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         string temp = Path.GetTempPath();
-        return IsWithin(path, localPrograms) || IsWithin(path, desktop) || IsWithin(path, downloads) || IsWithin(path, temp) ||
+        return (!string.IsNullOrWhiteSpace(localAppData) && IsWithin(path, localAppData)) ||
+               (!string.IsNullOrWhiteSpace(appData) && IsWithin(path, appData)) ||
+               (!string.IsNullOrWhiteSpace(programData) && IsWithin(path, programData)) ||
+               (!string.IsNullOrWhiteSpace(publicDirectory) && IsWithin(path, publicDirectory)) ||
+               IsWithin(path, desktop) || IsWithin(path, downloads) || IsWithin(path, temp) ||
                IsWallpaperWorkshopContentPath(path) || Steam.ContentDiscovery.IsWorkshopContentPath(path);
     }
 

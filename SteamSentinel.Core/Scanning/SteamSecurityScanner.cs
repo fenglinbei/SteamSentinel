@@ -81,45 +81,183 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         await ScanSteamLaunchConfigurationAsync(layout, report, cancellationToken);
     }
 
+    private static readonly string[] ExtendedInjectionDllNames =
+    [
+        "msacm32.drv",
+        "winhttp.dll",
+        "dinput8.dll",
+        "dbghelp.dll"
+    ];
+
     private async Task ScanSensitiveRootFilesAsync(string steamRoot, ScanReport report, CancellationToken cancellationToken)
     {
-        foreach (string name in rules.SteamInjectionNames.Append("steam.cfg").Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            string path = Path.Combine(steamRoot, name);
-            if (!File.Exists(path)) continue;
+        string cfgPath = Path.Combine(steamRoot, "steam.cfg");
+        if (File.Exists(cfgPath))
+            await ScanSteamConfigurationFileAsync(cfgPath, SteamConfigurationRepair.Cfg, report, cancellationToken);
 
-            if (name.Equals("steam.cfg", StringComparison.OrdinalIgnoreCase))
+        List<string> sensitiveDirectories = [];
+        HashSet<string> seenDirectories = new(StringComparer.OrdinalIgnoreCase);
+        void AddSensitiveDirectory(string candidate)
+        {
+            if (Directory.Exists(candidate) && ContentDiscovery.IsLocalSafePath(candidate))
             {
-                await ScanSteamConfigurationFileAsync(path, SteamConfigurationRepair.Cfg, report, cancellationToken);
-                continue;
+                string full = Path.GetFullPath(candidate);
+                if (seenDirectories.Add(full)) sensitiveDirectories.Add(full);
+            }
+        }
+
+        AddSensitiveDirectory(steamRoot);
+        foreach (string relative in new[] { "bin", "win64", "steamui", "clientui", Path.Combine("bin", "cef") })
+            AddSensitiveDirectory(Path.Combine(steamRoot, relative));
+
+        string cefDirectory = Path.Combine(steamRoot, "bin", "cef");
+        if (Directory.Exists(cefDirectory) && ContentDiscovery.IsLocalSafePath(cefDirectory))
+        {
+            try
+            {
+                foreach (string child in Directory.EnumerateDirectories(cefDirectory))
+                    AddSensitiveDirectory(child);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 单个 CEF 子目录无权限读取时不阻断其余目录核验
+            }
+        }
+
+        bool millenniumPresent = Directory.Exists(Path.Combine(steamRoot, "millennium"));
+        string[] candidateDlls = rules.SteamInjectionNames
+            .Concat(ExtendedInjectionDllNames)
+            .Where(name => !name.Equals("steam.cfg", StringComparison.OrdinalIgnoreCase) &&
+                           !name.Equals("versionOrg.dll", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (string directory in sensitiveDirectories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            HashSet<string> handled = new(StringComparer.OrdinalIgnoreCase);
+            bool cefLocation = directory.Contains($"{Path.DirectorySeparatorChar}cef", StringComparison.OrdinalIgnoreCase);
+
+            string forwarderPath = Path.Combine(directory, "versionOrg.dll");
+            if (File.Exists(forwarderPath))
+            {
+                FileInfo forwarderInfo = new(forwarderPath);
+                string forwarderSha256 = await Hashing.Sha256FileAsync(forwarderPath, cancellationToken,
+                    bytes => report.Metrics.BytesHashed += bytes, maximumBytes: forwarderInfo.Length);
+                HashRule? forwarderKnown = FindKnownHash(forwarderSha256);
+                SignatureResult forwarderSignature = AuthenticodeVerifier.Verify(forwarderPath);
+                handled.Add(forwarderPath);
+
+                string versionPath = Path.Combine(directory, "version.dll");
+                bool hasVersionDll = File.Exists(versionPath);
+                string? versionSha256 = null;
+                HashRule? versionKnown = null;
+                if (hasVersionDll)
+                {
+                    FileInfo versionInfo = new(versionPath);
+                    versionSha256 = await Hashing.Sha256FileAsync(versionPath, cancellationToken,
+                        bytes => report.Metrics.BytesHashed += bytes, maximumBytes: versionInfo.Length);
+                    versionKnown = FindKnownHash(versionSha256);
+                    // 若 version.dll 本身尚未命中精确恶意哈希，则合并进转发链避免重复高危；若确认为已知恶意样本则留给下方单列可隔离项
+                    if (versionKnown?.Malware != true)
+                        handled.Add(versionPath);
+                }
+
+                bool forwarderMalware = forwarderKnown?.Malware == true;
+                report.Findings.Add(new Finding
+                {
+                    RuleId = forwarderKnown?.Id ?? "STEAM-DLL-VERSION-FORWARDER",
+                    Category = FindingCategory.Steam,
+                    Severity = forwarderMalware ? FindingSeverity.Critical : FindingSeverity.High,
+                    Score = forwarderMalware ? 100 : 90,
+                    TitleText = MessageText.Create("Steam.DllForwarder.Title"),
+                    DescriptionText = MessageText.Create("Steam.DllForwarder.Description"),
+                    Target = forwarderPath,
+                    EvidenceText = hasVersionDll
+                        ? MessageText.Create("Steam.DllForwarder.EvidencePair", forwarderSignature.DetailText, forwarderSha256, versionSha256 ?? string.Empty)
+                        : MessageText.Create("Steam.DllForwarder.EvidenceSingle", forwarderSignature.DetailText, forwarderSha256),
+                    Sha256 = forwarderSha256,
+                    IsKnownMalware = forwarderMalware,
+                    CanRemediate = forwarderMalware,
+                    SuggestedActions = forwarderMalware
+                        ? [SuggestedActionKind.QuarantineFile]
+                        : [SuggestedActionKind.ReviewOnly]
+                });
             }
 
-            FileInfo info = new(path);
-            string sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
-                bytes => report.Metrics.BytesHashed += bytes, maximumBytes: info.Length);
-            HashRule? known = FindKnownHash(sha256);
-
-            SignatureResult signature = AuthenticodeVerifier.Verify(path);
-            FindingSeverity severity = known?.Malware == true ? FindingSeverity.Critical :
-                signature.Status == SignatureStatus.Valid ? FindingSeverity.Low : FindingSeverity.Medium;
-            int score = known?.Malware == true ? 100 : signature.Status == SignatureStatus.Valid ? 15 : 45;
-            report.Findings.Add(new Finding
+            foreach (string name in candidateDlls)
             {
-                RuleId = known?.Id ?? "STEAM-PROXY-DLL-PRESENT",
-                Category = FindingCategory.Steam,
-                Severity = severity,
-                Score = score,
-                TitleText = known?.Malware == true ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.08") : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.09"),
-                DescriptionText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.10"),
-                Target = path,
-                EvidenceText = $"{signature.Detail}；SHA-256={sha256}",
-                Sha256 = sha256,
-                IsKnownMalware = known?.Malware == true,
-                CanRemediate = known?.Malware == true,
-                SuggestedActions = known?.Malware == true
-                    ? [SuggestedActionKind.QuarantineFile]
-                    : [SuggestedActionKind.ReviewOnly]
-            });
+                cancellationToken.ThrowIfCancellationRequested();
+                string path = Path.Combine(directory, name);
+                if (!File.Exists(path) || handled.Contains(path)) continue;
+
+                FileInfo info = new(path);
+                string sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
+                    bytes => report.Metrics.BytesHashed += bytes, maximumBytes: info.Length);
+                HashRule? known = FindKnownHash(sha256);
+                SignatureResult signature = AuthenticodeVerifier.Verify(path);
+
+                bool knownMalware = known?.Malware == true;
+                bool acknowledgedMod = millenniumPresent &&
+                    name.Equals("wsock32.dll", StringComparison.OrdinalIgnoreCase) &&
+                    signature.Status is SignatureStatus.Valid or SignatureStatus.Unsigned;
+
+                FindingSeverity severity;
+                int score;
+                if (knownMalware)
+                {
+                    severity = FindingSeverity.Critical;
+                    score = 100;
+                }
+                else if (signature.IsValveSigner)
+                {
+                    severity = FindingSeverity.Low;
+                    score = 15;
+                }
+                else if (signature.Status is SignatureStatus.Invalid or SignatureStatus.HashMismatch || cefLocation)
+                {
+                    severity = FindingSeverity.High;
+                    score = 85;
+                }
+                else if (acknowledgedMod)
+                {
+                    severity = FindingSeverity.Medium;
+                    score = 45;
+                }
+                else
+                {
+                    severity = FindingSeverity.High;
+                    score = 75;
+                }
+
+                MessageText titleText = knownMalware
+                    ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.08")
+                    : signature.IsValveSigner
+                        ? MessageText.Create("Steam.ProxyDll.SeverityTitle.Valve")
+                        : MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.09");
+
+                MessageText evidenceText = string.IsNullOrWhiteSpace(signature.SignerSubject)
+                    ? $"{signature.Detail}；SHA-256={sha256}"
+                    : MessageText.Create("Steam.ProxyDll.EvidenceWithSigner", signature.DetailText, signature.SignerSubject, sha256);
+
+                report.Findings.Add(new Finding
+                {
+                    RuleId = known?.Id ?? "STEAM-PROXY-DLL-PRESENT",
+                    Category = FindingCategory.Steam,
+                    Severity = severity,
+                    Score = score,
+                    TitleText = titleText,
+                    DescriptionText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.10"),
+                    Target = path,
+                    EvidenceText = evidenceText,
+                    Sha256 = sha256,
+                    IsKnownMalware = knownMalware,
+                    CanRemediate = knownMalware,
+                    SuggestedActions = knownMalware
+                        ? [SuggestedActionKind.QuarantineFile]
+                        : [SuggestedActionKind.ReviewOnly]
+                });
+            }
         }
     }
 
@@ -192,6 +330,8 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 if (isScript && repairedHash is not null)
                     report.Findings.Add(SteamScriptRepairTarget.CreateFinding(path, sha256, repairedHash));
                 else if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback));
+                LoopbackScriptReference? external = isScript ? SteamUiLoopbackInspector.FindExternal(text) : null;
+                if (external is not null) report.Findings.Add(CreateExternalScriptFinding(path, sha256, external));
                 List<MessageText> signals = isScript ? AnalyzeSteamUiMessages(text) : [];
                 if (known?.Malware != true && signals.Count == 0) continue;
 

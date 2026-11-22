@@ -128,7 +128,7 @@ internal static partial class Program
             await scanner.ScanRootAsync(doc, unavailable, ContentOptions(), new NullPasswordProvider(),
                 new InlineScanProgress(_ => SimulateUnavailable()));
         }
-        Check("合并 AMSI 提示后仍保留逐路径覆盖缺口", unavailable.CoverageNotices.Count(note => note.ReasonCode == ReasonCodes.AmsiUnavailable) == 1 && unavailable.RootSummaries.Single().Coverage == ScanCoverage.Partial);
+        Check("合并 AMSI 提示后仍保留非阻断诊断通知且不标为不完整", unavailable.CoverageNotices.Count(note => note.ReasonCode == ReasonCodes.AmsiUnavailable) == 1 && unavailable.Coverage == ScanCoverage.Complete && unavailable.RootSummaries.Single().Coverage == ScanCoverage.Complete);
         string gzip = Path.Combine(directory, "unnamed.gz");
         await using (FileStream output = File.Create(gzip))
         await using (System.IO.Compression.GZipStream stream = new(output, System.IO.Compression.CompressionMode.Compress))

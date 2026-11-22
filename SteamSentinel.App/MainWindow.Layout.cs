@@ -92,7 +92,7 @@ public partial class MainWindow
         // cannot make a 23-DIP control visible inside a 17-DIP viewport.
         double minimum = optional == ScanOptionsScroll
             ? new Control[] { WorkshopScopeComboBox, DownloadLocationsCheckBox, ExecutionHistoryCheckBox,
-                ArchiveCheckBox, DeepSignatureCheckBox, DomainBlockCheckBox }
+                ArchiveCheckBox, AmsiCheckBox, DeepSignatureCheckBox, DomainBlockCheckBox }
                 .Max(control => control.DesiredSize.Height)
             : FindingDetailScroll.FontSize * 1.5;
         minimum = Math.Ceiling(minimum * scale) / scale + 1 / scale;

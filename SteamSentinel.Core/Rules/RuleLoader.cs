@@ -14,6 +14,9 @@ public static class RuleLoader
         Converters = { new JsonStringEnumConverter() }
     };
 
+    /// <summary>加载当前生效规则快照（内置规则与本地已验签增量规则包的只读合并视图）。</summary>
+    public static ActiveRuleSnapshot LoadActive(string? directory = null) => RulePackageManager.LoadActive(directory);
+
     public static RuleSet LoadEmbedded()
     {
         Assembly assembly = typeof(RuleLoader).Assembly;

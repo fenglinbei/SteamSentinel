@@ -87,8 +87,11 @@ public static class FindingHandlingPresentation
         if (finding.HandlingReason is FindingHandlingReason.IncompleteInspection or FindingHandlingReason.PrerequisiteNotMet)
             return new(FindingDisposition.Blocked, DisplayText.Get("FindingHandling.Get.10"), Reason("FindingHandling.Get.11", finding.HandlingDetailsText.Display), DisplayText.Get("FindingHandling.Get.12"), false);
         bool diagnostic = IsTrustProxyFinding(finding);
-        if (finding.HandlingReason == FindingHandlingReason.InsufficientEvidence || diagnostic || finding.IsKnownMalware ||
-            finding.Category != FindingCategory.Coverage && (finding.Severity >= FindingSeverity.Medium || finding.SuggestedActions.Contains(SuggestedActionKind.ReviewOnly)))
+        // 无信号、信息级别的普通 MSI 结构观察记录归入 Informational，不误升为需人工复核
+        bool benignInstaller = finding.RuleId == "INSTALLER-STRUCTURE" &&
+            finding.Severity < FindingSeverity.Medium && finding.ReasonCode is null && !finding.IsKnownMalware;
+        if (!benignInstaller && (finding.HandlingReason == FindingHandlingReason.InsufficientEvidence || diagnostic || finding.IsKnownMalware ||
+            finding.Category != FindingCategory.Coverage && (finding.Severity >= FindingSeverity.Medium || finding.SuggestedActions.Contains(SuggestedActionKind.ReviewOnly))))
             return new(FindingDisposition.NeedsReview, DisplayText.Get("FindingHandling.Get.13"), Reason(diagnostic
                 ? "FindingHandling.Get.14"
                 : "FindingHandling.Get.15", finding.HandlingDetailsText.Display), diagnostic

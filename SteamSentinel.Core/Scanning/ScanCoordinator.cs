@@ -14,7 +14,7 @@ public sealed class ScanCoordinator
 
     public ScanCoordinator(RuleSet? rules = null, SteamLayout? layout = null, bool allowRelatedSignatureProbe = false)
     {
-        _rules = rules ?? RuleLoader.LoadEmbedded();
+        _rules = rules ?? RuleLoader.LoadActive().Rules;
         _layoutOverride = layout;
         _allowRelatedSignatureProbe = allowRelatedSignatureProbe;
     }

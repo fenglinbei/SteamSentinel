@@ -22,16 +22,27 @@ public static class ScriptSignals
     public static string Normalize(string text)
     {
         string result = text.Length > Limit ? text[..Limit] : text;
+        // 多数正常文件不包含字符串拼接或编码命令特征，短路跳过避免不必要的正则和 StringBuilder 分配
+        bool mightJoinLiterals = result.Contains('+') && (result.Contains('\'') || result.Contains('"'));
+        bool mightContainEncoded = result.Contains("FromBase64String", StringComparison.OrdinalIgnoreCase) ||
+            result.Contains("-enc", StringComparison.OrdinalIgnoreCase);
+        if (!mightJoinLiterals && !mightContainEncoded) return result;
         try
         {
-            for (int i = 0; i < 6; i++)
+            if (mightJoinLiterals)
             {
-                string next = JoinLiterals.Replace(result, "${q}${left}${right}${q}");
-                if (next == result) break;
-                result = next;
+                for (int i = 0; i < 6; i++)
+                {
+                    string next = JoinLiterals.Replace(result, "${q}${left}${right}${q}");
+                    if (next == result) break;
+                    result = next;
+                }
             }
+            if (!mightContainEncoded) return result;
+            MatchCollection matches = Encoded.Matches(result);
+            if (matches.Count == 0) return result;
             StringBuilder decoded = new(result);
-            foreach (Match match in Encoded.Matches(result).Cast<Match>().Take(4))
+            foreach (Match match in matches.Cast<Match>().Take(4))
             {
                 try
                 {

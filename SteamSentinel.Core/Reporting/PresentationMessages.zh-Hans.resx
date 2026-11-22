@@ -12022,4 +12022,18 @@ DER SHA-256：{3}
   <data name="Ui.Cases.AcknowledgeUnknown.ConfirmBody" xml:space="preserve"><value>请仅在确认已无管理员组件窗口运行时继续。未决计划将按“结果未知”归档（不会重放，也不会记为成功），以便恢复后续操作。是否继续？</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.ErrorSummary" xml:space="preserve"><value>因上次管理员执行未返回回执，已由用户手动确认归档为结果未知。</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.Done" xml:space="preserve"><value>已将该未决记录归档为结果未知并解除限制，建议复核相关目标状态。</value></data>
+  <data name="Rules.Package.LoadFallbackNotice" xml:space="preserve"><value>本地扩展规则包未能通过签名、版本或有效期核验，本次已安全回退至内置规则；请重新导入官方签名规则包。</value></data>
+  <data name="Steam.DllForwarder.Title" xml:space="preserve"><value>Steam 敏感目录存在 versionOrg.dll 转发结构</value></data>
+  <data name="Steam.DllForwarder.Description" xml:space="preserve"><value>在 Steam 客户端敏感目录检测到正常安装不应包含的 versionOrg.dll，常见于侧载代理劫持结构，请核验其来源与同目录 DLL 签名。</value></data>
+  <data name="Steam.DllForwarder.EvidencePair" xml:space="preserve"><value>同时存在 versionOrg.dll 与 version.dll；签名={0}；versionOrg SHA-256={1}；version SHA-256={2}</value></data>
+  <data name="Steam.DllForwarder.EvidenceSingle" xml:space="preserve"><value>单独发现 versionOrg.dll；签名={0}；SHA-256={1}</value></data>
+  <data name="Steam.ProxyDll.SeverityTitle.Valve" xml:space="preserve"><value>Steam 目录存在 Valve 签名的同名代理位置 DLL</value></data>
+  <data name="Steam.ProxyDll.EvidenceWithSigner" xml:space="preserve"><value>{0}；签名者={1}；SHA-256={2}</value></data>
+  <data name="Steam.UiExternalScript.Title" xml:space="preserve"><value>Steam 前端脚本注入了非官方外部域名脚本</value></data>
+  <data name="Steam.UiExternalScript.Description" xml:space="preserve"><value>该脚本动态创建 script 元素并插入非 Valve 官方域名来源。建议立即核查 Steam 客户端完整性与已安装插件。</value></data>
+  <data name="Steam.UiExternalScript.Evidence" xml:space="preserve"><value>外部脚本地址 {0}。文件 SHA-256 为 {1}。</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.09" xml:space="preserve"><value>发现劫持 Steam 调试开关与前端文件的组合特征</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.10" xml:space="preserve"><value>同时包含 CEF 远程调试/禁更开关、Steam UI 目标关键字及文件写入/执行特征。</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.11" xml:space="preserve"><value>发现工坊目录下载并执行持久化释放链特征</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.12" xml:space="preserve"><value>位于工坊目录内且同时包含网络下载、执行启动与自启动持久化特征。</value></data>
 </root>

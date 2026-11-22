@@ -12022,4 +12022,18 @@ Reason: {2}</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.ConfirmBody" xml:space="preserve"><value>Only continue if you confirmed no administrator Broker window is still running. Pending actions will be recorded as unknown outcome (not rolled back or marked successful) so new actions can resume. Continue?</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.ErrorSummary" xml:space="preserve"><value>Manually archived as unknown outcome by user because the earlier elevated run did not return a receipt.</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.Done" xml:space="preserve"><value>Archived the pending record as unknown outcome and unlocked remediation. Review affected targets carefully.</value></data>
+  <data name="Rules.Package.LoadFallbackNotice" xml:space="preserve"><value>The local signed rule update did not pass signature, version, or expiration verification; built-in rules were used instead.</value></data>
+  <data name="Steam.DllForwarder.Title" xml:space="preserve"><value>Suspicious DLL forwarding structure (versionOrg.dll) in Steam folder</value></data>
+  <data name="Steam.DllForwarder.Description" xml:space="preserve"><value>versionOrg.dll was found in a sensitive Steam client directory. This filename is commonly used with sideloaded version.dll proxies and requires verification against trusted sources.</value></data>
+  <data name="Steam.DllForwarder.EvidencePair" xml:space="preserve"><value>Paired versionOrg.dll and version.dll; signature={0}; versionOrg SHA-256={1}; version SHA-256={2}</value></data>
+  <data name="Steam.DllForwarder.EvidenceSingle" xml:space="preserve"><value>Standalone versionOrg.dll; signature={0}; SHA-256={1}</value></data>
+  <data name="Steam.ProxyDll.SeverityTitle.Valve" xml:space="preserve"><value>Valve-signed extra DLL in Steam directory</value></data>
+  <data name="Steam.ProxyDll.EvidenceWithSigner" xml:space="preserve"><value>{0}; Signer={1}; SHA-256={2}</value></data>
+  <data name="Steam.UiExternalScript.Title" xml:space="preserve"><value>Steam UI script injects an unofficial external script URL</value></data>
+  <data name="Steam.UiExternalScript.Description" xml:space="preserve"><value>The script creates a script element, assigns an external non-Valve domain URL to its source, and appends it to the document. Review Steam UI extensions or client integrity before logging in.</value></data>
+  <data name="Steam.UiExternalScript.Evidence" xml:space="preserve"><value>External script endpoint {0}. File SHA-256 {1}.</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.09" xml:space="preserve"><value>Detected Steam CEF debugging hijack combined indicators</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.10" xml:space="preserve"><value>Contains CEF debugging or update-suppression configuration markers together with Steam UI/file manipulation routines.</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.11" xml:space="preserve"><value>Detected Steam Workshop download-execute-persistence chain</value></data>
+  <data name="Backend.Core.ContentHeuristics.Match.12" xml:space="preserve"><value>Found inside a Workshop path with combined download, process execution, and startup persistence indicators.</value></data>
 </root>

@@ -97,12 +97,12 @@ internal static partial class Program
 
     private static async Task TestV030BaselineEnhancementPolicyAsync(string directory)
     {
-        Check("基础验收 系统引擎增强暂停且新扫描默认关闭", !ScanEnhancements.AmsiAvailable && !new ScanOptions().UseAmsi);
+        Check("基础验收 系统引擎可用但新扫描默认关闭", ScanEnhancements.AmsiAvailable && !new ScanOptions().UseAmsi);
         string corpus = Path.Combine(directory, "baseline-scripts"); Directory.CreateDirectory(corpus);
         for (int index = 0; index < 16; index++)
             await File.WriteAllTextAsync(Path.Combine(corpus, $"ordinary-{index:D2}.ps1"),
                 "# Harmless scanner fixture; never executed.\r\n# " + new string('q', 8192) + "\r\n");
-        ScanOptions Requested(ScanPerformanceMode mode)
+        ScanOptions Requested(ScanPerformanceMode mode, bool useAmsi = false)
         {
             ScanOptions requested = new ScanLimitSettings { PerformanceMode = mode }.Apply(new()
             {
@@ -110,7 +110,7 @@ internal static partial class Program
                 IncludeSystem = false,
                 IncludeSteam = false,
                 IncludeWorkshop = false,
-                UseAmsi = true,
+                UseAmsi = useAmsi,
                 CustomRoots = [corpus],
                 HashEveryFile = true,
                 InspectDeepSignatures = false
@@ -126,16 +126,14 @@ internal static partial class Program
         RuleSet rules = RuleLoader.LoadEmbedded();
         foreach (var (mode, concurrency) in modes)
         {
-            ScanOptions requested = Requested(mode);
-            // Deliberately below every leaf length: a paused enhancement must not
-            // initialize its engine, request a grant, or disqualify parallel files.
+            ScanOptions requested = Requested(mode, useAmsi: false);
             typeof(ScanOptions).GetProperty(nameof(ScanOptions.MaximumAmsiBytes))!.SetValue(requested, 1L);
             string before = JsonSerializer.Serialize(requested, JsonFile.Options);
             int initializations = 0;
             using ContentScanner scanner = new(rules, () =>
             {
                 Interlocked.Increment(ref initializations);
-                throw new InvalidOperationException("The baseline scan attempted to initialize AMSI.");
+                throw new InvalidOperationException("The default scan attempted to initialize AMSI.");
             });
             ScanReport report = new() { Mode = ScanMode.Custom };
             long checkpointFiles = 0;
@@ -168,14 +166,11 @@ internal static partial class Program
                 actualPeak = peak,
                 boundary = "Parent checkpoints expose completed dispatch groups; instantaneous task overlap is scheduler-dependent."
             });
-            Check($"基础验收 {concurrency}路不初始化增强引擎也不生成增强缺口", initializations == 0 && !HasAmsiObservation(report) &&
+            Check($"基础验收 {concurrency}路默认关闭AMSI不初始化也不生成缺口", initializations == 0 && !HasAmsiObservation(report) &&
                 report.Coverage == ScanCoverage.Complete && report.Metrics.FilesVisited == 16 && report.RootSummaries.All(root => root.Coverage == ScanCoverage.Complete));
-            Check($"基础验收 {concurrency}路保留旧请求但报告实际关闭", before == JsonSerializer.Serialize(requested, JsonFile.Options) &&
-                requested.UseAmsi && report.ContentScanSettings?.UseAmsi == false);
-            // Parallel leaf scanners have no parent Checkpoint callback; the
-            // parent publishes the whole completed batch. Serial fallback emits
-            // one visited leaf at a time, regardless of thread-pool scheduling.
-            Check($"基础验收 暂停的增强额度不限制CPU允许的{expectedConcurrency}路（请求{concurrency}路）", checkpointWidths.Count > 0 &&
+            Check($"基础验收 {concurrency}路保留默认请求设置", before == JsonSerializer.Serialize(requested, JsonFile.Options) &&
+                !requested.UseAmsi && report.ContentScanSettings?.UseAmsi == false);
+            Check($"基础验收 默认关闭AMSI不限制CPU允许的{expectedConcurrency}路（请求{concurrency}路）", checkpointWidths.Count > 0 &&
                 checkpointWidths.Max() == expectedConcurrency && checkpointWidths.All(width => width <= expectedConcurrency) && peak >= 1 && peak <= expectedConcurrency);
         }
 
@@ -186,7 +181,7 @@ internal static partial class Program
             IncludeSystem = false,
             IncludeSteam = false,
             IncludeWorkshop = false,
-            UseAmsi = true,
+            UseAmsi = false,
             CustomRoots = [firstFile],
             MaximumStringScanBytes = 1,
             HashEveryFile = true,
@@ -196,7 +191,7 @@ internal static partial class Program
             request => new(request.RequestId, ResourceDecisionKind.Approve, [new(request.LimitKey, request.CurrentLimit, request.RequiredMinimum)]), default))
         {
             ScanReport report = await new ScanCoordinator(rules).RunAsync(live);
-            Check("基础验收 报告增强选项副本不切断实时提额", report.Coverage == ScanCoverage.Complete && live.UseAmsi &&
+            Check("基础验收 默认请求仍可执行实时提额", report.Coverage == ScanCoverage.Complete && !live.UseAmsi &&
                 report.ContentScanSettings?.UseAmsi == false && live.MaximumStringScanBytes >= new FileInfo(firstFile).Length &&
                 report.ContentScanSettings.MaximumStringScanBytes == live.MaximumStringScanBytes && session.Audit.Decisions.Count > 0);
         }
@@ -204,17 +199,15 @@ internal static partial class Program
         ScanReport? serial = null;
         foreach (var (mode, concurrency) in modes)
         {
-            ScanOptions requested = Requested(mode);
+            ScanOptions requested = Requested(mode, useAmsi: false);
             string before = JsonSerializer.Serialize(requested, JsonFile.Options);
-            // ArchiveWorkerClient accepts Ready only from a Low/Untrusted Worker;
-            // a successful result also exercises the real restricted protocol gate.
             ScanReport report = await new ArchiveWorkerClient(DevelopmentWorkerPath()).RunAsync(requested,
                 (request, _) => Task.FromResult(new ArchivePasswordResponse(request.RequestId, true, null, false)), null, default);
-            Check($"基础验收 真实受限Worker {concurrency}路完成且没有AMSI观察", report.ExecutionState == ScanExecutionState.Completed &&
+            Check($"基础验收 真实受限Worker {concurrency}路完成且默认不触发AMSI", report.ExecutionState == ScanExecutionState.Completed &&
                 report.Coverage == ScanCoverage.Complete && report.Metrics.FilesVisited == 16 && report.WorkerDiagnostics is not null &&
                 report.RootSummaries.All(root => root.Coverage == ScanCoverage.Complete) && !HasAmsiObservation(report));
-            Check($"基础验收 真实受限Worker {concurrency}路保留调用方旧设置", before == JsonSerializer.Serialize(requested, JsonFile.Options) &&
-                requested.UseAmsi && report.ContentScanSettings?.UseAmsi == false);
+            Check($"基础验收 真实受限Worker {concurrency}路保留调用方默认设置", before == JsonSerializer.Serialize(requested, JsonFile.Options) &&
+                !requested.UseAmsi && report.ContentScanSettings?.UseAmsi == false);
             int peak = report.ResourceAudit?.PeakParallelFiles ?? 1;
             int capacityCpu = AdaptiveTestCpuCapacity(report.ResourceAudit?.Preflight?.LogicalProcessors ?? Environment.ProcessorCount);
             int expectedConcurrency = Math.Min(concurrency, capacityCpu);
@@ -224,9 +217,40 @@ internal static partial class Program
             else serial = report;
             await JsonFile.WriteAtomicAsync(Path.Combine(directory, $"worker-basic-{concurrency}.json"), report);
         }
-        // Each inert leaf produces a finding so the real Worker cannot coalesce
-        // all checkpoints under its one-second unchanged-findings throttle.
-        // No fixture is executed and the domain is only scanned as text.
+
+        // 显式开启 AMSI 但额度超限时，静默跳过、不弹窗、不退回串行、不标为 Partial
+        ScanOptions skippedAmsi = Requested(ScanPerformanceMode.HighThroughput, useAmsi: true);
+        typeof(ScanOptions).GetProperty(nameof(ScanOptions.MaximumAmsiBytes))!.SetValue(skippedAmsi, 1L);
+        int skippedGrants = 0;
+        ScanReport skippedAmsiReport = new() { Mode = ScanMode.Custom };
+        using (ScanResourceSession noGrantSession = new(skippedAmsi, _ => { skippedGrants++; return new(string.Empty, ResourceDecisionKind.Skip, []); }, default))
+        using (ContentScanner amsiSkippedScanner = new(rules))
+        {
+            await amsiSkippedScanner.ScanRootAsync(corpus, skippedAmsiReport, skippedAmsi, new NullPasswordProvider());
+        }
+        int expectedHighThroughput = Math.Min(4, AdaptiveTestCpuCapacity(Environment.ProcessorCount));
+        int skippedPeak = skippedAmsiReport.ResourceAudit?.PeakParallelFiles ?? 1;
+        Check("基础验收 开启AMSI但超限时静默跳过且不弹窗不降并发不标Partial",
+            skippedGrants == 0 &&
+            skippedAmsiReport.Coverage == ScanCoverage.Complete &&
+            skippedAmsiReport.Metrics.FilesVisited == 16 &&
+            skippedAmsiReport.RootSummaries.All(r => r.Coverage == ScanCoverage.Complete) &&
+            (expectedHighThroughput == 1 ? skippedPeak == 1 : skippedPeak >= 2 && skippedPeak <= expectedHighThroughput) &&
+            skippedAmsiReport.Containers!.Nodes.All(n => n.Engines.Any(e => e.Engine == "AMSI" && e.Status == ContainerStageStatus.Skipped)));
+
+        // 显式开启 AMSI 但原生接口初始化失败时，静默降级、仅记录诊断通知、不标为 Partial
+        ScanOptions failingAmsi = Requested(ScanPerformanceMode.LowImpact, useAmsi: true);
+        ScanReport failingAmsiReport = new() { Mode = ScanMode.Custom };
+        using (ContentScanner amsiFailScanner = new(rules, () => new SteamSentinel.Core.Inspection.AmsiScanner(new BaselineFailingAmsiApi())))
+        {
+            await amsiFailScanner.ScanRootAsync(corpus, failingAmsiReport, failingAmsi, new NullPasswordProvider());
+        }
+        Check("基础验收 开启AMSI但引擎不可用时静默降级且不标Partial",
+            failingAmsiReport.Coverage == ScanCoverage.Complete &&
+            failingAmsiReport.Metrics.FilesVisited == 16 &&
+            failingAmsiReport.RootSummaries.All(r => r.Coverage == ScanCoverage.Complete) &&
+            failingAmsiReport.CoverageNotices.Any(n => n.ReasonCode == ReasonCodes.AmsiUnavailable));
+
         string dispatchCorpus = Path.Combine(directory, "baseline-dispatch");
         Directory.CreateDirectory(dispatchCorpus);
         for (int index = 0; index < 16; index++)
@@ -235,7 +259,7 @@ internal static partial class Program
         ScanReport? dispatchSerial = null;
         foreach (var (mode, concurrency) in modes)
         {
-            ScanOptions requested = Requested(mode);
+            ScanOptions requested = Requested(mode, useAmsi: false);
             typeof(ScanOptions).GetProperty(nameof(ScanOptions.CustomRoots))!.SetValue(requested, new List<string> { dispatchCorpus });
             typeof(ScanOptions).GetProperty(nameof(ScanOptions.MaximumAmsiBytes))!.SetValue(requested, 1L);
             var observed = await ObserveBaselineWorkerAsync(requested);
@@ -257,7 +281,7 @@ internal static partial class Program
                 preflight = ScanResourcePlanner.Capture(Path.GetTempPath()),
                 report.WorkerDiagnostics
             });
-            Check($"基础验收 真实受限Worker按CPU容量精确派发{expectedConcurrency}路且未因增强额度回退（请求{concurrency}路）", observed.Batches.Count > 0 &&
+            Check($"基础验收 真实受限Worker按CPU容量精确派发{expectedConcurrency}路（请求{concurrency}路）", observed.Batches.Count > 0 &&
                 observed.Batches.Max(batch => batch.Files) == expectedConcurrency && observed.Batches.Sum(batch => batch.Files) == 16 &&
                 observed.Batches.All(batch => batch.Files <= expectedConcurrency && batch.Findings >= batch.Files && batch.FindingTargets == batch.Files) &&
                 (expectedConcurrency == 1 ? peak == 1 : peak >= 2 && peak <= expectedConcurrency) &&
@@ -275,17 +299,17 @@ internal static partial class Program
         using (FileStream locked = new(firstFile, FileMode.Open, FileAccess.Read, FileShare.None))
         {
             ScanReport failed = await new ScanCoordinator(rules).RunAsync(new()
-            { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = true, CustomRoots = [firstFile] });
+            { Mode = ScanMode.Custom, IncludeSystem = false, IncludeSteam = false, IncludeWorkshop = false, UseAmsi = false, CustomRoots = [firstFile] });
             Check("基础验收 实际文件读取失败仍保留不完整", failed.Coverage == ScanCoverage.Partial &&
                 failed.RootSummaries.Any(root => root.Coverage == ScanCoverage.Partial) && CoveragePresentation.Groups(failed).Count > 0);
-            Check("基础验收 读取失败不归因于暂停的增强项", !HasAmsiObservation(failed) && failed.ContentScanSettings?.UseAmsi == false);
+            Check("基础验收 读取失败不归因于默认关闭的增强项", !HasAmsiObservation(failed) && failed.ContentScanSettings?.UseAmsi == false);
         }
         ScanReport historical = new()
         {
             ExecutionState = ScanExecutionState.Completed,
             CompletedAtUtc = DateTimeOffset.UtcNow,
             Coverage = ScanCoverage.Partial,
-            ContentScanSettings = Requested(ScanPerformanceMode.LowImpact),
+            ContentScanSettings = Requested(ScanPerformanceMode.LowImpact, useAmsi: true),
             CoverageNotices = [new(ReasonCodes.AmsiUnavailable, "Previously recorded engine failure.")]
         };
         string historicalJson = JsonSerializer.Serialize(historical, JsonFile.Options);
@@ -294,5 +318,14 @@ internal static partial class Program
         Check("基础验收 历史增强失败及原始请求仍可往返", historicalJson == JsonSerializer.Serialize(historical, JsonFile.Options) &&
             restored.ContentScanSettings?.UseAmsi == true && restored.Coverage == ScanCoverage.Partial &&
             StatusPresentation.ScanMessage(restored).MessageId == "Scan.CompletedWithGaps" && CoveragePresentation.Groups(restored).Count == 1);
+    }
+
+    private sealed class BaselineFailingAmsiApi : SteamSentinel.Core.Inspection.IAmsiApi
+    {
+        public int Initialize(string name, out IntPtr context) { context = IntPtr.Zero; return unchecked((int)0x80070005); }
+        public int OpenSession(IntPtr context, out IntPtr session) { session = IntPtr.Zero; return 0; }
+        public int ScanBuffer(IntPtr context, byte[] buffer, string name, IntPtr session, out int result) { result = 0; return 0; }
+        public void CloseSession(IntPtr context, IntPtr session) { }
+        public void Uninitialize(IntPtr context) { }
     }
 }

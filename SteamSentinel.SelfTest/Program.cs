@@ -153,6 +153,7 @@ internal static partial class Program
             TestDisplayLabels();
             TestSteamDiscovery();
             await TestSystemScannerReadOnlyAsync(rules);
+            await TestP2ADetectionPerformanceAsync(root);
 
             Console.WriteLine();
             Console.WriteLine($"通过：{_passed}；失败：{Failures.Count}；跳过：{_skipped}");
@@ -1008,6 +1009,12 @@ internal static partial class Program
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));
                 await TestSteamAlertAsync(Path.GetFullPath(args[1]));
                 await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "steamalert-results.json"), new { passed = _passed, failures = Failures, skipped = _skipped });
+                return Failures.Count == 0 ? 0 : 1;
+            case "--p2a-tests" when args.Length == 2:
+                Directory.CreateDirectory(Path.GetFullPath(args[1]));
+                try { await TestP2ADetectionPerformanceAsync(Path.GetFullPath(args[1])); }
+                catch (Exception ex) { Failures.Add(ex.ToString()); Console.Error.WriteLine(ex); }
+                await JsonFile.WriteAtomicAsync(Path.Combine(args[1], "p2a-results.json"), new { passed = _passed, failed = Failures.Count, skipped = _skipped, failures = Failures });
                 return Failures.Count == 0 ? 0 : 1;
             case "--false-positive-tests" when args.Length == 2:
                 Directory.CreateDirectory(Path.GetFullPath(args[1]));

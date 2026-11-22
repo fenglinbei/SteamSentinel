@@ -2,12 +2,25 @@ using System.Net;
 
 namespace SteamSentinel.Core.Inspection;
 
-internal sealed record LoopbackScriptReference(string Endpoint, bool MatchesSteamAlertEndpoint);
+internal sealed record LoopbackScriptReference(string Endpoint, bool MatchesSteamAlertEndpoint, bool IsExternalDomain = false);
 
 /// <summary>Recognizes literal script creation, assignment and insertion in Steam UI JavaScript without evaluating it.</summary>
 internal static class SteamUiLoopbackInspector
 {
-    internal static LoopbackScriptReference? Find(string text)
+    private static readonly string[] OfficialSteamHosts =
+    [
+        "steampowered.com",
+        "steamcommunity.com",
+        "steamstatic.com",
+        "akamaihd.net"
+    ];
+
+    internal static LoopbackScriptReference? Find(string text) => ScanScripts(text, external: false);
+
+    /// <summary>识别 Steam 前端脚本中动态插入非 Valve 官方外部域名的 script 标签。</summary>
+    internal static LoopbackScriptReference? FindExternal(string text) => ScanScripts(text, external: true);
+
+    private static LoopbackScriptReference? ScanScripts(string text, bool external)
     {
         if (!text.Contains("createElement", StringComparison.Ordinal) || !text.Contains("http", StringComparison.OrdinalIgnoreCase) ||
             !text.Contains("append", StringComparison.Ordinal)) return null;
@@ -34,11 +47,16 @@ internal static class SteamUiLoopbackInspector
                 !probe.Take(".") || probe.Next() is not ("append" or "appendChild") || !probe.Take("(") ||
                 !probe.Take(variable) || !probe.Take(")")) continue;
             if (!Uri.TryCreate(source.ToString(), UriKind.Absolute, out Uri? uri) ||
-                uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0 || !uri.IsLoopback ||
-                !uri.AbsolutePath.EndsWith(".js", StringComparison.OrdinalIgnoreCase)) continue;
+                uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0) continue;
             string host = uri.IdnHost;
-            if (!host.Equals("localhost", StringComparison.OrdinalIgnoreCase) &&
-                !(IPAddress.TryParse(host, out IPAddress? address) && IPAddress.IsLoopback(address))) continue;
+            bool isLoopbackHost = host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                (IPAddress.TryParse(host, out IPAddress? address) && IPAddress.IsLoopback(address));
+            if (external)
+            {
+                if (uri.IsLoopback || isLoopbackHost || IsOfficialSteamHost(host)) continue;
+                return new LoopbackScriptReference(uri.GetLeftPart(UriPartial.Path), false, IsExternalDomain: true);
+            }
+            if (!uri.IsLoopback || !isLoopbackHost || !uri.AbsolutePath.EndsWith(".js", StringComparison.OrdinalIgnoreCase)) continue;
             bool familyEndpoint = uri.Scheme == "http" && uri.Port == 8137 && uri.AbsolutePath == "/x.js";
             // Exclude query/fragment data, which may contain local access tokens.
             LoopbackScriptReference match = new(uri.GetLeftPart(UriPartial.Path), familyEndpoint);
@@ -47,6 +65,19 @@ internal static class SteamUiLoopbackInspector
             reader = probe;
         }
         return first;
+    }
+
+    private static bool IsOfficialSteamHost(string host)
+    {
+        foreach (string domain in OfficialSteamHosts)
+        {
+            if (host.Equals(domain, StringComparison.OrdinalIgnoreCase) ||
+                host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static bool IsIdentifierStart(char ch) => char.IsLetter(ch) || ch is '_' or '$';

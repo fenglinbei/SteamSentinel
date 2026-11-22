@@ -163,8 +163,8 @@ internal static partial class Program
                 typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [true]);
                 typeof(MainWindow).GetMethod("SetBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [false]);
                 CheckBox enhancement = (CheckBox)window.FindName("AmsiCheckBox");
-                Check("双语UI 暂停增强入口隐藏且忙碌结束不启用 " + culture.Name,
-                    enhancement.Visibility == Visibility.Collapsed && enhancement.IsChecked == false && !enhancement.IsEnabled);
+                Check("双语UI 温和启用AMSI复选框默认不勾选且空闲可用 " + culture.Name,
+                    enhancement.Visibility == Visibility.Visible && enhancement.IsChecked == false && enhancement.IsEnabled);
                 Check("双语UI 基础完成不因未调用增强显示不完整 " + culture.Name,
                     ((TextBlock)window.FindName("HeaderStatusText")).Text == DisplayText.Get("Ui.xaml.UpdateSummary.14") &&
                     StatusPresentation.ScanMessage(baseline).MessageId == "Scan.Completed" && CoveragePresentation.Groups(baseline).Count == 0);

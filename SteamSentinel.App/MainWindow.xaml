@@ -104,7 +104,7 @@
                                 <CheckBox x:Name="DownloadLocationsCheckBox" Margin="0,0,18,8" Content="{ui:Text Ui.Xaml.MainWindow.021}" ToolTip="{ui:Text Ui.Xaml.MainWindow.022}" Checked="ScopeOptions_Changed" Unchecked="ScopeOptions_Changed" />
                                 <CheckBox x:Name="ExecutionHistoryCheckBox" Margin="0,0,18,8" Content="{ui:Text Ui.Xaml.MainWindow.023}" ToolTip="{ui:Text Ui.Xaml.MainWindow.024}" />
                                 <CheckBox x:Name="ArchiveCheckBox" IsChecked="True" Margin="0,0,22,0" Content="{ui:Text Ui.Xaml.MainWindow.025}" />
-                                <CheckBox x:Name="AmsiCheckBox" IsChecked="False" IsEnabled="False" Visibility="Collapsed" Margin="0,0,22,0" Content="{ui:Text Ui.Xaml.MainWindow.026}" />
+                                <CheckBox x:Name="AmsiCheckBox" IsChecked="False" IsEnabled="True" Visibility="Visible" Margin="0,0,22,0" Content="{ui:Text Ui.Xaml.MainWindow.026}" />
                                 <CheckBox x:Name="DeepSignatureCheckBox" IsChecked="True" Margin="0,0,22,0" Content="{ui:Text Ui.Xaml.MainWindow.027}" ToolTip="{ui:Text Ui.Xaml.MainWindow.028}" />
                                 <CheckBox x:Name="DomainBlockCheckBox" IsChecked="True" Content="{ui:Text Ui.Xaml.MainWindow.029}" />
                             </WrapPanel>

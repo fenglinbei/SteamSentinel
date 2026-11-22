@@ -84,7 +84,6 @@ public sealed partial class ContentScanner : IDisposable
                 report.RootSummaries.Add(new ScanRootSummary(root,
                     !completed || report.CoverageNotes.Count > notes ||
                     CoverageAggregation.OccurrenceCount(report) > gaps ||
-                    _amsiUnavailableCounts.GetValueOrDefault(report.ScanId) > amsiUnavailable ||
                     added.Any(f => f.Category == FindingCategory.Coverage)
                         ? ScanCoverage.Partial : ScanCoverage.Complete,
                     added.Count(f => f.IsKnownMalware), added.Count(f => f.CanRemediate), report.Metrics.FilesVisited - files));
@@ -284,7 +283,7 @@ public sealed partial class ContentScanner : IDisposable
                     EvidenceLines = signals.Concat(linkedSignals).Concat(semantics?.Evidence.Texts ?? result.Metadata.Select(value => (MessageText)value)).Select(value => value.RedactSecrets()),
                     AssociationEvidenceTier = suspicious ? RelatedEvidenceTier.RelatedRisk : RelatedEvidenceTier.Observation,
                     CanRemediate = false,
-                    SuggestedActions = [SuggestedActionKind.ReviewOnly]
+                    SuggestedActions = suspicious ? [SuggestedActionKind.ReviewOnly] : [SuggestedActionKind.None]
                 });
             }
         }
@@ -320,7 +319,7 @@ public sealed partial class ContentScanner : IDisposable
         {
             List<MessageText> matches = [];
             bool Contains(string value) => signals.Raw.Contains(value);
-            HeuristicMatch? combined = ContentHeuristics.Match(Contains, displayPath);
+            HeuristicMatch? combined = ContentHeuristics.Match(Contains, displayPath, workshopId);
             if (combined is null && !string.Equals(projectType, "trusted-default", StringComparison.OrdinalIgnoreCase) &&
                 Path.GetExtension(displayPath).ToLowerInvariant() is not (".md" or ".log" or ".lo"))
             {
@@ -556,7 +555,7 @@ public sealed partial class ContentScanner : IDisposable
 
     private void AddAmsiCoverage(ScanReport report, MessageText detail)
     {
-        report.Coverage = ScanCoverage.Partial;
+        // AMSI 为可选增强引擎：初始化失败或报错时仅记录诊断通知，绝不将扫描降级为 Partial
         int count = _amsiUnavailableCounts.GetValueOrDefault(report.ScanId) + 1;
         _amsiUnavailableCounts[report.ScanId] = count;
         MessageText prefix = MessageText.Create("Backend.Core.ContentScanner.AddAmsiCoverage.01");
