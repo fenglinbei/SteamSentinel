@@ -55,6 +55,7 @@ internal static partial class Program
     // Run with the existing isolated STA/Application, using only synthetic reports.
     private static void TestFindingPriorityUi(string? output = null)
     {
+        using IDisposable subSuite = EnterSubSuite("FindingPriorityUi");
         TestExplicitRootCoverageUi(output);
         foreach (var culture in new[] { DisplayText.Chinese, DisplayText.English })
         {

@@ -29,13 +29,13 @@ internal static partial class Program
             SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
         Finding[] duplicates = Enumerable.Range(0, 200).Select(i => FindingFor(file, content: file + "!/inner-" + i)).ToArray();
-        RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(new()).ExpandAsync(duplicates, new() { Findings = duplicates.ToList() });
+        RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync(duplicates, new() { Findings = duplicates.ToList() });
         Check("0.1.16 总核验额度使用 long 型 4 GiB，保留单文件限制", RelatedArtifactScanner.MaximumVerificationBytes == 4294967296L);
         Check("0.1.16 同一外层200条发现只读取一次身份", expansion.VerificationBytesRead == 1024 * 1024 && expansion.Findings.Count(f => f.CanRemediate) == 1);
         using (FileStream unlocked = File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             Check("0.1.16 方案核验结束释放所有文件锁", unlocked.CanWrite);
 
-        RelatedArtifactScanner budgetScanner = new(new());
+        RelatedArtifactScanner budgetScanner = new(new(), LiveAssociationProbeMode.InertEmptyHost);
         FieldInfo counter = typeof(RelatedArtifactScanner).GetField("_relatedBytesHashed", BindingFlags.Instance | BindingFlags.NonPublic)!;
         MethodInfo hashMethod = typeof(RelatedArtifactScanner).GetMethod("HashAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
         counter.SetValue(budgetScanner, RelatedArtifactScanner.MaximumVerificationBytes - 1024 * 1024);
@@ -48,7 +48,7 @@ internal static partial class Program
 
         string large = Path.Combine(directory, "large-inert.dat");
         using (FileStream sparse = File.Create(large)) sparse.SetLength(256L * 1024 * 1024 + 1);
-        RelatedArtifactExpansion largeExpansion = await new RelatedArtifactScanner(new()).ExpandAsync([FindingFor(large)], new() { Findings = [FindingFor(large)] });
+        RelatedArtifactExpansion largeExpansion = await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync([FindingFor(large)], new() { Findings = [FindingFor(large)] });
         Check("0.1.16 单文件256MiB限制仍拒绝超限文件并释放句柄", largeExpansion.Findings.All(f => !f.CanRemediate) && largeExpansion.Notes.Any(n => n.Contains("单文件 256 MiB")));
         using (FileStream largeUnlocked = File.Open(large, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Check("0.1.16 超限路径不残留占用", largeUnlocked.CanWrite);
 
@@ -64,15 +64,15 @@ internal static partial class Program
             UseAmsi = false
         };
         ScanReport report = new() { Findings = duplicates.ToList(), ContentScanSettings = originalSettings };
-        RemediationBatchSession one = await new RemediationBatchPlanner(new()).PrepareAsync(duplicates, report, false,
+        RemediationBatchSession one = await new RemediationBatchPlanner(new(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(duplicates, report, false,
             (_, _) => Task.FromResult(new ScanReport { ContentScanSettings = new() { InspectArchives = false, CustomRoots = [file] } }));
         Check("0.1.16 全选重复归档按唯一目标生成完整计划", one.Targets.Count == 1 && one.PlannedCount == 1 && one.Plans.Single().Actions.Count == 1 && one.Targets.Single().MissingActions.Count == 0);
         string changing = Path.Combine(directory, "changing.dat"); File.Copy(file, changing);
         Finding changingFinding = FindingFor(changing);
-        RemediationBatchSession changedInPreparation = await new RemediationBatchPlanner(new()).PrepareAsync([changingFinding], new() { Findings = [changingFinding] }, false,
+        RemediationBatchSession changedInPreparation = await new RemediationBatchPlanner(new(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync([changingFinding], new() { Findings = [changingFinding] }, false,
             async (_, _) => { await File.WriteAllTextAsync(changing, "changed inert bytes"); return new(); });
         Check("0.1.16 两个核验阶段之间的身份变化不可沿用缓存", changedInPreparation.Plans.Count == 0 && changedInPreparation.Targets.Single().Reason.Contains("变化"));
-        RemediationBatchSession inspectionFailure = await new RemediationBatchPlanner(new()).PrepareAsync([FindingFor(file)], report, false,
+        RemediationBatchSession inspectionFailure = await new RemediationBatchPlanner(new(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync([FindingFor(file)], report, false,
             (_, _) => throw new InvalidDataException("inert malformed inspector result"));
         Check("0.1.16 附加检查格式失败保留逐项未纳入原因", inspectionFailure.Plans.Count == 0 && inspectionFailure.Targets.Single().Reason.Contains("inert malformed"));
         originalSettings.CustomRoots.Add("later-change");
@@ -80,18 +80,21 @@ internal static partial class Program
 
         string missing = Path.Combine(directory, "missing.dat");
         Finding stale = FindingFor(file, new string('A', 64));
-        RemediationBatchSession omitted = await new RemediationBatchPlanner(new()).PrepareAsync([FindingFor(missing), stale],
+        RemediationBatchSession omitted = await new RemediationBatchPlanner(new(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync([FindingFor(missing), stale],
             new() { Findings = [FindingFor(missing), stale] }, true);
         Check("0.1.16 原始选择全部丢失时不生成仅阻断域名的成功方案", omitted.Targets.Count == 2 && omitted.Plans.Count == 0 && omitted.Targets.All(t => t.Status == "未处理" && t.MissingActions.Count > 0 && t.Reason.Length > 0));
 
-        Finding[] many = Enumerable.Range(0, 70).Select(i => FindingFor(Path.Combine(directory, $"part-{i}.dat"))).ToArray();
-        foreach (Finding f in many) File.Copy(file, f.Target);
-        RemediationBatchSession packed = await new RemediationBatchPlanner(new()).PrepareAsync(many, new() { Findings = many.ToList() }, false);
+        string smallPart = Path.Combine(directory, "small-part.bin");
+        await File.WriteAllBytesAsync(smallPart, new byte[16]);
+        string smallHash = await Hashing.Sha256FileAsync(smallPart);
+        Finding[] many = Enumerable.Range(0, 70).Select(i => FindingFor(Path.Combine(directory, $"part-{i}.dat"), smallHash)).ToArray();
+        foreach (Finding f in many) File.Copy(smallPart, f.Target);
+        RemediationBatchSession packed = await new RemediationBatchPlanner(new(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(many, new() { Findings = many.ToList() }, false);
         Check("0.1.16 七十个目标并入单批且无遗漏", packed.Plans.Count == 1 && packed.Plans.All(p => p.Actions.Count <= RemediationLimits.MaximumActionsPerPlan) &&
             packed.Targets.Count == 70 && packed.Targets.All(t => t.ActionIds.Count == 1 && t.MissingActions.Count == 0) && packed.Plans.Sum(p => p.Actions.Count) == 70);
-        Finding[] bulk = Enumerable.Range(0, 270).Select(i => FindingFor(Path.Combine(directory, $"bulk-{i}.dat"))).ToArray();
-        foreach (Finding f in bulk) File.Copy(file, f.Target);
-        RemediationBatchSession packedBulk = await new RemediationBatchPlanner(new()).PrepareAsync(bulk, new() { Findings = bulk.ToList() }, false);
+        Finding[] bulk = Enumerable.Range(0, 270).Select(i => FindingFor(Path.Combine(directory, $"bulk-{i}.dat"), smallHash)).ToArray();
+        foreach (Finding f in bulk) File.Copy(smallPart, f.Target);
+        RemediationBatchSession packedBulk = await new RemediationBatchPlanner(new(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(bulk, new() { Findings = bulk.ToList() }, false);
         Check("0.1.16 二百七十个目标自动拆批且无遗漏", packedBulk.Plans.Count == 2 && packedBulk.Plans.All(p => p.Actions.Count <= RemediationLimits.MaximumActionsPerPlan) &&
             packedBulk.Targets.Count == 270 && packedBulk.Targets.All(t => t.ActionIds.Count == 1 && t.MissingActions.Count == 0) && packedBulk.Plans.Sum(p => p.Actions.Count) == 270);
         Finding relatedFile = many[0];

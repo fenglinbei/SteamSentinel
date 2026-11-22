@@ -14,11 +14,17 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
 {
     private readonly SteamLayout? _steamLayout;
     private readonly string _residentDirectory = SteamAlertInstallation.ResidentDirectory;
+    private readonly LiveAssociationProbeMode _liveProbeMode;
 
-    internal RemediationBatchPlanner(RuleSet rules, SteamLayout layout, string residentDirectory) : this(rules)
+    internal RemediationBatchPlanner(RuleSet rules, LiveAssociationProbeMode liveProbeMode) : this(rules) =>
+        _liveProbeMode = liveProbeMode;
+
+    internal RemediationBatchPlanner(RuleSet rules, SteamLayout layout, string residentDirectory,
+        LiveAssociationProbeMode liveProbeMode = LiveAssociationProbeMode.HostLive) : this(rules)
     {
         _steamLayout = layout;
         _residentDirectory = residentDirectory;
+        _liveProbeMode = liveProbeMode;
     }
 
     public const int MaximumSelectedFindings = 20000;
@@ -104,7 +110,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
             timeout.CancelAfter(TimeSpan.FromMinutes(3));
             try
             {
-                RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(rules).ExpandLocalAsync(batches[index], original, timeout.Token,
+                RelatedArtifactExpansion expansion = await new RelatedArtifactScanner(rules, _liveProbeMode).ExpandLocalAsync(batches[index], original, timeout.Token,
                     RelatedArtifactScanner.MaximumVerificationBytes, requestExplicitFileTargets, _steamLayout, _residentDirectory);
                 bool candidateInspectionComplete = true;
                 if (inspectCandidates is not null && expansion.CandidatePaths.Count > 0)
@@ -113,7 +119,7 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
                     candidateInspectionComplete = additional.Coverage == ScanCoverage.Complete;
                     RememberLiveAssociations(additional.Findings);
                     ScanReport combined = ScanReportMerger.Merge(original, additional);
-                    expansion = await new RelatedArtifactScanner(rules).ExpandLocalAsync(batches[index], combined, timeout.Token,
+                    expansion = await new RelatedArtifactScanner(rules, _liveProbeMode).ExpandLocalAsync(batches[index], combined, timeout.Token,
                         RelatedArtifactScanner.MaximumVerificationBytes, requestExplicitFileTargets, _steamLayout, _residentDirectory);
                     Record(batches[index], additional.CoverageTexts, ReasonCodes.EvidenceUnavailable);
                 }
@@ -364,20 +370,49 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
 
     internal static void MapOutcomes(RemediationBatchSession session)
     {
-        var actions = session.Plans.SelectMany((p, i) => p.Actions.Select(a => (Action: a, Batch: i + 1))).ToArray();
+        Dictionary<string, List<(RemediationAction Action, int Batch)>> actionsByKey = new(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < session.Plans.Count; i++)
+        {
+            int batch = i + 1;
+            foreach (RemediationAction action in session.Plans[i].Actions)
+            {
+                string actionKey = ActionKey(action);
+                if (!actionsByKey.TryGetValue(actionKey, out List<(RemediationAction Action, int Batch)>? list))
+                {
+                    list = [];
+                    actionsByKey[actionKey] = list;
+                }
+                list.Add((action, batch));
+            }
+        }
+        Dictionary<string, List<RemediationPreparationNote>> notesByTarget = new(StringComparer.OrdinalIgnoreCase);
+        foreach (RemediationPreparationNote note in session.PreparationNotes)
+        {
+            if (!notesByTarget.TryGetValue(note.Target, out List<RemediationPreparationNote>? list))
+            {
+                list = [];
+                notesByTarget[note.Target] = list;
+            }
+            list.Add(note);
+        }
         foreach (RemediationTargetOutcome target in session.Targets)
         {
             foreach (string key in target.RequiredActions)
             {
-                var matches = actions.Where(x => ActionKey(x.Action).Equals(key, StringComparison.OrdinalIgnoreCase)).ToArray();
-                if (matches.Length == 0) target.MissingActions.Add(key);
-                else foreach (var match in matches) { target.ActionIds.Add(match.Action.ActionId); if (!target.Batches.Contains(match.Batch)) target.Batches.Add(match.Batch); }
+                if (!actionsByKey.TryGetValue(key, out List<(RemediationAction Action, int Batch)>? matches) || matches.Count == 0)
+                    target.MissingActions.Add(key);
+                else
+                    foreach (var match in matches)
+                    {
+                        target.ActionIds.Add(match.Action.ActionId);
+                        if (!target.Batches.Contains(match.Batch)) target.Batches.Add(match.Batch);
+                    }
             }
             RemediationTargetState state = target.ActionIds.Count == 0 ? RemediationTargetState.NotIncluded
                 : target.MissingActions.Count > 0 ? RemediationTargetState.PartiallyIncluded : RemediationTargetState.Ready;
-            RemediationPreparationNote[] relevant = session.PreparationNotes
-                .Where(n => n.Target.Equals(target.Target, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(n => n.ReasonCode == ReasonCodes.ActionsNotIncluded ? 0 : 1).Take(5).ToArray();
+            RemediationPreparationNote[] relevant = notesByTarget.TryGetValue(target.Target, out List<RemediationPreparationNote>? targetNotes)
+                ? targetNotes.OrderBy(n => n.ReasonCode == ReasonCodes.ActionsNotIncluded ? 0 : 1).Take(5).ToArray()
+                : [];
             string reason = state == RemediationTargetState.Ready ? ReasonCodes.PlanReady
                 : relevant.Length > 0 ? relevant[0].ReasonCode
                 : File.Exists(target.Target) || Directory.Exists(target.Target) ? ReasonCodes.EvidenceUnavailable : ReasonCodes.TargetUnavailable;

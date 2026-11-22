@@ -7,6 +7,7 @@ using Microsoft.Win32;
 using SteamSentinel.Broker;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
+using SteamSentinel.Core.Scanning;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.SelfTest;
@@ -66,11 +67,11 @@ internal static partial class Program
         }
         Check("Modes invalid enum rejected", ScopeRejects(() => BrokerEngine.ValidateUserRiskRequestShape(new() { Mode = (RemediationMode)99 })));
         Check("Modes legacy plan defaults to conservative", JsonSerializer.Deserialize<RemediationPlan>(JsonSerializer.Serialize(new RemediationPlan(), JsonFile.Options), JsonFile.Options)!.Mode == RemediationMode.Conservative);
-        RemediationBatchSession batch = await new RemediationBatchPlanner(new RuleSet()).PrepareAsync([weak], new() { Findings = [weak] }, false,
+        RemediationBatchSession batch = await new RemediationBatchPlanner(new RuleSet(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync([weak], new() { Findings = [weak] }, false,
             remediationMode: RemediationMode.Aggressive);
         Check("Modes batch preserves user-risk choice", batch.Plans.Count == 1 && batch.Plans[0].Mode == RemediationMode.Aggressive &&
             batch.Plans[0].Actions.Single().UserSelectedRisk && batch.Targets.Count == 1);
-        RemediationBatchSession conservative = await new RemediationBatchPlanner(new RuleSet()).PrepareAsync([weak], new() { Findings = [weak] }, false);
+        RemediationBatchSession conservative = await new RemediationBatchPlanner(new RuleSet(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync([weak], new() { Findings = [weak] }, false);
         Check("Modes conservative batch accounts for rejected target", conservative.Plans.Count == 0 && conservative.PreparationNotes.Count > 0);
 
         const string runPath = @"Software\Microsoft\Windows\CurrentVersion\Run";

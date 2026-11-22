@@ -117,7 +117,7 @@ internal static partial class Program
         Check("Watchdog directory probing is nonrecursive and does not scan arbitrary ProgramData siblings",
             !new RelatedArtifactScanner(fixtures).DiscoverUpdaterScripts(new(), resident, updater).Contains(nested));
 
-        async Task<RelatedArtifactExpansion> Expand(Finding selected) => await new RelatedArtifactScanner(fixtures).ExpandLocalAsync(
+        async Task<RelatedArtifactExpansion> Expand(Finding selected) => await new RelatedArtifactScanner(fixtures, LiveAssociationProbeMode.InertEmptyHost).ExpandLocalAsync(
             [selected], new ScanReport { Findings = [selected] }, default, RelatedArtifactScanner.MaximumVerificationBytes,
             true, layout, resident, updater, Path.Combine(fixture, "Temp"));
         Finding main = FileFinding(payload, 0);

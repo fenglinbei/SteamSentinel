@@ -4,6 +4,7 @@ using SteamSentinel.App.ViewModels;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Reporting;
+using SteamSentinel.Core.Scanning;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.SelfTest;
@@ -78,7 +79,7 @@ internal static partial class Program
             string before = JsonSerializer.Serialize(weak, JsonFile.Options);
             int inspections = 0;
             RuleSet domainRules = new() { KnownDomains = ["inert.example.invalid"] };
-            RemediationBatchSession denied = await new RemediationBatchPlanner(domainRules).PrepareAsync([weak],
+            RemediationBatchSession denied = await new RemediationBatchPlanner(domainRules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync([weak],
                 new() { Findings = [weak] }, true, (_, _) => { inspections++; return Task.FromResult(new ScanReport()); });
             Check("0.3.0 弱项批次不触发补查或独立域名动作 " + weak.RuleId,
                 denied.SelectedFindingCount == 1 && denied.Plans.Count == 0 && inspections == 0);

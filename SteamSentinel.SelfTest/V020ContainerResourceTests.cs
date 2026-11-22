@@ -372,15 +372,9 @@ internal static partial class Program
             ArchiveWorkerClient.ScanHardTimeout(new() { ContainerLimits = new() { MaximumDurationSeconds = 1 } }) == TimeSpan.FromSeconds(6));
         Check("0.2.0 工作进程启动前拒绝无效整轮截止配置", V020Throws<ArgumentOutOfRangeException>(() =>
             ArchiveWorkerClient.ScanHardTimeout(new() { ContainerLimits = new() { MaximumDurationSeconds = 4294961 } })));
-        string directory = Path.Combine(root, "v020-deadline-fixture");
-        Directory.CreateDirectory(directory);
-        foreach (string file in Directory.EnumerateFiles(AppContext.BaseDirectory))
-            File.Copy(file, Path.Combine(directory, Path.GetFileName(file)), true);
         // checkpointcancel is the existing inert fixture: it sends one checkpoint then ignores
         // stdin for 30 seconds. It does not inspect, unpack or execute any supplied input.
-        string path = Path.Combine(directory, "SteamSentinelFixture-checkpointcancel.exe");
-        File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.exe"), path);
-        File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.dll"), Path.ChangeExtension(path, ".dll"));
+        string path = EnsureSharedWorkerFixtureExecutable(root, "checkpointcancel");
         ScanOptions options = new()
         {
             Mode = ScanMode.Custom,

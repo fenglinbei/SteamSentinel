@@ -12,6 +12,15 @@ using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
 
+/// <summary>控制关联展开阶段的实时宿主机枚举模式；生产公开入口固定为完整宿主机探测。</summary>
+internal enum LiveAssociationProbeMode
+{
+    /// <summary>生产默认：完整扫描真实宿主机 Run/Tasks/Services/Processes。</summary>
+    HostLive = 0,
+    /// <summary>仅限内部测试：跳过真实宿主机实时枚举（模拟干净无活动关联宿主机），保留全部文件哈希锁定与规则展开。</summary>
+    InertEmptyHost = 1
+}
+
 public sealed record RelatedArtifactExpansion(IReadOnlyList<Finding> Findings, IReadOnlyList<string> CandidatePaths, IReadOnlyList<string> Notes)
 {
     public long VerificationBytesRead { get; init; }
@@ -26,6 +35,11 @@ public sealed record RelatedArtifactExpansion(IReadOnlyList<Finding> Findings, I
 
 public sealed partial class RelatedArtifactScanner
 {
+    private readonly LiveAssociationProbeMode _liveProbeMode;
+
+    internal RelatedArtifactScanner(RuleSet rules, LiveAssociationProbeMode liveProbeMode) : this(rules) =>
+        _liveProbeMode = liveProbeMode;
+
     private readonly Dictionary<string, Finding> _proofs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Finding> _observations = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _blockedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -43,10 +57,10 @@ public sealed partial class RelatedArtifactScanner
 
     // Sessions are independent: concurrent callers cannot share budgets or stale cached hashes.
     public Task CollectAsync(SteamLayout layout, ScanReport report, ScanOptions options, CancellationToken token) =>
-        new RelatedArtifactScanner(rules).CollectCoreAsync(layout, report, options, token);
+        new RelatedArtifactScanner(rules, _liveProbeMode).CollectCoreAsync(layout, report, options, token);
 
     public Task<(string Path, string Hash)?> MatchCommandAsync(string command, ScanReport report, CancellationToken token) =>
-        new RelatedArtifactScanner(rules).MatchCoreAsync(command, report, token);
+        new RelatedArtifactScanner(rules, _liveProbeMode).MatchCoreAsync(command, report, token);
 
     /// <summary>Read-only snapshot validation. CandidatePaths must be checked by the UI's Low Worker before a second expansion.</summary>
     public Task<RelatedArtifactExpansion> ExpandAsync(IEnumerable<Finding> selectedFindings, ScanReport report, CancellationToken token = default,
@@ -58,7 +72,7 @@ public sealed partial class RelatedArtifactScanner
         long maximumVerificationBytes, bool requestExplicitFileTargets, SteamLayout? layout, string residentDirectory,
         string? updaterDirectory = null, string? handoffDirectory = null)
     {
-        RelatedArtifactScanner session = new(rules)
+        RelatedArtifactScanner session = new(rules, _liveProbeMode)
         {
             _verificationByteLimit = Math.Clamp(maximumVerificationBytes, 0, MaximumVerificationBytes),
             _residentDirectory = residentDirectory,
@@ -302,13 +316,16 @@ public sealed partial class RelatedArtifactScanner
                 .Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
                 report.AddScopeNote(MessageText.Create("SteamAlert.Plan.ClientPatch", patch));
 
-        if (_proofs.Count > 0)
+        if (_liveProbeMode == LiveAssociationProbeMode.HostLive)
         {
-            await CollectRunAsync(report, token);
-            await CollectTasksAsync(report, token);
-            await CollectServicesAsync(report, token);
+            if (_proofs.Count > 0)
+            {
+                await CollectRunAsync(report, token);
+                await CollectTasksAsync(report, token);
+                await CollectServicesAsync(report, token);
+            }
+            if (_proofs.Count > 0 || _observations.Count > 0) await CollectProcessesAsync(null, report, token);
         }
-        if (_proofs.Count > 0 || _observations.Count > 0) await CollectProcessesAsync(null, report, token);
         foreach (Finding finding in selected.Where(f => RemediationEvidencePolicy.CanRemediate(f) && IsRelation(f)))
             if (!report.Findings.Any(f => RemediationEvidencePolicy.CanRemediate(f) && (f.Id == finding.Id || SameEntry(f, finding))))
             {
@@ -526,6 +543,40 @@ public sealed partial class RelatedArtifactScanner
         };
     }
 
+    private bool HasPotentialLoadedModuleTargets()
+    {
+        foreach (string path in _proofs.Keys.Concat(_observations.Keys).Distinct(StringComparer.OrdinalIgnoreCase))
+            if (HasPeSignature(path)) return true;
+        return false;
+    }
+
+    private bool HasPeSignature(string path)
+    {
+        try
+        {
+            string fullPath = Path.GetFullPath(path);
+            Span<byte> header = stackalloc byte[2];
+            if (_lockedIdentities.TryGetValue(fullPath, out var locked))
+            {
+                long previous = locked.Stream.Position;
+                try
+                {
+                    locked.Stream.Position = 0;
+                    int read = locked.Stream.Read(header);
+                    return read == 2 && header[0] == 0x4D && header[1] == 0x5A;
+                }
+                finally { locked.Stream.Position = previous; }
+            }
+            using FileStream stream = RelatedArtifactReader.Open(fullPath);
+            int count = stream.Read(header);
+            return count == 2 && header[0] == 0x4D && header[1] == 0x5A;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or ArgumentException or NotSupportedException)
+        {
+            return true;
+        }
+    }
+
     private async Task CollectProcessesAsync(SteamLayout? layout, ScanReport report, CancellationToken token)
     {
         // System PowerShell is handled only by the exact script-bound branch. The general
@@ -534,6 +585,7 @@ public sealed partial class RelatedArtifactScanner
         await CollectHandoffHostsAsync(report, token);
         MessageText processScope = MessageText.Create("Backend.Core.RelatedArtifactExpansion.CollectProcessesAsync.01");
         if (!report.ScopeNotes.Contains(processScope)) report.AddScopeNote(processScope);
+        bool needModuleScan = !_closureOnly || HasPotentialLoadedModuleTargets();
         Process[] processes = Process.GetProcesses();
         HashSet<string> targetProcessNames = _proofs.Keys.Where(path => path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             .Select(path => Path.GetFileNameWithoutExtension(path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -562,20 +614,41 @@ public sealed partial class RelatedArtifactScanner
                     relevant |= imageHint || rules.KnownProcessNames.Contains(name + ".exe", StringComparer.OrdinalIgnoreCase) ||
                         name.Equals("steam", StringComparison.OrdinalIgnoreCase) || name.Equals("steamwebhelper", StringComparison.OrdinalIgnoreCase) ||
                         report.CandidateRoots.Any(p => Path.GetFileNameWithoutExtension(p).Equals(name, StringComparison.OrdinalIgnoreCase));
-                    string? host = process.MainModule?.FileName;
-                    if (host is null || !ContentDiscovery.IsLocalSafePath(host))
+                    RelatedProcessRead processInfo = WindowsRelatedComponentDataSource.ReadProcess(process.Id);
+                    if (processInfo.Status != DiagnosticReadStatus.Complete || string.IsNullOrEmpty(processInfo.ImagePath))
+                    {
+                        if (processInfo.Status == DiagnosticReadStatus.NotPresent || process.HasExited) continue;
+                        if (relevant) inaccessible++;
+                        if (imageHint) _liveAssociationChecksComplete = false;
+                        continue;
+                    }
+                    string host = processInfo.ImagePath;
+                    if (!ContentDiscovery.IsLocalSafePath(host))
                     {
                         if (imageHint) _liveAssociationChecksComplete = false;
                         continue;
                     }
-                    if (_closureOnly && _proofs.ContainsKey(Path.GetFullPath(host))) _observedProgramImages.Add(host);
-                    relevant |= _proofs.ContainsKey(Path.GetFullPath(host)) || layout is not null &&
+                    string fullHost = Path.GetFullPath(host);
+                    if (_closureOnly && _proofs.ContainsKey(fullHost)) _observedProgramImages.Add(host);
+                    relevant |= _proofs.ContainsKey(fullHost) || layout is not null &&
                         (layout.SteamRoots.Any(root => ContentDiscovery.IsWithin(host, root)) ||
                         layout.Games.Any(g => ContentDiscovery.IsWithin(host, g.Directory)) || ContentDiscovery.IsWorkshopContentPath(host) ||
                         report.CandidateRoots.Any(root => RelatedArtifactRelations.SamePath(host, root) || ContentDiscovery.IsWithin(host, root)));
                     if (RelatedArtifactReader.IsProtected(host)) continue; // Expected scope exclusion, never a scan failure.
                     if (!_closureOnly && !relevant) continue;
-                    DateTimeOffset start = process.StartTime.ToUniversalTime();
+                    DateTimeOffset start = processInfo.StartedAtUtc ?? process.StartTime.ToUniversalTime();
+                    if (!needModuleScan)
+                    {
+                        if (!_proofs.ContainsKey(fullHost) && !_observations.ContainsKey(fullHost)) continue;
+                        string? hostHash = await HashAsync(host, report, token);
+                        if (hostHash is null || !(_known.ContainsKey(hostHash) || MatchesProof(host, hostHash) || MatchesObservation(host, hostHash))) continue;
+                        RelatedProcessRead current = WindowsRelatedComponentDataSource.ReadProcess(process.Id);
+                        if (current.Status != DiagnosticReadStatus.Complete || current.StartedAtUtc != start ||
+                            !RelatedArtifactRelations.SamePath(current.ImagePath, host)) continue;
+                        Finding? related = CreateProcessAssociation(host, hostHash, host, hostHash, process.Id, start);
+                        if (related is not null) AddCurrent(related, report);
+                        continue;
+                    }
                     foreach (ProcessModule module in process.Modules)
                     {
                         token.ThrowIfCancellationRequested();

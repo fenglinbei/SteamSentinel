@@ -16,13 +16,7 @@ internal static partial class Program
 
     private static async Task TestV031WorkerTextBudgetsAsync(string root)
     {
-        string directory = Path.Combine(root, "v031-worker-budget-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
-        foreach (string file in Directory.EnumerateFiles(AppContext.BaseDirectory))
-            File.Copy(file, Path.Combine(directory, Path.GetFileName(file)));
-        string fixture = Path.Combine(directory, "SteamSentinelFixture-textbudget.exe");
-        File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.exe"), fixture);
-        File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.dll"), Path.ChangeExtension(fixture, ".dll"));
+        string fixture = EnsureSharedWorkerFixtureExecutable(root, "textbudget");
 
         static ScanOptions Options(long text = ScanResourceGuard.MaximumTextCharacters, bool allow = true)
         {

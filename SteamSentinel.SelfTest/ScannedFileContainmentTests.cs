@@ -52,23 +52,23 @@ internal static partial class Program
         bool HasQuarantine(RemediationAction[] actions) => actions.Count(action => action.Type == RemediationActionType.QuarantineFile &&
             action.Target == file && action.ExpectedSha256 == hash && action.IsKnownMalware) == 1;
 
-        RemediationBatchSession directoryScan = await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationBatchSession directoryScan = await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], Report(ScanMode.Custom, directory), false);
         RemediationAction[] directoryActions = Actions(directoryScan);
         Check("custom directory sample preparation only quarantines the verified file", directoryActions.Length == 1 &&
             HasQuarantine(directoryActions) && directoryScan.Targets.Single().MissingActions.Count == 0);
 
-        RemediationBatchSession singleFileScan = await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationBatchSession singleFileScan = await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], Report(ScanMode.Custom, file), false);
         RemediationAction[] singleFileActions = Actions(singleFileScan);
         Check("custom exact-file sample preparation does not add a program firewall rule", singleFileActions.Length == 1 &&
             HasQuarantine(singleFileActions) && singleFileScan.Targets.Single().MissingActions.Count == 0);
 
-        RemediationAction[] driveActions = Actions(await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationAction[] driveActions = Actions(await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], Report(ScanMode.Custom, Path.GetPathRoot(file)!), false));
         Check("custom drive root includes its file descendants", driveActions.Length == 1 && HasQuarantine(driveActions));
 
-        RemediationAction[] siblingActions = Actions(await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationAction[] siblingActions = Actions(await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], Report(ScanMode.Custom, directory + "-other"), false));
         Check("custom sample containment does not cross directory boundaries", HasQuarantine(siblingActions) &&
             siblingActions.Any(a => a.Type == RemediationActionType.AddProgramFirewallBlock));
@@ -83,14 +83,14 @@ internal static partial class Program
             CanRemediate = false,
             SuggestedActions = [SuggestedActionKind.ReviewOnly]
         });
-        RemediationAction[] observedActions = Actions(await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationAction[] observedActions = Actions(await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], observedAssociation, false));
         Check("a review-only live association retains the executable block without authorizing a process stop",
             observedActions.Length == 2 && HasQuarantine(observedActions) &&
             observedActions.Count(a => a.Type == RemediationActionType.AddProgramFirewallBlock) == 1);
 
         bool inspected = false;
-        RemediationAction[] incompleteActions = Actions(await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationAction[] incompleteActions = Actions(await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], Report(ScanMode.Custom, directory), false, (candidates, _) =>
             {
                 inspected = candidates.Contains(file, StringComparer.OrdinalIgnoreCase);
@@ -106,7 +106,7 @@ internal static partial class Program
             RelatedArtifactScanner.RemainingProgramImagePossible([remaining], new HashSet<string>(), new HashSet<int> { remaining.Id }, default) &&
             !RelatedArtifactScanner.RemainingProgramImagePossible([remaining], new HashSet<string>(), new HashSet<int>(), default));
 
-        RemediationBatchSession selectedDomains = await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationBatchSession selectedDomains = await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], Report(ScanMode.Custom, file), true);
         RemediationAction[] domainActions = Actions(selectedDomains);
         Check("custom sample preparation preserves an explicitly selected hosts block", domainActions.Length == 2 &&
@@ -114,7 +114,7 @@ internal static partial class Program
                 is { Target: "hosts" } hosts && hosts.Domains.SequenceEqual(rules.KnownDomains) &&
             domainActions.All(action => action.Type != RemediationActionType.AddProgramFirewallBlock));
 
-        RemediationBatchSession fullScan = await new RemediationBatchPlanner(rules).PrepareAsync(
+        RemediationBatchSession fullScan = await new RemediationBatchPlanner(rules, LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
             [finding], Report(ScanMode.Full, directory), false);
         RemediationAction[] fullActions = Actions(fullScan);
         Check("full scan preparation retains automatic program containment", fullActions.Length == 2 && HasQuarantine(fullActions) &&

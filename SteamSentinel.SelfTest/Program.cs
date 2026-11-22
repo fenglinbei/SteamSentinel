@@ -29,133 +29,28 @@ internal static partial class Program
         if (executableName == fixturePrefix + "inheritance") return await RunV0117InheritanceProbeAsync();
         if (executableName.StartsWith(fixturePrefix, StringComparison.Ordinal))
             return await RunWorkerFixtureAsync(executableName[fixturePrefix.Length..]);
-        string? resultsPath = args.Length == 2 && args[0] == "--results" ? Path.GetFullPath(args[1]) : null;
-        if (args.Length > 0 && resultsPath is null) return await RunUtilityAsync(args);
+        if (!TryParseSuiteOptions(args, out SuiteRunOptions? suiteOptions, out string? suiteOptionError))
+        {
+            if (suiteOptionError is not null)
+            {
+                Console.Error.WriteLine(suiteOptionError);
+                return 2;
+            }
+            return await RunUtilityAsync(args);
+        }
+
         // Legacy copy assertions deliberately test the Chinese catalog. App startup can
         // select English on an English runner; isolate these fixtures from that process
         // default without changing OS/thread culture or the separate startup probes.
         using IDisposable fullSuiteDisplayCulture = DisplayText.UseCulture(DisplayText.Chinese);
-        Stopwatch elapsed = Stopwatch.StartNew();
 
         string root = Path.Combine(Path.GetTempPath(), "SteamSentinel-SelfTest-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        _suiteRoot = root;
         try
         {
             RuleSet rules = RuleLoader.LoadEmbedded();
-            Check("规则集载入", rules.KnownHashes.Count >= 14 && rules.KnownDomains.Contains("luminovastella.top"));
-            TestServiceAppCoverage(rules);
-            TestFindingPriorityPresentation();
-            await TestFindingPriorityScannerAsync(root);
-
-            await TestFileTypesAsync(root);
-            await TestJsonFileSynchronizationContextAsync(root);
-            await TestWriteNewAndDirectoryFingerprintAsync(root);
-            TestSecurityValidation();
-            await TestStartupCompatibilityAsync(root);
-            await TestManagedErrorReportsAsync(root);
-            await TestContentScannerAsync(root, rules);
-            await TestDefaultWallpaperSuppressionAsync(root, rules);
-            await TestSteamTamperScannerAsync(root, rules);
-            await TestEncryptedArchiveAsync(root, rules);
-            await TestV015Async(root, rules);
-            await TestV016Async(root, rules);
-            await TestV017Async(root);
-            await TestV018Async(root);
-            await TestV0111Async(root, rules);
-            await TestV0112Async(root);
-            await TestV0113Async(root);
-            await TestV0114CoverageAsync(root);
-            await TestV0114RelationAsync(root);
-            await TestV0114BrokerAsync(root);
-            await TestFirewallVerificationBudgetAsync(root);
-            await TestV0114UiAsync(root);
-            await TestV0116Async(root);
-            await TestV0117UiAsync(root);
-            TestV0119Copy();
-            TestV0119PasswordBoundaries();
-            await TestV0119PasswordsAsync(root, rules);
-            await TestScanLimitSettingsAsync(root);
-            TestV020ContainerRanges();
-            await TestV020ArchiveVolumesAsync(root);
-            await TestV020ContainerResourcesAsync(root);
-            await TestV020ContainerExportAsync(root);
-            await TestV020ContainerMergesAsync(root);
-            await TestV020ContainerReviewAsync(root);
-            await TestV020OtherArchivesAsync(root);
-            await TestV020StructuredBudgetAsync(root);
-            await TestV030Async(root);
-            await TestV030StatusAsync(root);
-            await TestV030ResourcesAsync(root);
-            await TestV030LanguageSettingsAsync(root);
-            await TestV030BackendMessagesAsync(root);
-            await TestV030AdaptiveScanAsync(root);
-            TestV031ReportBudgets();
-            await TestV031WorkerTextBudgetsAsync(root);
-            await TestV030FalsePositiveStringsAsync(root);
-            await TestV030FalsePositiveFormatPathAsync(root);
-            await TestV030FalsePositiveAssociationAsync(root);
-            await TestV030FalsePositiveScriptConsumersAsync(root);
-            await TestV030RemediationEvidencePolicyAsync(root);
-            await TestV030BrokerPreflightAsync(root);
-            await TestV030EndedResultsAsync(root);
-            await TestV030RemediationRecoveryAsync(root);
-            TestTrustProxyProxy();
-            TestTrustProxyCertificates();
-            await TestTrustProxyDiagnosticsAsync(root);
-            TestTrustProxyBatch();
-            await TestPhase2MsiAsync(root, rules);
-            TestPhase2Discovery();
-            TestPhase2SourceBounds();
-            TestPhase2RelatedBatch();
-            await TestPhase2PipelineAsync(root);
-            await TestPhase2RelatedSignatureAsync(root);
-            await TestPhase2RelatedPresentationAsync(root);
-            await TestPhase3DependenciesAsync(root);
-            TestPhase3CertificateRepair();
-            TestPhase3CertificateAbi();
-            TestPhase3ProxyRepair();
-            await TestPhase3ConfigurationBrokerAsync();
-            await TestPhase3CasesAsync(root);
-            await TestV031CasePersistenceAsync(root);
-            await TestPhase3CaseExportAsync(root);
-            await TestV0117ScannerAsync(root);
-            await TestV0117SecurityAsync(root);
-            TestV0117ReleaseEngineering();
-            await TestWorkerProtocolAsync(root);
-            await TestRestrictedWorkerClientAsync(root);
-            await TestPlanBuilderAsync(root, rules);
-            TestV030RemediationScope();
-            await TestV032CoreScopeAsync(root);
-            await TestSteamAlertAsync(root);
-            await TestSteamAlertWatchdogHostAsync(root);
-            await TestSteamAlertWatchdogDiscoveryAsync(root);
-            await TestSteamAlertWatchdogBrokerAsync(root);
-            await TestSteamAlertWatchdogPlanAsync(root);
-            await TestSteamAlertUpdateHandoffAsync(root);
-            await TestSteamAlertHandoffBrokerAsync(root);
-            await TestSteamAlertHandoffDiscoveryAsync(root);
-            await TestSteamAlertClosureAsync(root);
-            await TestP2BSteamRecoveryAsync(root);
-            await TestRemediationModesAsync(root);
-            await TestSteamConfigurationRepairAsync(root);
-            await TestSteamAlertEmbeddedEvidenceAsync(root);
-            await TestV032BrokerScopeAsync(root);
-            await TestBrokerScopeDiagnosticsAsync(root);
-            await TestBoundBrokerPlanAsync();
-            await TestSecureFileLeaseAsync(root);
-            await TestReportExportAsync(root, rules);
-            Check("Steam 进程门禁不误判 SteamSentinel", MainWindow.IsSteamClientProcessName("steam") &&
-                                                     MainWindow.IsSteamClientProcessName("steamwebhelper") &&
-                                                     !MainWindow.IsSteamClientProcessName("SteamSentinel"));
-            TestDisplayLabels();
-            TestSteamDiscovery();
-            await TestSystemScannerReadOnlyAsync(rules);
-            await TestP2ADetectionPerformanceAsync(root);
-
-            Console.WriteLine();
-            Console.WriteLine($"通过：{_passed}；失败：{Failures.Count}；跳过：{_skipped}");
-            foreach (string failure in Failures) Console.WriteLine("FAIL: " + failure);
-            return Failures.Count == 0 ? 0 : 1;
+            return await RunSelectedSuitesAsync(root, rules, suiteOptions!);
         }
         catch (Exception ex)
         {
@@ -165,18 +60,7 @@ internal static partial class Program
         }
         finally
         {
-            if (resultsPath is not null)
-                await JsonFile.WriteAtomicAsync(resultsPath, new
-                {
-                    passed = _passed,
-                    failed = Failures.Count,
-                    skipped = _skipped,
-                    elapsedMs = elapsed.ElapsedMilliseconds,
-                    version = ProductInfo.Version,
-                    buildIdentity = ProductInfo.BuildIdentity,
-                    failures = Failures,
-                    completedAtUtc = DateTimeOffset.UtcNow
-                });
+            _suiteRoot = null;
             string full = Path.GetFullPath(root);
             string temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
             if (full.StartsWith(temp + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
@@ -1369,23 +1253,31 @@ internal static partial class Program
 
     private static void Check(string name, bool condition)
     {
-        _scopeAcceptanceChecks?.Add(new(name, condition));
-        if (condition)
+        lock (CheckLock)
         {
-            _passed++;
-            Console.WriteLine("PASS: " + name);
-        }
-        else
-        {
-            Failures.Add(name);
-            Console.WriteLine("FAIL: " + name);
+            _scopeAcceptanceChecks?.Add(new(name, condition));
+            CurrentSuiteAccumulator.Value?.Record(name, condition);
+            if (condition)
+            {
+                _passed++;
+                Console.WriteLine("PASS: " + name);
+            }
+            else
+            {
+                Failures.Add(name);
+                Console.WriteLine("FAIL: " + name);
+            }
         }
     }
 
     private static void Skip(string name)
     {
-        _skipped++;
-        Console.WriteLine("SKIP: " + name);
+        lock (CheckLock)
+        {
+            CurrentSuiteAccumulator.Value?.RecordSkip();
+            _skipped++;
+            Console.WriteLine("SKIP: " + name);
+        }
     }
 
     private sealed class TestPasswordProvider(string password) : IArchivePasswordProvider

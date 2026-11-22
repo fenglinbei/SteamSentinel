@@ -19,7 +19,7 @@ internal static partial class Program
         await File.WriteAllTextAsync(payload, "inert relation identity");
         string hash = await Hashing.Sha256FileAsync(payload);
         RuleSet knownRules = new() { KnownHashes = [new() { Id = "FIXTURE", Sha256 = hash, Malware = true }] };
-        RelatedArtifactScanner scanner = new(knownRules);
+        RelatedArtifactScanner scanner = new(knownRules, LiveAssociationProbeMode.InertEmptyHost);
         ScanReport consumed = new(); consumed.Metrics.BytesHashed = 2L * 1024 * 1024 * 1024;
         // A command target needs an executable/script extension, but fixture bytes are never executed.
         string executable = Path.Combine(directory, "random renamed loader.exe");
@@ -224,7 +224,7 @@ internal static partial class Program
             CanRemediate = true,
             SuggestedActions = [SuggestedActionKind.QuarantineDirectory]
         };
-        RelatedArtifactExpansion manual = await new RelatedArtifactScanner(new()).ExpandAsync([folder], new());
+        RelatedArtifactExpansion manual = await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync([folder], new());
         RemediationPlan folderPlan = await new RemediationPlanBuilder(new()).BuildAsync(manual.Findings, false);
         Check("明确选择的 Steam 恢复目录保留且生成兼容指纹", folderPlan.Actions.Single().ExpectedSha256 == await DirectoryFingerprint.ComputeAsync(restore) &&
             manual.Notes.Any(n => n.Contains("人工确认")));
@@ -235,11 +235,11 @@ internal static partial class Program
             CanRemediate = true,
             SuggestedActions = [SuggestedActionKind.QuarantineDirectory]
         };
-        Check("普通可操作扫描目录保留匹配的原始指纹", (await new RelatedArtifactScanner(new()).ExpandAsync([scannedFolder], new())).Findings.Contains(scannedFolder));
+        Check("普通可操作扫描目录保留匹配的原始指纹", (await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync([scannedFolder], new())).Findings.Contains(scannedFolder));
         await File.WriteAllTextAsync(Path.Combine(restore, "inert.txt"), "changed directory fixture");
-        Check("已变化扫描目录不静默采用新指纹", !(await new RelatedArtifactScanner(new()).ExpandAsync([scannedFolder], new())).Findings.Any(f => f.CanRemediate));
+        Check("已变化扫描目录不静默采用新指纹", !(await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync([scannedFolder], new())).Findings.Any(f => f.CanRemediate));
         Finding unknownFolder = new() { Target = restore, SuggestedActions = [SuggestedActionKind.ReviewOnly] };
-        Check("未知目录不因存在而变成自动隔离", !(await new RelatedArtifactScanner(new()).ExpandAsync([unknownFolder], new())).Findings.Any(f => f.CanRemediate));
+        Check("未知目录不因存在而变成自动隔离", !(await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync([unknownFolder], new())).Findings.Any(f => f.CanRemediate));
 
         string link = Path.Combine(directory, "inert-startup.lnk");
         await File.WriteAllTextAsync(link, "inert saved shortcut snapshot; never parsed or executed");
@@ -254,12 +254,12 @@ internal static partial class Program
             CanRemediate = true,
             SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
-        RelatedArtifactExpansion startupExpansion = await new RelatedArtifactScanner(new()).ExpandAsync([startup], new());
+        RelatedArtifactExpansion startupExpansion = await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync([startup], new());
         RemediationPlan startupPlan = await new RemediationPlanBuilder(new()).BuildAsync(startupExpansion.Findings, false, allFindings: startupExpansion.Findings);
         Check("已选择启动快捷方式按自身哈希保留隔离，不借用缺失载荷哈希", startupPlan.Actions.Single().Target == link &&
             startupPlan.Actions.Single().ExpectedSha256 == linkHash && linkHash != hash);
         await File.WriteAllTextAsync(link, "changed inert link snapshot");
-        Check("启动快捷方式自身变化拒绝沿用", !(await new RelatedArtifactScanner(new()).ExpandAsync([startup], new())).Findings.Any(f => f.CanRemediate));
+        Check("启动快捷方式自身变化拒绝沿用", !(await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync([startup], new())).Findings.Any(f => f.CanRemediate));
 
         List<Finding> many = [];
         for (int i = 0; i < 65; i++)
@@ -267,7 +267,7 @@ internal static partial class Program
             string path = Path.Combine(directory, $"candidate-{i}.dat"); await File.WriteAllTextAsync(path, "inert");
             many.Add(new() { Target = path, SuggestedActions = [SuggestedActionKind.ReviewOnly] });
         }
-        RelatedArtifactExpansion bounded = await new RelatedArtifactScanner(new()).ExpandAsync(many, new());
+        RelatedArtifactExpansion bounded = await new RelatedArtifactScanner(new(), LiveAssociationProbeMode.InertEmptyHost).ExpandAsync(many, new());
         Check("UI 候选最多64个精确文件且明确标注未覆盖", bounded.CandidatePaths.Count == 64 && bounded.CandidatePaths.All(File.Exists) &&
             bounded.Notes.Any(n => n.Contains("64 项上限")));
     }

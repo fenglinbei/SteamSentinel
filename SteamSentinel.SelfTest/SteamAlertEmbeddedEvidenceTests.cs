@@ -145,7 +145,7 @@ internal static partial class Program
             Score = 100,
             SuggestedActions = [SuggestedActionKind.QuarantineFile]
         };
-        async Task<RelatedArtifactExpansion> Expand(Finding selected) => await new RelatedArtifactScanner(rules).ExpandLocalAsync([selected],
+        async Task<RelatedArtifactExpansion> Expand(Finding selected) => await new RelatedArtifactScanner(rules, LiveAssociationProbeMode.InertEmptyHost).ExpandLocalAsync([selected],
             new ScanReport { Findings = [selected] }, default, RelatedArtifactScanner.MaximumVerificationBytes, true, layout, resident);
         Check("Embedded Core: installed loader discovers and verifies a rebuilt resident",
             (await Expand(loaderFinding)).Findings.Any(f => f.Target == path && f.RuleId == SteamAlertEmbeddedEvidence.RuleId && f.CanRemediate));

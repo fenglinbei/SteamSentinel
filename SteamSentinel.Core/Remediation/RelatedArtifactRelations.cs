@@ -10,8 +10,23 @@ namespace SteamSentinel.Core.Remediation;
 /// <summary>Exact identities, never names, parent directories, or archive-member hashes.</summary>
 public static class RelatedArtifactRelations
 {
-    public static bool SamePath(string left, string right) => ContentDiscovery.IsLocalSafePath(left) &&
-        ContentDiscovery.IsLocalSafePath(right) && Path.GetFullPath(left).Equals(Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+    public static bool SamePath(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right) ||
+            !Path.IsPathFullyQualified(left) || !Path.IsPathFullyQualified(right) ||
+            left.StartsWith(@"\\", StringComparison.Ordinal) || right.StartsWith(@"\\", StringComparison.Ordinal))
+            return false;
+        try
+        {
+            if (!Path.GetFullPath(left).Equals(Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+        return ContentDiscovery.IsLocalSafePath(left) && ContentDiscovery.IsLocalSafePath(right);
+    }
 
     public static string? FilePath(Finding finding)
     {

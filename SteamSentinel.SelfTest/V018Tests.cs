@@ -98,20 +98,7 @@ internal static partial class Program
         if (Directory.Exists(working) && !Validation.ContainsReparsePoint(working)) Directory.Delete(working, true);
         Check("修复不修改调用方默认 DACL", TokenProbe.Dacl(caller).SequenceEqual(originalDacl));
 
-        string fixtureDir = Path.Combine(directory, "fixtures"); Directory.CreateDirectory(fixtureDir);
-        foreach (string file in Directory.EnumerateFiles(AppContext.BaseDirectory))
-            File.Copy(file, Path.Combine(fixtureDir, Path.GetFileName(file)), true);
-        Dictionary<string, string> fixturePaths = new(StringComparer.Ordinal);
-        string Fixture(string mode)
-        {
-            if (fixturePaths.TryGetValue(mode, out string? existing)) return existing;
-            string path = Path.Combine(fixtureDir, "SteamSentinelFixture-" + mode + ".exe");
-            // Reuse immutable fixture images; process exit can precede release of their image mappings.
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.exe"), path);
-            File.Copy(Path.Combine(AppContext.BaseDirectory, "SteamSentinel.SelfTest.dll"), Path.ChangeExtension(path, ".dll"));
-            fixturePaths.Add(mode, path);
-            return path;
-        }
+        string Fixture(string mode) => EnsureSharedWorkerFixtureExecutable(directory, mode);
         string environmentWorking = Path.Combine(AppPaths.WorkerTemporaryRoot, "selftest-environment-" + Guid.NewGuid().ToString("N"));
         string expectedSystemDrive = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows))!.TrimEnd('\\');
         string? originalSystemDrive = Environment.GetEnvironmentVariable("SystemDrive");

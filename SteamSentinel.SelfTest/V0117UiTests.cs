@@ -250,11 +250,7 @@ internal static partial class Program
 
     private static async Task TestV0117HandleInheritanceAsync(string directory)
     {
-        string fixtureRoot = Path.Combine(directory, "inheritance-worker"); Directory.CreateDirectory(fixtureRoot);
-        foreach (string file in Directory.EnumerateFiles(AppContext.BaseDirectory)) File.Copy(file, Path.Combine(fixtureRoot, Path.GetFileName(file)));
-        string fixture = Path.Combine(fixtureRoot, "SteamSentinelFixture-inheritance.exe");
-        File.Copy(Path.Combine(fixtureRoot, "SteamSentinel.SelfTest.exe"), fixture);
-        File.Copy(Path.Combine(fixtureRoot, "SteamSentinel.SelfTest.dll"), Path.ChangeExtension(fixture, ".dll"));
+        string fixture = EnsureSharedWorkerFixtureExecutable(directory, "inheritance");
         string marker = Path.Combine(directory, "handle-sentinel-" + Guid.NewGuid().ToString("N") + ".txt");
         await using FileStream sentinel = new(marker, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite);
         if (!SetV0117HandleInformation(sentinel.SafeFileHandle, 1, 1)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());

@@ -351,7 +351,8 @@ internal static partial class Program
             Check("Steam配置扫描结果可直接准备精确动作", direct.Actions.Count == 4 && direct.Actions.All(a => a.Type == RemediationActionType.RepairSteamConfiguration) &&
                 direct.Actions.Where(a => a.ConfigurationKind is SteamConfigurationRepair.Run or SteamConfigurationRepair.Shortcut).All(a => a.RelatedFileSha256 is { Length: 64 }));
             foreach (RemediationAction prepared in direct.Actions) BrokerEngine.ValidateSteamConfigurationAction(prepared, layout);
-            RemediationBatchSession batch = await new RemediationBatchPlanner(rules, layout, Path.Combine(Path.GetDirectoryName(executable)!, "unused-resident"))
+            RemediationBatchSession batch = await new RemediationBatchPlanner(rules, layout,
+                Path.Combine(Path.GetDirectoryName(executable)!, "unused-resident"), LiveAssociationProbeMode.InertEmptyHost)
                 .PrepareAsync(selected, scanned, false);
             Check("Steam配置完整批量准备保留四种动作且无需恶意关联", batch.Plans.SelectMany(plan => plan.Actions).Count() == 4 &&
                 batch.Plans.SelectMany(plan => plan.Actions).All(a => a.Type == RemediationActionType.RepairSteamConfiguration) &&

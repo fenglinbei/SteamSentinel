@@ -453,7 +453,9 @@ try {
         $testedRuntimes += Assert-SelfContainedRuntime -Root $testBin -Applications @($entry[1]) -ExpectedVersion $runtimeFrameworkVersion
     }
     $selfTestExecutable = Join-Path $snapshotRoot ("SteamSentinel.SelfTest\bin\Release\$targetFramework\SteamSentinel.SelfTest.exe")
-    & $selfTestExecutable '--results' $selfTestPath
+    & $selfTestExecutable '--results' $selfTestPath `
+        '--watchdog-results' $watchdogTestPath `
+        '--finding-priority-results' $findingPriorityTestPath
     if ($LASTEXITCODE -ne 0) { throw "Native SelfTest apphost failed with exit code $LASTEXITCODE" }
 
     if (-not (Test-Path -LiteralPath $selfTestPath -PathType Leaf)) {
@@ -470,18 +472,17 @@ try {
         throw "SelfTest provenance mismatch (version=$($selfTest.version), buildIdentity=$($selfTest.buildIdentity))."
     }
 
-    # Bind the merged watchdog and UI acceptance to the same self-contained source
-    # snapshot as the full suite. These utilities use inert fixtures, never samples.
+    # Verify the merged watchdog and UI acceptance exported directly from the
+    # single self-contained full run (zero duplicate execution).
     $focusedTests = @{}
     foreach ($focused in @(
-        @{ Name = 'watchdog'; Argument = '--steamalert-watchdog-tests'; File = 'watchdog-results.json'; Minimum = 314; Destination = $watchdogTestPath },
-        @{ Name = 'finding-priority'; Argument = '--finding-priority-ui'; File = 'finding-priority-ui-results.json'; Minimum = 141; Destination = $findingPriorityTestPath }
+        @{ Name = 'watchdog'; ResultPath = $watchdogTestPath; Minimum = 314 },
+        @{ Name = 'finding-priority'; ResultPath = $findingPriorityTestPath; Minimum = 141 }
     )) {
-        $focusedRoot = Join-Path $workRoot $focused.Name
-        & $selfTestExecutable $focused.Argument $focusedRoot
-        if ($LASTEXITCODE -ne 0) { throw "Focused acceptance failed: $($focused.Name) (exit=$LASTEXITCODE)." }
-        $focusedResultPath = Join-Path $focusedRoot $focused.File
-        $focusedResult = Get-Content -LiteralPath $focusedResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not (Test-Path -LiteralPath $focused.ResultPath -PathType Leaf)) {
+            throw "Focused acceptance did not write its result file: $($focused.Name)."
+        }
+        $focusedResult = Get-Content -LiteralPath $focused.ResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
         foreach ($field in @('passed', 'failed', 'skipped', 'failures', 'version', 'buildIdentity')) {
             if ($null -eq $focusedResult.PSObject.Properties[$field]) { throw "Focused acceptance is missing $field : $($focused.Name)." }
         }
@@ -490,12 +491,11 @@ try {
             $focusedResult.version -ne $version -or $focusedResult.buildIdentity -ne $buildIdentity) {
             throw "Focused acceptance count or source identity mismatch: $($focused.Name)."
         }
-        Copy-Item -LiteralPath $focusedResultPath -Destination $focused.Destination
         $focusedTests[$focused.Name] = [ordered]@{
             passed = [int]$focusedResult.passed; failed = 0; skipped = 0
             version = $version; buildIdentity = $buildIdentity
-            resultsFile = [IO.Path]::GetFileName($focused.Destination)
-            resultsSha256 = (Get-FileHash -LiteralPath $focused.Destination -Algorithm SHA256).Hash
+            resultsFile = [IO.Path]::GetFileName($focused.ResultPath)
+            resultsSha256 = (Get-FileHash -LiteralPath $focused.ResultPath -Algorithm SHA256).Hash
         }
     }
 

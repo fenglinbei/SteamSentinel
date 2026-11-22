@@ -97,7 +97,7 @@ internal static partial class Program
         File.Copy(loader, installedLoader);
         await File.WriteAllTextAsync(differentFile, "legitimate file under the same name");
         async Task<RelatedArtifactExpansion> Expand(Finding selected) =>
-            await new RelatedArtifactScanner(rules).ExpandLocalAsync([selected], new ScanReport { Findings = [selected] },
+            await new RelatedArtifactScanner(rules, LiveAssociationProbeMode.InertEmptyHost).ExpandLocalAsync([selected], new ScanReport { Findings = [selected] },
                 default, RelatedArtifactScanner.MaximumVerificationBytes, true, layout, residentHome);
         var fromLoader = await Expand(peers[0]);
         var fromHost = await Expand(peers[1]);

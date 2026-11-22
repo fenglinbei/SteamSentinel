@@ -11,6 +11,7 @@ using Microsoft.Win32.SafeHandles;
 using SteamSentinel.Broker;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
+using SteamSentinel.Core.Scanning;
 using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.SelfTest;
@@ -198,7 +199,7 @@ internal static partial class Program
             if (withSecurityMetadata)
             {
                 ScanReport report = new() { Findings = [finding] };
-                RemediationBatchSession batch = await new RemediationBatchPlanner(new RuleSet()).PrepareAsync(
+                RemediationBatchSession batch = await new RemediationBatchPlanner(new RuleSet(), LiveAssociationProbeMode.InertEmptyHost).PrepareAsync(
                     [finding], report, false, inspectCandidates: null, requestExplicitFileTargets: true);
                 Check("0.3.2 Broker Windows Temp explicit batch pipeline accepted", batch.Plans.Count == 1 &&
                     batch.Plans.Single().ExplicitFileTargetsRequested && batch.Plans.Single().Actions.Count == 1);
