@@ -116,35 +116,36 @@ internal static partial class Program
             $rs=[runspacefactory]::CreateRunspace();
             $rs.Open();
             try{
-                $batch=@();
+                $lines=[Collections.Generic.List[string]]::new();
                 foreach($f in @({{{{fixtureLiteralList}}}})){
                     $ps=[powershell]::Create();
                     $ps.Runspace=$rs;
                     try{
                         $null=$ps.AddScript('$ProgressPreference=''SilentlyContinue'';$ErrorActionPreference=''Stop'';$fixture='''+$f+''';'+$shared,$true);
-                        $ok=$true;$val=$null;$err=$null;
+                        $ok='1';$val='';$err='';
                         try{
                             $res=@($ps.Invoke()|ForEach-Object{[string]$_});
-                            if($ps.HadErrors){$ok=$false;$err=($ps.Streams.Error|ForEach-Object{$_.ToString()}) -join '; '}
-                            else{$val=($res -join "`n").Trim()}
-                        }catch{$ok=$false;$err=$_.Exception.Message}
-                        $batch+=[pscustomobject]@{fixture=$f;ok=$ok;output=$val;error=$err}
+                            if($ps.HadErrors){$ok='0';$err=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((($ps.Streams.Error|ForEach-Object{$_.ToString()}) -join '; ')))}
+                            else{$val=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($res -join "`n").Trim()))}
+                        }catch{$ok='0';$err=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_.Exception.Message))}
+                        $lines.Add($f+'|'+$ok+'|'+$val+'|'+$err)
                     }finally{$ps.Dispose()}
                 }
-                ConvertTo-Json -InputObject $batch -Compress
+                [string]::Join("`n",$lines)
             }finally{$rs.Dispose()}
             """;
-        string? batchJson = await CaseReadOnlyScriptRunner.RunAsync(batchScript, default);
+        string? batchText = await CaseReadOnlyScriptRunner.RunAsync(batchScript, default);
         Dictionary<string, BatchFixtureResult> batchByFixture = new(StringComparer.Ordinal);
-        if (!string.IsNullOrWhiteSpace(batchJson))
+        if (!string.IsNullOrWhiteSpace(batchText))
         {
-            BatchFixtureResult[]? parsed = JsonSerializer.Deserialize<BatchFixtureResult[]>(batchJson, BatchJsonOptions);
-            if (parsed is not null)
+            foreach (string rawLine in batchText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                foreach (BatchFixtureResult item in parsed)
-                {
-                    if (!string.IsNullOrEmpty(item.fixture)) batchByFixture[item.fixture] = item;
-                }
+                string[] parts = rawLine.Split('|');
+                if (parts.Length != 4 || string.IsNullOrEmpty(parts[0])) continue;
+                bool ok = parts[1] == "1";
+                string? outputValue = ok ? Encoding.UTF8.GetString(Convert.FromBase64String(parts[2])) : null;
+                string? errorValue = parts[3].Length > 0 ? Encoding.UTF8.GetString(Convert.FromBase64String(parts[3])) : null;
+                batchByFixture[parts[0]] = new BatchFixtureResult(parts[0], ok, outputValue, errorValue);
             }
         }
 
@@ -359,8 +360,6 @@ internal static partial class Program
             }
         }
     }
-
-    private static readonly JsonSerializerOptions BatchJsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private sealed record BatchFixtureResult(string fixture, bool ok, string? output, string? error);
 

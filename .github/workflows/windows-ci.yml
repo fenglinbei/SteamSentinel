@@ -265,7 +265,12 @@ jobs:
           $results = Join-Path $env:RUNNER_TEMP 'SteamSentinel-unified-startup-results.json'
           "result_path=$results" >> $env:GITHUB_OUTPUT
           $firewallResults = Join-Path $env:RUNNER_TEMP 'SteamSentinel-worker-firewall-contract-results.json'
-          & ./scripts/Test-WorkerFirewallContract.ps1 -ResultsPath $firewallResults
+          $winPs = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $winPs -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File './scripts/Test-WorkerFirewallContract.ps1' -ResultsPath $firewallResults
+          if ($LASTEXITCODE -ne 0) {
+            throw "Worker firewall contract tests failed ($LASTEXITCODE)."
+          }
           if (-not (Test-Path -LiteralPath $firewallResults -PathType Leaf)) {
             throw 'Worker firewall contract tests did not write results.'
           }
