@@ -1,7 +1,9 @@
+using System.Buffers.Binary;
 using System.IO;
 using System.Text;
 using System.Text.Json;
 using SteamSentinel.App.Services;
+using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Scanning;
@@ -160,5 +162,97 @@ internal static partial class Program
         Check("真实跨根目录总文件上限保留前两项并说明未完成", limited?.PartialReport?.Metrics.FilesVisited == 2 &&
             limited.PartialReport.CoverageAggregates.Sum(a => a.Count) == 2 &&
             limited.PartialReport.WorkerDiagnostics?.FailureType == nameof(ScanResourceLimitException));
+
+        static byte[] BuildSingleSectionPeWithPayload(string asciiPayload)
+        {
+            byte[] pe = new byte[1024];
+            pe[0] = (byte)'M';
+            pe[1] = (byte)'Z';
+            BinaryPrimitives.WriteInt32LittleEndian(pe.AsSpan(0x3C, 4), 0x40);
+            "PE\0\0"u8.CopyTo(pe.AsSpan(0x40, 4));
+            // COFF 头: AMD64, 1 节, SizeOfOptionalHeader=240, Characteristics=0x2022
+            BinaryPrimitives.WriteUInt16LittleEndian(pe.AsSpan(0x44, 2), 0x8664);
+            BinaryPrimitives.WriteUInt16LittleEndian(pe.AsSpan(0x46, 2), 1);
+            BinaryPrimitives.WriteUInt16LittleEndian(pe.AsSpan(0x54, 2), 240);
+            BinaryPrimitives.WriteUInt16LittleEndian(pe.AsSpan(0x56, 2), 0x2022);
+            // PE32+ 可选头: Magic=0x020B, SizeOfHeaders=512
+            BinaryPrimitives.WriteUInt16LittleEndian(pe.AsSpan(0x58, 2), 0x020B);
+            BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(0x90, 4), 0x2000);
+            BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(0x94, 4), 512);
+            // 单节 .rdata: RawOffset=512, RawSize=512，恰好覆盖整个 1024 字节文件无尾随区间
+            ".rdata\0\0"u8.CopyTo(pe.AsSpan(0x148, 8));
+            BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(0x150, 4), 512);
+            BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(0x154, 4), 0x1000);
+            BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(0x158, 4), 512);
+            BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(0x15C, 4), 512);
+            BinaryPrimitives.WriteUInt32LittleEndian(pe.AsSpan(0x16C, 4), 0x40000040);
+
+            byte[] payload = Encoding.ASCII.GetBytes("\0" + asciiPayload + "\0");
+            if (payload.Length > 512) throw new ArgumentException("Payload exceeds 512-byte section.", nameof(asciiPayload));
+            payload.CopyTo(pe.AsSpan(512));
+            return pe;
+        }
+
+        string peNativePath = Path.Combine(directory, "native-runtime.dll");
+        await File.WriteAllBytesAsync(peNativePath, BuildSingleSectionPeWithPayload(
+            "https://example.invalid Invoke-WebRequest Start-Process rundll32 steamprocess Add-MpPreference captcha"));
+        ScanOptions customFileOptions = new()
+        {
+            Mode = ScanMode.Custom,
+            IncludeSteam = false,
+            IncludeSystem = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            CustomRoots = [peNativePath]
+        };
+
+        ScanReport peSignedReport = new() { Mode = ScanMode.Custom };
+        using (ContentScanner signedScanner = new(new RuleSet()) { PeSignatureVerifier = static (_, _) => SignatureStatus.Valid })
+            await signedScanner.ScanRootAsync(peNativePath, peSignedReport, customFileOptions, new NullPasswordProvider());
+        Check("合法已签名 PE 二进制豁免脚本词语共现误报",
+            peSignedReport.Metrics.FilesVisited == 1 &&
+            peSignedReport.Findings.Count == 0);
+
+        foreach (SignatureStatus nonValidStatus in new[] { SignatureStatus.Unsigned, SignatureStatus.HashMismatch })
+        {
+            ScanReport nonSignedReport = new() { Mode = ScanMode.Custom };
+            using ContentScanner nonSignedScanner = new(new RuleSet()) { PeSignatureVerifier = (_, _) => nonValidStatus };
+            await nonSignedScanner.ScanRootAsync(peNativePath, nonSignedReport, customFileOptions, new NullPasswordProvider());
+            Check($"非合法签名 PE({nonValidStatus}) 仍保留脚本词语共现复核提示",
+                nonSignedReport.Metrics.FilesVisited == 1 &&
+                nonSignedReport.Findings.Any(f => f.RuleId == "HEUR-SCRIPT-TOKEN-COOCCURRENCE" && !f.CanRemediate));
+        }
+
+        string pePatcherPath = Path.Combine(directory, "patcher-host.dll");
+        await File.WriteAllBytesAsync(pePatcherPath, BuildSingleSectionPeWithPayload(
+            "steam://open/supportalert SupportMessages HelpFrontPage steamhelper bSupportPopupMessage"));
+        ScanReport pePatcherSignedReport = new() { Mode = ScanMode.Custom };
+        using (ContentScanner patcherScanner = new(new RuleSet()) { PeSignatureVerifier = static (_, _) => SignatureStatus.Valid })
+            await patcherScanner.ScanRootAsync(pePatcherPath, pePatcherSignedReport, customFileOptions, new NullPasswordProvider());
+        Check("合法签名 PE 仍正常检出强假红信注入器组合规则",
+            pePatcherSignedReport.Findings.Any(f => f.RuleId == "HEUR-STEAM-UI-PATCHER" && f.CanRemediate));
+
+        string? dotnetRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        string realSignedSource = new[]
+        {
+            dotnetRoot is null ? null : Path.Combine(dotnetRoot, "dotnet.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe")
+        }.First(p => p is not null && File.Exists(p))!;
+        string realSignedCopy = Path.Combine(directory, "dotnet-signed-copy.exe");
+        File.Copy(realSignedSource, realSignedCopy);
+        SignatureResult realOfflineSig = AuthenticodeVerifier.VerifyOffline(realSignedCopy);
+        ScanReport realSignedReport = await new ScanCoordinator(new RuleSet()).RunAsync(new ScanOptions
+        {
+            Mode = ScanMode.Custom,
+            IncludeSteam = false,
+            IncludeSystem = false,
+            IncludeWorkshop = false,
+            UseAmsi = false,
+            CustomRoots = [realSignedCopy]
+        });
+        Check("真实微软签名 PE 副本通过默认离线验签且无误报",
+            realOfflineSig.Status == SignatureStatus.Valid &&
+            realSignedReport.Metrics.FilesVisited == 1 &&
+            realSignedReport.Findings.All(f => f.Category != FindingCategory.Coverage && f.RuleId != "HEUR-SCRIPT-TOKEN-COOCCURRENCE"));
     }
 }

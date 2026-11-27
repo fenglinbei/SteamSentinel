@@ -48,18 +48,33 @@ public static class FindingPriorityPresentation
         bool[] candidates = new bool[report.Findings.Count];
         HashSet<string> blocked = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> blockedRawTargets = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> blockedCoveragePaths = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> blockedCoverageRawTargets = new(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < report.Findings.Count; i++)
         {
             Finding finding = report.Findings[i];
             candidates[i] = !string.IsNullOrWhiteSpace(finding.Id) && idCounts[finding.Id] == 1 &&
                 (IsPlainMismatch(finding, formats) || IsExtendedReference(finding, report, hasNetworkOrCertificateAlert));
-            // 同一物理路径/容器或同一非路径目标存在任何非折叠发现（含覆盖缺口）时，禁止折叠该目标上的参考提示项
             if (!candidates[i])
             {
-                if (groups.Find(finding.Target, finding.ContentPath, finding.RelatedFilePath) is { } group)
-                    blocked.Add(group);
-                else if (!string.IsNullOrWhiteSpace(finding.Target))
-                    blockedRawTargets.Add(finding.Target.Trim());
+                if (finding.Category == FindingCategory.Coverage)
+                {
+                    // 覆盖缺口仅精确阻塞其自身目标路径，不因外层或兄弟成员触发预算上限而连坐折叠无威胁成员
+                    string? exactCoveragePath = NormalizePath(string.IsNullOrWhiteSpace(finding.ContentPath) ? finding.Target : finding.ContentPath);
+                    if (exactCoveragePath is not null) blockedCoveragePaths.Add(exactCoveragePath);
+                    string? relatedCoveragePath = NormalizePath(finding.RelatedFilePath);
+                    if (relatedCoveragePath is not null) blockedCoveragePaths.Add(relatedCoveragePath);
+                    if (exactCoveragePath is null && relatedCoveragePath is null && !string.IsNullOrWhiteSpace(finding.Target))
+                        blockedCoverageRawTargets.Add(finding.Target.Trim());
+                }
+                else
+                {
+                    // 同一物理路径/容器或同一非路径目标存在任何非覆盖类非折叠发现时，禁止折叠该容器组上的参考提示项
+                    if (groups.Find(finding.Target, finding.ContentPath, finding.RelatedFilePath) is { } group)
+                        blocked.Add(group);
+                    else if (!string.IsNullOrWhiteSpace(finding.Target))
+                        blockedRawTargets.Add(finding.Target.Trim());
+                }
             }
         }
         for (int i = 0; i < report.Findings.Count; i++)
@@ -68,12 +83,23 @@ public static class FindingPriorityPresentation
             Finding finding = report.Findings[i];
             if (groups.Find(finding.Target, finding.ContentPath, finding.RelatedFilePath) is { } group)
             {
-                if (!blocked.Contains(group)) result.Add(finding.Id);
+                if (blocked.Contains(group)) continue;
             }
-            else if (string.IsNullOrWhiteSpace(finding.Target) || !blockedRawTargets.Contains(finding.Target.Trim()))
+            else if (!string.IsNullOrWhiteSpace(finding.Target) && blockedRawTargets.Contains(finding.Target.Trim()))
             {
-                result.Add(finding.Id);
+                continue;
             }
+
+            string? candidateExactPath = NormalizePath(string.IsNullOrWhiteSpace(finding.ContentPath) ? finding.Target : finding.ContentPath);
+            string? candidateRelatedPath = NormalizePath(finding.RelatedFilePath);
+            if ((candidateExactPath is not null && blockedCoveragePaths.Contains(candidateExactPath)) ||
+                (candidateRelatedPath is not null && blockedCoveragePaths.Contains(candidateRelatedPath)))
+                continue;
+            if (candidateExactPath is null && candidateRelatedPath is null &&
+                !string.IsNullOrWhiteSpace(finding.Target) && blockedCoverageRawTargets.Contains(finding.Target.Trim()))
+                continue;
+
+            result.Add(finding.Id);
         }
         return result;
     }
@@ -94,6 +120,8 @@ public static class FindingPriorityPresentation
 
         return finding.RuleId switch
         {
+            "STEAM-CFG-PRESENT" =>
+                finding.Severity < FindingSeverity.Medium && finding.ReasonCode is null,
             "NETWORK-C2-BLOCKED" or "STEAM-MOD-MILLENNIUM" or "WORKSHOP-PROJECT-METADATA" or "ASSOCIATION-HOST-SIGNATURE" =>
                 finding.Severity < FindingSeverity.High,
             "INSTALLER-STRUCTURE" =>

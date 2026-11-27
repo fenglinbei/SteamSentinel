@@ -266,5 +266,25 @@ internal static partial class Program
         IReadOnlySet<string> largeReferences = FindingPriorityPresentation.ReferenceFindingIds(large);
         Check("结果优先级：大批结果完整分组且强证据不被淹没", largeReferences.Count == 11_999 &&
             !largeReferences.Contains(large.Findings[6_000].Id) && !largeReferences.Contains(largeStrong.Id));
+
+        string modArchive = root + "Mods.zip";
+        Finding benignModMember = Mismatch(modArchive + "!/ModA/portrait.png", "Jpeg", target: modArchive);
+        Finding outerCoverage = new() { Id = "outer-cov", RuleId = "ARCHIVE-ENTRY-LIMIT", Target = modArchive, Category = FindingCategory.Coverage };
+        Finding siblingCoverage = new() { Id = "sibling-cov", RuleId = "ARCHIVE-SIZE-LIMIT", Target = modArchive, ContentPath = modArchive + "!/ModB/huge.bin", Category = FindingCategory.Coverage };
+        ScanReport modReport = new()
+        {
+            Findings = [benignModMember, outerCoverage, siblingCoverage],
+            Containers = new() { Nodes = [Node(benignModMember.ContentPath!, "Jpeg", modArchive)] }
+        };
+        Check("结果优先级：压缩包外层或兄弟成员Coverage缺口不连坐包内已识别良性成员",
+            FindingPriorityPresentation.ReferenceFindingIds(modReport).SetEquals([benignModMember.Id]));
+
+        Finding outerMismatch = Mismatch(modArchive, "Rar");
+        Check("结果优先级：外层压缩包自身存在Coverage缺口时自身格式提示仍保留主表",
+            FindingPriorityPresentation.ReferenceFindingIds(new() { Findings = [outerMismatch, benignModMember, outerCoverage] }).SetEquals([benignModMember.Id]));
+
+        Finding memberCoverage = new() { Id = "member-cov", RuleId = "CONTENT-BYTE-BUDGET", Target = modArchive, ContentPath = benignModMember.ContentPath, Category = FindingCategory.Coverage };
+        Check("结果优先级：包内成员自身存在Coverage缺口时保持重点不折叠",
+            FindingPriorityPresentation.ReferenceFindingIds(new() { Findings = [benignModMember, memberCoverage] }).Count == 0);
     }
 }

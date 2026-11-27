@@ -84,7 +84,7 @@ CI 工作流拆分为两个无依赖、可同时启动的并行 Job（均运行�
 
 | 门禁来源 | 校验项与基线要求 |
 | --- | --- |
-| `Directory.Build.props` | `VersionPrefix` 唯一版本源（当前 `0.4.0`）；`SteamSentinelMinimumSelfTests` 当前为 `3874`（`build-release.ps1` 强制 `>= 2348`，`V0117ReleaseTests.cs` 强制 `>= 3646`） |
+| `Directory.Build.props` | `VersionPrefix` 唯一版本源（当前 `0.4.1`）；`SteamSentinelMinimumSelfTests` 当前为 `3885`（`build-release.ps1` 强制 `>= 2348`，`V0117ReleaseTests.cs` 强制 `>= 3646`） |
 | `SteamSentinel.SelfTest` 全量门禁 | `passed >= SteamSentinelMinimumSelfTests`、`failed == 0`、`skipped == 0`、`elapsedMs >= 0`、`version` 与 `buildIdentity` 匹配 |
 | SelfTest 同步分项门禁 | `watchdog.passed >= 314`（`failed == 0, skipped == 0`）；`finding-priority.passed >= 141`（`failed == 0, skipped == 0`） |
 | `V0117ReleaseTests.cs` 静态契约 | CI 必须原样保留 `--results $resultPath`、`result.passed -lt $minimumTests`、`result.skipped -ne 0`、`result.buildIdentity`、`PSObject.Properties['elapsedMs']`、`--locked-mode` 与 `dotnet format whitespace SteamSentinel.slnx --verify-no-changes --no-restore` |

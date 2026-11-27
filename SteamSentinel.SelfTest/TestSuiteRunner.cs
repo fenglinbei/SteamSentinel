@@ -195,7 +195,7 @@ internal static partial class Program
         new("Phase3Cases", false, false, 61, (r, _) => TestPhase3CasesAsync(r)),
         new("SteamAlertWatchdogHost", false, false, 60, (r, _) => TestSteamAlertWatchdogHostAsync(r), ExportGroup: "Watchdog"),
         new("V015", false, false, 55, (r, rules) => TestV015Async(r, rules)),
-        new("V030AdaptiveScan", false, true, 50, (r, _) => TestV030AdaptiveScanAsync(r)),
+        new("V030AdaptiveScan", true, true, 50, (r, _) => TestV030AdaptiveScanAsync(r)),
         new("ScanLimitSettings", false, false, 35, (r, _) => TestScanLimitSettingsAsync(r)),
         new("FirewallVerificationBudget", false, true, 30, (r, _) => TestFirewallVerificationBudgetAsync(r)),
         new("V0112", false, false, 24, (r, _) => TestV0112Async(r)),

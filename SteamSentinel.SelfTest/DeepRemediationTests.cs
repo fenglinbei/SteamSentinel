@@ -442,6 +442,52 @@ internal static partial class Program
         Check("三层分组 同物理路径存在覆盖缺口时文档提示不折叠",
             FindingPriorityPresentation.ReferenceFindingIds(new ScanReport { Findings = [docStrings, docCoverageGap] }).Count == 0);
 
+        Finding steamCfgPresent = new()
+        {
+            Id = "ref-steam-cfg",
+            RuleId = "STEAM-CFG-PRESENT",
+            Category = FindingCategory.Steam,
+            Severity = FindingSeverity.Low,
+            Score = 15,
+            Target = root + @"Steam\steam.cfg",
+            CanRemediate = false,
+            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+        };
+        Finding steamCfgControl = new()
+        {
+            Id = "pri-steam-cfg-control",
+            RuleId = "STEAM-CFG-CONTROL-SETTING",
+            Category = FindingCategory.Steam,
+            Severity = FindingSeverity.Medium,
+            Score = 45,
+            Target = steamCfgPresent.Target,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
+        };
+        Finding steamCfgPair = new()
+        {
+            Id = "pri-steam-cfg-pair",
+            RuleId = "STEAM-CFG-UPDATE-SUPPRESSION-PAIR",
+            Category = FindingCategory.Steam,
+            Severity = FindingSeverity.High,
+            Score = 85,
+            Target = steamCfgPresent.Target,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
+        };
+        Finding steamCfgGap = new()
+        {
+            Id = "steam-cfg-gap",
+            RuleId = "SCAN-PARTIAL",
+            Category = FindingCategory.Coverage,
+            Target = steamCfgPresent.Target
+        };
+        Check("三层分组 无敏感项steam.cfg默认折叠而控制项、禁更对及同路径覆盖缺口保留主表",
+            IsSingleReference(steamCfgPresent) &&
+            !IsSingleReference(steamCfgControl) &&
+            !IsSingleReference(steamCfgPair) &&
+            FindingPriorityPresentation.ReferenceFindingIds(new ScanReport { Findings = [steamCfgPresent, steamCfgGap] }).Count == 0);
+
         string snapshotBefore = JsonSerializer.Serialize(clashProxy, JsonFile.Options);
         _ = FindingPriorityPresentation.ReferenceFindingIds(new ScanReport { Findings = [clashProxy] });
         Check("三层分组 扩展分类不改动原Finding序列化字节",

@@ -456,7 +456,10 @@ public sealed partial class ContentScanner
             if (stream.Length <= context.Options.MaximumStringScanBytes || ScanResourceSession.Allow("MaximumStringScanBytes", stream.Length))
             {
                 stream.Position = 0; await ScanStringsStreamAsync(stream, source.DisplayName, node.OriginalTarget, node.Sha256,
-                    context.Report, context.WorkshopId, context.ProjectType, context.Token, context.Options.MaximumStringScanBytes);
+                    context.Report, context.WorkshopId, context.ProjectType, context.Token, context.Options.MaximumStringScanBytes,
+                    type.Type == DetectedFileType.PortableExecutable && source.Offset == 0 && stream.Length == file.Length
+                        ? () => PeSignatureVerifier(Path.GetFullPath(source.PhysicalPath), file.SafeFileHandle) == SignatureStatus.Valid
+                        : null);
                 node.Engines.Add(new() { EngineText = MessageText.Create("Backend.Core.ContentScanner.Containers.ScanContainerLeafAsync.01"), Status = ContainerStageStatus.Complete, Offset = 0, Length = stream.Length });
             }
             else

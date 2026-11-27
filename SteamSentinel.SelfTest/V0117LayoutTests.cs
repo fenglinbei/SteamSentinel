@@ -292,6 +292,62 @@ internal static partial class Program
         TestV020ContainerUi(output);
         TestV0119PasswordUi(output);
         TestP2CUiSimplification(output);
+        TestLowSteamCellColumnsNotTruncated();
+    }
+
+    private static void TestLowSteamCellColumnsNotTruncated()
+    {
+        foreach (CultureInfo culture in new[] { DisplayText.Chinese, DisplayText.English })
+        {
+            using IDisposable languageScope = DisplayText.UseCulture(culture);
+            MainWindow window = new();
+            using (UiLayoutHarness layout = new(window, 784, 460))
+            {
+                ScanReport report = new()
+                {
+                    Mode = ScanMode.Quick,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    Findings =
+                    [
+                        new()
+                        {
+                            RuleId = "STEAM-UI-SEMANTIC-TAMPERING",
+                            Title = "Steam 单元格列宽无害夹具",
+                            Category = FindingCategory.Steam,
+                            Severity = FindingSeverity.Low,
+                            Score = 25,
+                            CanRemediate = false,
+                            SuggestedActions = [SuggestedActionKind.ReviewOnly],
+                            Target = @"C:\Steam-Inert-Fixture\steamui\sp.js"
+                        }
+                    ]
+                };
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                typeof(MainWindow).GetField("_lastReport", flags)!.SetValue(window, report);
+                typeof(MainWindow).GetMethod("PopulateFindings", flags)!.Invoke(window, [report]);
+                typeof(MainWindow).GetMethod("UpdateSummary", flags)!.Invoke(window, [report]);
+                UiPreview.ApplyAccessState(window, InstallationSecurityStatus.Protected, new(true, true));
+                layout.Refresh();
+
+                DataGrid findings = (DataGrid)window.FindName("FindingsGrid");
+                DataGridRow? row = findings.ItemContainerGenerator.ContainerFromIndex(0) as DataGridRow;
+                TextBlock? severityText = row is null ? null : findings.Columns[1].GetCellContent(row) as TextBlock;
+                TextBlock? categoryText = row is null ? null : findings.Columns[2].GetCellContent(row) as TextBlock;
+                static bool FitsWithoutEllipsis(TextBlock? text)
+                {
+                    if (text is null || text.ActualWidth <= 0) return false;
+                    FormattedText measured = new(text.Text ?? string.Empty, CultureInfo.CurrentUICulture,
+                        FlowDirection.LeftToRight, new Typeface(text.FontFamily, text.FontStyle, text.FontWeight, text.FontStretch),
+                        text.FontSize, Brushes.Black, VisualTreeHelper.GetDpi(text).PixelsPerDip);
+                    return measured.Width <= text.ActualWidth + 0.5;
+                }
+                Check($"UI 784x460 {culture.Name} 严重度低风险提示与Steam分类单元格完整显示不出现省略号",
+                    layout.HasReadableColumns(findings) &&
+                    FitsWithoutEllipsis(severityText) &&
+                    FitsWithoutEllipsis(categoryText));
+            }
+            window.Close();
+        }
     }
 
     private static void TestV0119TableAndButtonConsistency(string? output)

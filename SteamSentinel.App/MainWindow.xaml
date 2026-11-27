@@ -252,8 +252,8 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.038}" Binding="{Binding Severity}" IsReadOnly="True" Width="72" ElementStyle="{StaticResource SeverityCellText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
-                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.039}" Binding="{Binding Category}" IsReadOnly="True" Width="64" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.038}" Binding="{Binding Severity}" IsReadOnly="True" Width="114" ElementStyle="{StaticResource SeverityCellText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
+                            <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.039}" Binding="{Binding Category}" IsReadOnly="True" Width="98" ElementStyle="{StaticResource GridCenteredText}" HeaderStyle="{StaticResource GridCenteredHeader}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.041}" Binding="{Binding Title}" IsReadOnly="True" Width="2*" MinWidth="110" ElementStyle="{StaticResource GridPathText}" />
                             <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.042}" Binding="{Binding TargetDisplay}" IsReadOnly="True" Width="2*" MinWidth="120" ElementStyle="{StaticResource GridPathText}" />
                             <DataGridTemplateColumn Header="{ui:Text Ui.Xaml.MainWindow.043}" Width="3*" MinWidth="174" IsReadOnly="True">

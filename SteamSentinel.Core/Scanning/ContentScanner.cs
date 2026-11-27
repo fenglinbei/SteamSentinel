@@ -26,6 +26,8 @@ public sealed partial class ContentScanner : IDisposable
     private string? _coverageRoot;
     private long _lastProgressTick;
     internal Action<ScanReport>? Checkpoint { get; set; }
+    internal Func<string, Microsoft.Win32.SafeHandles.SafeFileHandle, SignatureStatus> PeSignatureVerifier { get; init; } =
+        static (path, handle) => AuthenticodeVerifier.VerifyOffline(path, handle).Status;
 
     public ContentScanner(RuleSet rules) : this(rules, () => new AmsiScanner()) { }
 
@@ -431,7 +433,8 @@ public sealed partial class ContentScanner : IDisposable
         options.MaximumExpandedBytes;
 
     private async Task ScanStringsStreamAsync(Stream stream, string displayPath, string remediationTarget, string? sha256,
-        ScanReport report, string? workshopId, string? projectType, CancellationToken cancellationToken, long maximumBytes)
+        ScanReport report, string? workshopId, string? projectType, CancellationToken cancellationToken, long maximumBytes,
+        Func<bool>? hasValidOfflinePeSignature = null)
     {
         var signals = await StreamingStringInspection.ReadAsync(stream,
             _rules.SuspiciousStrings.Select(rule => rule.Value), _rules.KnownDomains,
@@ -444,7 +447,8 @@ public sealed partial class ContentScanner : IDisposable
                 Path.GetExtension(displayPath).ToLowerInvariant() is not (".md" or ".log" or ".lo"))
             {
                 IReadOnlyList<MessageText> scriptSignals = ScriptSignals.AnalyzeMessages(signals.Script.Contains);
-                if (scriptSignals.Count > 0) report.Findings.Add(new Finding
+                // 对具备有效离线 Authenticode 数字签名的合法 PE 二进制豁免纯脚本词语共现误报（仍保留强启发式、恶意哈希与域名规则）
+                if (scriptSignals.Count > 0 && hasValidOfflinePeSignature?.Invoke() != true) report.Findings.Add(new Finding
                 {
                     RuleId = "HEUR-SCRIPT-TOKEN-COOCCURRENCE",
                     Category = FindingCategory.File,
