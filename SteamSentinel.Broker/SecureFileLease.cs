@@ -103,9 +103,10 @@ internal sealed class SecureFileLease : IAsyncDisposable
         return hash;
     }
 
-    internal async Task<byte[]> ReadBytesAsync(int maximumBytes, CancellationToken token)
+    internal async Task<byte[]> ReadBytesAsync(int maximumBytes, CancellationToken token, bool allowEmpty = false)
     {
-        if (Length is <= 0 || Length > maximumBytes) throw new InvalidDataException();
+        if (Length < 0 || (!allowEmpty && Length == 0) || Length > maximumBytes) throw new InvalidDataException();
+        if (Length == 0) return [];
         byte[] bytes = new byte[checked((int)Length)];
         _stream.Position = 0;
         await _stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
@@ -120,6 +121,20 @@ internal sealed class SecureFileLease : IAsyncDisposable
         if (!_stream.CanWrite || bytes.LongLength != Length) throw new InvalidOperationException();
         _stream.Position = 0;
         await _stream.WriteAsync(bytes, token).ConfigureAwait(false);
+        await _stream.FlushAsync(token).ConfigureAwait(false);
+        _stream.Flush(flushToDisk: true);
+        _stream.Position = 0;
+    }
+
+    /// <summary>在独占锁句柄上支持不等长原位写入与安全截断，并立即落盘。</summary>
+    internal async Task WriteExactBytesWithTruncateAsync(byte[] bytes, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        if (!_stream.CanWrite) throw new InvalidOperationException();
+        _stream.Position = 0;
+        if (bytes.Length > 0)
+            await _stream.WriteAsync(bytes, token).ConfigureAwait(false);
+        _stream.SetLength(bytes.LongLength);
         await _stream.FlushAsync(token).ConfigureAwait(false);
         _stream.Flush(flushToDisk: true);
         _stream.Position = 0;

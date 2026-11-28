@@ -301,7 +301,8 @@
                                 <GradientStop Color="#FFF8FAFC" Offset="1" />
                             </RadialGradientBrush>
                         </Border.Background>
-                        <StackPanel MaxWidth="460" Margin="20,8" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <StackPanel MaxWidth="720" Margin="20,8" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <StackPanel x:Name="RepairStepperPanel" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,10" Visibility="Collapsed" />
                             <Grid x:Name="ScanStageRingHost" Width="108" Height="108" HorizontalAlignment="Center">
                                 <Ellipse x:Name="ScanPulseRing1" Width="84" Height="84" HorizontalAlignment="Center" VerticalAlignment="Center"
                                          Stroke="#3B82F6" StrokeThickness="1.3" Opacity="0" RenderTransformOrigin="0.5,0.5">
@@ -427,8 +428,19 @@
                     </TabItem>
                     <TabItem x:Name="BatchResultsTab" Style="{StaticResource ModernSubTabItem}" Header="{ui:Text Ui.Xaml.MainWindow.049}">
                         <Grid Margin="10">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                            <DockPanel>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <Border x:Name="BatchOutcomeBanner" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,6" Padding="10,7" CornerRadius="8" BorderThickness="1">
+                                <DockPanel LastChildFill="True">
+                                    <Button x:Name="BatchOutcomeActionButton" DockPanel.Dock="Right" Style="{StaticResource SubtleCompactButton}"
+                                            Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed" Click="BatchOutcomeAction_Click" />
+                                    <StackPanel>
+                                        <TextBlock x:Name="BatchOutcomeTitleText" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                                        <TextBlock x:Name="BatchOutcomeDetailText" Margin="0,2,0,0" FontSize="11.5" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <DockPanel Grid.Row="1">
                                 <Button x:Name="BatchActionDetailsButton" DockPanel.Dock="Right" Content="{ui:Text Ui.Xaml.MainWindow.083}"
                                         Click="BatchActionDetails_Click" IsEnabled="False" VerticalAlignment="Top" Margin="8,0,0,0"/>
                                 <StackPanel>
@@ -436,7 +448,7 @@
                                     <TextBlock x:Name="BatchFollowUpText" Text="{ui:Text Ui.Xaml.MainWindow.051}" TextTrimming="CharacterEllipsis" MaxHeight="18" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,0,6"/>
                                 </StackPanel>
                             </DockPanel>
-                            <DataGrid x:Name="BatchResultsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                            <DataGrid x:Name="BatchResultsGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
                                       SelectionChanged="BatchResults_SelectionChanged">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="{ui:Text Ui.Xaml.MainWindow.052}" Binding="{Binding Status}" Width="95" ElementStyle="{StaticResource GridCellText}"/>
@@ -603,6 +615,24 @@
                                     Click="RemediationAvailabilityAction_Click" Visibility="Collapsed" />
                         </Grid>
                     </Border>
+                    <WrapPanel x:Name="SteamRecoveryActionsBar" DockPanel.Dock="Bottom" Margin="0,4,0,0" Visibility="Collapsed">
+                        <Button x:Name="OfficialSteamRepairButton"
+                                Style="{StaticResource SubtleCompactButton}"
+                                Content="{ui:Text Ui.SteamRepair.OfficialButton}"
+                                ToolTip="{ui:Text Ui.SteamRepair.OfficialTip}"
+                                AutomationProperties.Name="{ui:Text Ui.SteamRepair.OfficialButton}"
+                                ToolTipService.ShowOnDisabled="True"
+                                Visibility="Collapsed"
+                                Click="OfficialSteamRepair_Click" />
+                        <Button x:Name="LaunchSteamSelfCheckButton"
+                                Style="{StaticResource SubtleCompactButton}"
+                                Content="{ui:Text Ui.SteamRepair.LaunchSelfCheckButton}"
+                                ToolTip="{ui:Text Ui.SteamRepair.LaunchSelfCheckTip}"
+                                AutomationProperties.Name="{ui:Text Ui.SteamRepair.LaunchSelfCheckButton}"
+                                ToolTipService.ShowOnDisabled="True"
+                                Visibility="Collapsed"
+                                Click="LaunchSteamSelfCheck_Click" />
+                    </WrapPanel>
                         <Button x:Name="RemediateButton" DockPanel.Dock="Right" VerticalAlignment="Top" Margin="8,0,0,0"
                                 IsEnabled="False" Content="{ui:Text Ui.Xaml.MainWindow.092}" Click="Remediate_Click" ToolTipService.ShowOnDisabled="True">
                             <Button.Style><Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">

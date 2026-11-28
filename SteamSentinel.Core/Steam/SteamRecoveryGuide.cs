@@ -24,8 +24,8 @@ public sealed record SteamRecoveryRecommendation(
 }
 
 /// <summary>
-/// 生成纯只读的 Steam 官方客户端自检与 SteamSetup.exe 覆盖恢复指引。
-/// 不执行任何下载、进程启动或二进制修改。
+/// 生成纯只读的 Steam 官方分包还原、正版自检拉起与 SteamSetup.exe 覆盖恢复指引。
+/// 本类自身不执行任何下载、进程启动或二进制修改。
 /// </summary>
 public static class SteamRecoveryGuide
 {
@@ -34,7 +34,10 @@ public static class SteamRecoveryGuide
         "STEAM-UI-SEMANTIC-TAMPERING",
         "STEAM-UI-EXTERNAL-SCRIPT",
         "STEAM-UI-LOOPBACK-SCRIPT",
-        "STEAMALERT-UI-INJECTION"
+        "STEAM-UI-CSS-SUPPRESSION",
+        "STEAMALERT-UI-INJECTION",
+        "STEAM-CLIENT-BINARY-MISSING",
+        "STEAM-CLIENT-BINARY-TAMPERED"
     ];
 
     /// <summary>仅对本地已发现的安全 Steam 根目录校验 steam.exe Valve 签名并生成只读恢复指引。</summary>
@@ -104,9 +107,9 @@ public static class SteamRecoveryGuide
     {
         bool uiInActions = batch?.Plans.SelectMany(plan => plan.Actions).Any(action =>
             action.Type == RemediationActionType.RepairSteamConfiguration &&
-            action.ConfigurationKind == SteamConfigurationRepair.UiFile) == true;
+            action.ConfigurationKind is SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore) == true;
         bool uiInFollowUp = followUp?.Findings.Any(finding =>
-            finding.ConfigurationKind == SteamConfigurationRepair.UiFile ||
+            finding.ConfigurationKind is SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore ||
             UiTamperingRules.Contains(finding.RuleId, StringComparer.OrdinalIgnoreCase)) == true;
         if (!uiInActions && !uiInFollowUp) return string.Empty;
 

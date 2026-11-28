@@ -5,6 +5,8 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
+using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Rules;
@@ -19,7 +21,11 @@ internal sealed partial class BrokerEngine
         MessageText.Create("Backend.Broker.BrokerEngine.DirectoryRollbackSafetyMessage.01");
     private const int MaximumManifestBytes = RemediationLimits.MaximumManifestBytes;
     private readonly RuleSet _rules = RuleLoader.LoadActive().Rules;
-    private readonly SteamLayout _steamLayout = SteamLocator.Discover();
+    private readonly SteamLayout _steamLayout;
+    private readonly SteamLayout? _steamLayoutOverride;
+    private readonly SteamProcessController _steamProcessController;
+    private readonly Func<string, SafeFileHandle?, SignatureResult>? _verifySteamPackageExecutable;
+    private readonly string? _testQuarantineRoot;
     private readonly IIncidentTrustStore _incidentTrustStore;
     private readonly IIncidentStateSecurity _incidentStateSecurity;
     private RemediationRunResult _result = null!;
@@ -36,10 +42,33 @@ internal sealed partial class BrokerEngine
         this(incidentTrustStore, new WindowsIncidentStateSecurity())
     { }
 
-    internal BrokerEngine(IIncidentTrustStore incidentTrustStore, IIncidentStateSecurity incidentStateSecurity)
+    internal BrokerEngine(IIncidentTrustStore incidentTrustStore, IIncidentStateSecurity incidentStateSecurity) :
+        this(incidentTrustStore, incidentStateSecurity, new SteamProcessController(), null, null, null)
+    { }
+
+    internal BrokerEngine(
+        IIncidentTrustStore incidentTrustStore,
+        IIncidentStateSecurity incidentStateSecurity,
+        SteamProcessController steamProcessController) :
+        this(incidentTrustStore, incidentStateSecurity, steamProcessController, null, null, null)
+    { }
+
+    // 仅向内部测试暴露 Steam 进程控制器、布局、PE 签名校验器与隔离根目录覆盖，生产路径默认发现真实环境与受保护系统隔离根目录。
+    internal BrokerEngine(
+        IIncidentTrustStore incidentTrustStore,
+        IIncidentStateSecurity incidentStateSecurity,
+        SteamProcessController steamProcessController,
+        SteamLayout? steamLayoutOverride,
+        Func<string, SafeFileHandle?, SignatureResult>? verifySteamPackageExecutable = null,
+        string? testQuarantineRoot = null)
     {
         _incidentTrustStore = incidentTrustStore ?? throw new ArgumentNullException(nameof(incidentTrustStore));
         _incidentStateSecurity = incidentStateSecurity ?? throw new ArgumentNullException(nameof(incidentStateSecurity));
+        _steamProcessController = steamProcessController ?? throw new ArgumentNullException(nameof(steamProcessController));
+        _steamLayoutOverride = steamLayoutOverride;
+        _steamLayout = steamLayoutOverride ?? SteamLocator.Discover();
+        _verifySteamPackageExecutable = verifySteamPackageExecutable;
+        _testQuarantineRoot = string.IsNullOrWhiteSpace(testQuarantineRoot) ? null : Path.GetFullPath(testQuarantineRoot);
     }
 
     public async Task<RemediationRunResult> ExecuteAsync(RemediationPlan plan, CancellationToken cancellationToken = default)
@@ -65,25 +94,24 @@ internal sealed partial class BrokerEngine
         foreach (RemediationAction action in plan.Actions) ValidateAction(action);
         ValidateConfigurationPlan(plan);
         RequireSteamAlertClosure(plan);
-        if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration))
-            RequireSteamConfigurationClosed();
     }
 
     private async Task<RemediationRunResult> ExecuteValidatedAsync(RemediationPlan plan, CancellationToken cancellationToken)
     {
         _result = new RemediationRunResult { PlanId = plan.PlanId, PlanIdentitySha256 = RemediationPlanIdentity.Fingerprint(plan) };
         _contentProofs.Clear();
-        _verification = new(new WindowsRemediationStateProbe(async (script, token) =>
+        IRemediationStateProbe innerProbe = new WindowsRemediationStateProbe(async (script, token) =>
         {
             ProcessResult output = await RunEncodedPowerShellAsync(script, null, token);
             return output.ExitCode == 0 && output.Output.Length <= 16_384 ? output.Output.Trim() : null;
-        }, _result.IncidentId));
+        }, _result.IncidentId);
+        _verification = new(_steamLayoutOverride is null ? innerProbe : new BrokerScopedStateProbe(innerProbe, _steamLayoutOverride));
         _persistOwnManifest = plan.Actions[0].Type is not (RemediationActionType.RollbackIncident or RemediationActionType.DeleteIncident);
         if (_persistOwnManifest)
         {
-            _incidentRoot = Path.Combine(AppPaths.QuarantineRoot, _result.IncidentId.ToString("D"));
+            _incidentRoot = Path.Combine(_testQuarantineRoot ?? AppPaths.QuarantineRoot, _result.IncidentId.ToString("D"));
             _manifestPath = Path.Combine(_incidentRoot, "manifest.json");
-            MachineStateSecurity.PrepareIncidentDirectory(_incidentRoot, plan.RequestedBySid);
+            PrepareIncidentDirectory(_incidentRoot, plan.RequestedBySid);
             _manifest = new QuarantineManifest
             {
                 IncidentId = _result.IncidentId,
@@ -95,6 +123,9 @@ internal sealed partial class BrokerEngine
             _result.ManifestPath = _manifestPath;
             await InitializeManifestAsync(cancellationToken);
         }
+
+        if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration))
+            await EnsureSteamClosedForConfigurationAsync(cancellationToken);
 
         Dictionary<Guid, MessageText> preparationFailures = await PrepareConfigurationBackupsAsync(plan, cancellationToken);
         await BrokerActionSequencer.RunLocalizedAsync(plan, _result, preparationFailures,
@@ -315,11 +346,11 @@ internal sealed partial class BrokerEngine
         if (_confirmedFileTargets is not null)
         {
             string explicitItemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
-            MachineStateSecurity.PreparePayloadDirectory(explicitItemRoot);
+            PreparePayloadDirectory(explicitItemRoot);
             string explicitDestination = Path.Combine(explicitItemRoot, SafeName(Path.GetFileName(source)) + ".quarantined");
             await QuarantineExplicitFileAsync(action, _confirmedFileTargets, explicitDestination,
                 async (record, token) => { _manifest.Records.Add(record); await PersistManifestAsync(token); },
-                MachineStateSecurity.ProtectPayloadFile, cancellationToken);
+                ProtectPayloadFile, cancellationToken);
             return MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.04", explicitDestination);
         }
         if (!File.Exists(source)) return MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.01");
@@ -336,7 +367,7 @@ internal sealed partial class BrokerEngine
             ? await OpenHandoffProofLeaseAsync(source, action.ExpectedSha256!, cancellationToken, lease) : null;
 
         string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
-        MachineStateSecurity.PreparePayloadDirectory(itemRoot);
+        PreparePayloadDirectory(itemRoot);
         string destination = Path.Combine(itemRoot, SafeName(Path.GetFileName(source)) + ".quarantined");
         QuarantineRecord record = new()
         {
@@ -352,7 +383,7 @@ internal sealed partial class BrokerEngine
         _manifest.Records.Add(record);
         await PersistManifestAsync(cancellationToken);
         await lease.CopyToAsync(destination, currentHash, cancellationToken);
-        MachineStateSecurity.ProtectPayloadFile(destination);
+        ProtectPayloadFile(destination);
         lease.DeleteOnClose();
         return MessageText.Create("Backend.Broker.BrokerEngine.QuarantineFileAsync.04", (destination));
     }
@@ -366,7 +397,7 @@ internal sealed partial class BrokerEngine
         if (!currentFingerprint.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.QuarantineDirectoryAsync.02"), sourceText => new InvalidOperationException(sourceText));
         string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
-        MachineStateSecurity.PreparePayloadDirectory(itemRoot);
+        PreparePayloadDirectory(itemRoot);
         string destination = Path.Combine(itemRoot, SafeName(Path.GetFileName(source)) + ".quarantined");
         QuarantineRecord record = new()
         {
@@ -448,12 +479,12 @@ internal sealed partial class BrokerEngine
         if (File.Exists(taskFile))
         {
             backup = Path.Combine(_incidentRoot, "tasks", action.ActionId.ToString("N") + ".xml");
-            MachineStateSecurity.PreparePayloadDirectory(Path.GetDirectoryName(backup)!);
+            PreparePayloadDirectory(Path.GetDirectoryName(backup)!);
             await using SecureFileLease taskLease = SecureFileLease.Open(taskFile);
             string taskHash = await taskLease.ComputeSha256Async(cancellationToken);
             RequireTaskSnapshotHash(taskHash, action.ExpectedSha256);
             await taskLease.CopyToAsync(backup, taskHash, cancellationToken);
-            MachineStateSecurity.ProtectPayloadFile(backup);
+            ProtectPayloadFile(backup);
             if (HasPersistenceBinding(action))
             {
                 string xml = await File.ReadAllTextAsync(backup, cancellationToken);
@@ -603,7 +634,7 @@ internal sealed partial class BrokerEngine
         SetConfigurationRollbackContext(manifest, manifestPath);
         await ValidateRollbackManifestAsync(manifest, incidentRoot, incidentId, cancellationToken);
         if (manifest.Records.Any(record => record.Type == RemediationActionType.RepairSteamConfiguration && !record.RolledBack))
-            RequireSteamConfigurationClosed();
+            await EnsureSteamClosedForConfigurationAsync(cancellationToken);
 
         foreach (QuarantineRecord record in RemediationDependencies.RollbackOrder(manifest))
         {
@@ -929,7 +960,7 @@ sourceText));
         catch { return false; }
     }
 
-    private static async Task CopyDirectoryVerifiedAsync(
+    private async Task CopyDirectoryVerifiedAsync(
         string source,
         string destination,
         string expectedFingerprint,
@@ -941,14 +972,14 @@ sourceText));
         if (File.Exists(destination) || Directory.Exists(destination))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.CopyDirectoryVerifiedAsync.02"), sourceText => new IOException(sourceText));
 
-        MachineStateSecurity.PreparePayloadDirectory(destination);
+        PreparePayloadDirectory(destination);
         bool completed = false;
         try
         {
             foreach (DirectoryFingerprintEntry entry in snapshot.Entries.Where(entry => entry.IsDirectory))
             {
                 string targetDirectory = ResolveSnapshotPath(destination, entry.RelativePath);
-                MachineStateSecurity.PreparePayloadDirectory(targetDirectory);
+                PreparePayloadDirectory(targetDirectory);
             }
             foreach (DirectoryFingerprintEntry entry in snapshot.Entries.Where(entry => !entry.IsDirectory))
             {
@@ -962,7 +993,7 @@ sourceText));
                 if (!sourceHash.Equals(entry.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.CopyDirectoryVerifiedAsync.04", (entry.RelativePath)), sourceText => new InvalidOperationException(sourceText));
                 await lease.CopyToAsync(targetFile, sourceHash, cancellationToken);
-                MachineStateSecurity.ProtectPayloadFile(targetFile);
+                ProtectPayloadFile(targetFile);
             }
 
             string sourceAfter = await DirectoryFingerprint.ComputeAsync(source, cancellationToken);
@@ -1073,13 +1104,45 @@ sourceText));
         return string.IsNullOrWhiteSpace(safe) ? "item" : safe[..Math.Min(safe.Length, 120)];
     }
 
-    private static string GetIncidentRoot(Guid incidentId)
+    private string GetIncidentRoot(Guid incidentId)
     {
-        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppPaths.QuarantineRoot));
+        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_testQuarantineRoot ?? AppPaths.QuarantineRoot));
         string incident = Path.GetFullPath(Path.Combine(root, incidentId.ToString("D")));
         if (!incident.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.GetIncidentRoot.01"), sourceText => new UnauthorizedAccessException(sourceText));
         return incident;
+    }
+
+    private void PrepareIncidentDirectory(string path, string requestedBySid)
+    {
+        if (_testQuarantineRoot is null) MachineStateSecurity.PrepareIncidentDirectory(path, requestedBySid);
+        else Directory.CreateDirectory(path);
+    }
+
+    private void PreparePayloadDirectory(string path)
+    {
+        if (_testQuarantineRoot is null) MachineStateSecurity.PreparePayloadDirectory(path);
+        else Directory.CreateDirectory(path);
+    }
+
+    private void ProtectPayloadFile(string path)
+    {
+        if (_testQuarantineRoot is null) MachineStateSecurity.ProtectPayloadFile(path);
+    }
+
+    private sealed class BrokerScopedStateProbe(IRemediationStateProbe inner, SteamLayout steamLayout) : IRemediationStateProbe
+    {
+        public async Task<RemediationVerificationObservation> ObserveAsync(RemediationAction action, CancellationToken cancellationToken)
+        {
+            if (action.Type != RemediationActionType.RepairSteamConfiguration)
+                return await inner.ObserveAsync(action, cancellationToken).ConfigureAwait(false);
+            bool repaired = await SteamConfigurationRepairTarget.IsRepairedAsync(action, steamLayout, cancellationToken).ConfigureAwait(false);
+            return new RemediationVerificationObservation
+            {
+                Status = repaired ? RemediationVerificationStatus.Verified : RemediationVerificationStatus.Unknown,
+                MessageText = RemediationVerification.Limit(MessageText.Create(repaired ? "SteamConfig.Verified" : "SteamConfig.VerificationUnavailable"))
+            };
+        }
     }
 
     private async Task InitializeManifestAsync(CancellationToken cancellationToken)
@@ -1156,7 +1219,7 @@ sourceText));
         return content;
     }
 
-    private static async Task WriteManifestAtomicAsync(
+    private async Task WriteManifestAtomicAsync(
         string path,
         byte[] content,
         string requestedBySid,
@@ -1165,7 +1228,7 @@ sourceText));
         string fullPath = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(fullPath)
             ?? throw MessageExceptions.Create(MessageText.Create("Backend.Broker.BrokerEngine.WriteManifestAtomicAsync.01"), sourceText => new InvalidOperationException(sourceText));
-        MachineStateSecurity.EnsureProtectedPath(directory);
+        if (_testQuarantineRoot is null) MachineStateSecurity.EnsureProtectedPath(directory);
         string temporary = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
         try
         {
@@ -1182,7 +1245,7 @@ sourceText));
                 stream.Flush(flushToDisk: true);
             }
             File.Move(temporary, fullPath, overwrite: true);
-            MachineStateSecurity.ProtectManifestFile(fullPath, requestedBySid);
+            if (_testQuarantineRoot is null) MachineStateSecurity.ProtectManifestFile(fullPath, requestedBySid);
         }
         finally
         {

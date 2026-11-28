@@ -30,12 +30,17 @@ internal sealed class BrokerConfirmationWindow : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        bool hasSteamRepair = plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration);
+        string introText = RemediationModePresentation.Summary(plan) + Environment.NewLine +
+            (plan.Mode == RemediationMode.Aggressive
+                ? DisplayText.Get("RemediationMode.AggressiveNotice") + Environment.NewLine + DisplayText.Get("RemediationMode.ExactTargetsNotice")
+                : DisplayText.Get("Scope.ConfirmationIntro") + " " + DisplayText.Get("Scope.Ui.PreviewNotice"));
+        if (hasSteamRepair)
+            introText += Environment.NewLine + DisplayText.Get("SteamConfig.AutoCloseSteamNotice");
+
         Label introduction = new()
         {
-            Text = RemediationModePresentation.Summary(plan) + Environment.NewLine +
-                (plan.Mode == RemediationMode.Aggressive
-                    ? DisplayText.Get("RemediationMode.AggressiveNotice") + Environment.NewLine + DisplayText.Get("RemediationMode.ExactTargetsNotice")
-                    : DisplayText.Get("Scope.ConfirmationIntro") + " " + DisplayText.Get("Scope.Ui.PreviewNotice")),
+            Text = introText,
             ForeColor = plan.Mode == RemediationMode.Aggressive ? Color.FromArgb(154, 52, 18) : SystemColors.ControlText,
             AutoSize = true,
             Dock = DockStyle.Fill,
@@ -147,11 +152,15 @@ internal sealed class BrokerConfirmationWindow : Form
                     SteamConfigurationRepair.Cfg => "SteamConfig.CfgDescription",
                     SteamConfigurationRepair.Marker => "SteamConfig.MarkerDescription",
                     SteamConfigurationRepair.UiFile => "SteamConfig.UiFileDescription",
+                    SteamConfigurationRepair.PackageRestore => "SteamConfig.PackageRestoreDescription",
                     SteamConfigurationRepair.Run or SteamConfigurationRepair.Shortcut => "SteamConfig.ArgumentsDescription",
                     _ => "SteamConfig.InvalidTarget"
                 };
+                string repairVerification = DisplayText.Format("SteamConfig.PreviewIntent", DisplayText.Get(description));
+                if (action.ConfigurationKind == SteamConfigurationRepair.PackageRestore)
+                    repairVerification += Environment.NewLine + DisplayText.Get("SteamConfig.AutoCloseSteamNotice");
                 return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target),
-                    DisplayText.Format("SteamConfig.PreviewIntent", DisplayText.Get(description)),
+                    repairVerification,
                     Sanitize(RemediationCasePresentation.ActionIdentity(action)));
             }
             return new BrokerConfirmationRow(ReportExporter.ActionLabel(action.Type), Sanitize(action.Target), verification,

@@ -484,15 +484,15 @@ Recognized credential fields have been filtered, but records may still contain u
     <comment>Display-only key. Initial migration: DisplayText.cs:0. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.01" xml:space="preserve">
-    <value>Available for selection</value>
+    <value>Ready to fix</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:23. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.02" xml:space="preserve">
-    <value>A verifiable target is available. Review the preview before proceeding.</value>
+    <value>Select this item and click "Preview &amp; Fix" to back up and clean it.</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:23. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.03" xml:space="preserve">
-    <value>Check the target, then select it for remediation.</value>
+    <value>Select the item and click "Preview &amp; Fix".</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:23. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.04" xml:space="preserve">
@@ -540,8 +540,11 @@ Recognized credential fields have been filtered, but records may still contain u
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:34. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.15" xml:space="preserve">
-    <value>The evidence is insufficient for remediation. Further review is required.</value>
+    <value>Not confirmed as malware; common in normal apps or mods and usually needs no action.</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:35. Keep this key stable.</comment>
+  </data>
+  <data name="FindingHandling.SteamPackageRestore.Reason" xml:space="preserve">
+    <value>Automatically backs up the modified file and restores the official Steam file.</value>
   </data>
   <data name="FindingHandling.Get.16" xml:space="preserve">
     <value>Confirm whether this is your own proxy, or click "Check proxy &amp; certificates".</value>
@@ -3356,7 +3359,7 @@ This window and its scan results were retained.</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Confirmation.01" xml:space="preserve">
-    <value>Review remediation plan</value>
+    <value>Confirm repair list</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Applying.01" xml:space="preserve">
@@ -4358,7 +4361,7 @@ See exported records for more detail.</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.092" xml:space="preserve">
-    <value>Preview &amp; remediate</value>
+    <value>Preview &amp; Fix</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.093" xml:space="preserve">
@@ -4614,7 +4617,7 @@ See exported records for more detail.</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.002" xml:space="preserve">
-    <value>Review remediation plan</value>
+    <value>Confirm Repair List</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.003" xml:space="preserve">
@@ -4698,7 +4701,7 @@ See exported records for more detail.</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.022" xml:space="preserve">
-    <value>Run remediation</value>
+    <value>Start Repair</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Language.Automatic" xml:space="preserve">
@@ -5913,7 +5916,7 @@ Component error output: </value>
     <value>Property/file associations are static declarations. Missing certificate or PAC entries in these tables do not exclude changes made when the program runs.</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.01" xml:space="preserve">
-    <value>Script-related strings require review</value>
+    <value>Contains common script keywords (seen in normal apps)</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.02" xml:space="preserve">
     <value>Content location: {0}</value>
@@ -6039,7 +6042,7 @@ Component error output: </value>
     <value>A confirmed modified Steam frontend file was matched</value>
   </data>
   <data name="Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.04" xml:space="preserve">
-    <value>Semantic fake support-alert modifications were detected in the Steam frontend</value>
+    <value>Steam interface file tampered by fake alert</value>
   </data>
   <data name="Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.05" xml:space="preserve">
     <value>SHA-256={0}; size of the same locked read-only snapshot={1:N0}</value>
@@ -11649,7 +11652,8 @@ Component error output: </value>
     <value>literal match</value>
   </data>
   <data name="Remediation.ScriptTokenEvidenceReviewOnly" xml:space="preserve">
-    <value>These tokens or static declarations do not authorize remediation (rule: {0}). Rescan and review the evidence; the original report remains unchanged.</value>
+    <value>Contains common script words often seen in browsers or normal apps; no action needed.
+Diagnostic rule: {0}</value>
   </data>
   <data name="Ui.RemediationAvailability.RestartRequired" xml:space="preserve">
     <value>The app encountered a problem. Reopen it before further remediation. Your records remain available.</value>
@@ -11673,7 +11677,7 @@ Component error output: </value>
     <value>A previous remediation ended with an unknown outcome (no actionable items now).</value>
   </data>
   <data name="Ui.RemediationAvailability.Ready" xml:space="preserve">
-    <value>Select items to handle, then click "Preview &amp; remediate".</value>
+    <value>Select items to fix, then click "Preview &amp; Fix".</value>
   </data>
   <data name="Ui.RemediationAvailability.CheckRecovery" xml:space="preserve">
     <value>Check and continue</value>
@@ -11998,35 +12002,108 @@ Reason: {2}</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.ErrorSummary" xml:space="preserve"><value>Manually archived as unknown outcome by user because the earlier elevated run did not return a receipt.</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.Done" xml:space="preserve"><value>Archived the pending record as unknown outcome and unlocked remediation. Review affected targets carefully.</value></data>
   <data name="Rules.Package.LoadFallbackNotice" xml:space="preserve"><value>The local signed rule update did not pass signature, version, or expiration verification; built-in rules were used instead.</value></data>
-  <data name="Steam.DllForwarder.Title" xml:space="preserve"><value>Suspicious DLL forwarding structure (versionOrg.dll) in Steam folder</value></data>
+  <data name="Steam.DllForwarder.Title" xml:space="preserve"><value>Suspicious hijack file (versionOrg.dll) in Steam folder</value></data>
   <data name="Steam.DllForwarder.Description" xml:space="preserve"><value>versionOrg.dll was found in a sensitive Steam client directory. This filename is commonly used with sideloaded version.dll proxies and requires verification against trusted sources.</value></data>
   <data name="Steam.DllForwarder.EvidencePair" xml:space="preserve"><value>Paired versionOrg.dll and version.dll; signature={0}; versionOrg SHA-256={1}; version SHA-256={2}</value></data>
   <data name="Steam.DllForwarder.EvidenceSingle" xml:space="preserve"><value>Standalone versionOrg.dll; signature={0}; SHA-256={1}</value></data>
   <data name="Steam.ProxyDll.SeverityTitle.Valve" xml:space="preserve"><value>Valve-signed extra DLL in Steam directory</value></data>
   <data name="Steam.ProxyDll.EvidenceWithSigner" xml:space="preserve"><value>{0}; Signer={1}; SHA-256={2}</value></data>
-  <data name="Steam.UiExternalScript.Title" xml:space="preserve"><value>Steam UI script injects an unofficial external script URL</value></data>
+  <data name="Steam.UiExternalScript.Title" xml:space="preserve"><value>External malicious script injected into Steam UI</value></data>
   <data name="Steam.UiExternalScript.Description" xml:space="preserve"><value>The script creates a script element, assigns an external non-Valve domain URL to its source, and appends it to the document. Review Steam UI extensions or client integrity before logging in.</value></data>
   <data name="Steam.UiExternalScript.Evidence" xml:space="preserve"><value>External script endpoint {0}. File SHA-256 {1}.</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.09" xml:space="preserve"><value>Detected Steam CEF debugging hijack combined indicators</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.10" xml:space="preserve"><value>Contains CEF debugging or update-suppression configuration markers together with Steam UI/file manipulation routines.</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.11" xml:space="preserve"><value>Detected Steam Workshop download-execute-persistence chain</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.12" xml:space="preserve"><value>Found inside a Workshop path with combined download, process execution, and startup persistence indicators.</value></data>
-  <data name="SteamConfig.UiFileDescription" xml:space="preserve"><value>Back up this tampered or externally injected Steam UI file and remove it from Steam, with rollback support from a trusted incident.</value></data>
-  <data name="SteamConfig.UiFileHandling" xml:space="preserve"><value>Exit Steam completely, back up and remove the tampered UI file, then launch official Steam or run SteamSetup.exe to restore clean client files.</value></data>
-  <data name="SteamConfig.UiFilePreviewNotice" xml:space="preserve"><value>Removed Steam UI files are backed up to quarantine before deletion. Restart official Steam afterward so Steam can restore official UI files, or run SteamSetup.exe.</value></data>
+  <data name="SteamConfig.UiFileDescription" xml:space="preserve"><value>Automatically backs up and removes this tampered Steam interface file (reversible from Quarantine).</value></data>
+  <data name="SteamConfig.UiFileHandling" xml:space="preserve"><value>Safely closes Steam if running, backs up and removes the tampered UI file, and lets official Steam restore clean assets.</value></data>
+  <data name="SteamConfig.UiFilePreviewNotice" xml:space="preserve"><value>Removed Steam interface files are backed up first. Afterward click "Open Steam to Restore Files" or "Repair Steam (Keep Games)" to restore clean assets.</value></data>
   <data name="SteamConfig.RepairedIdentity" xml:space="preserve"><value>Expected SHA-256 after repair {0}</value></data>
-  <data name="SteamConfig.UiFileFollowUp" xml:space="preserve"><value> Tampered or injected Steam UI scripts remain. Remove them and restart official Steam or run SteamSetup.exe to recover.</value></data>
+  <data name="SteamConfig.UiFileFollowUp" xml:space="preserve"><value> Tampered Steam UI scripts remain. Clean them, then click "Open Steam to Restore Files" or "Repair Steam (Keep Games)".</value></data>
   <data name="SteamConfig.LoopbackFollowUpReview" xml:space="preserve"><value> Other Steam scripts load local services and require review.</value></data>
+  <data name="SteamConfig.PackageRestoreDescription" xml:space="preserve"><value>Automatically backs up the modified file, safely closes running Steam, and restores the clean official Steam file in place (reversible).</value></data>
+  <data name="SteamConfig.PackageRestorePreviewAction" xml:space="preserve"><value>Restore official version (auto-backup)</value></data>
+  <data name="SteamConfig.AutoCloseSteamNotice" xml:space="preserve"><value> Running Steam processes in this folder will close safely before repair starts so files are not locked.</value></data>
+  <data name="Steam.UiCssSuppression.Title" xml:space="preserve"><value>Steam UI stylesheet modified to hide security warnings</value></data>
+  <data name="Steam.UiCssSuppression.Description" xml:space="preserve"><value>This Steam UI CSS stylesheet contains suspicious rules that suppress red warning banners or account alert elements.</value></data>
+  <data name="Steam.UiCssSuppression.Evidence" xml:space="preserve"><value>Matched warning suppression CSS rules. File SHA-256 {0}.</value></data>
+  <data name="Steam.ClientBinary.TamperedTitle" xml:space="preserve"><value>Steam main program (steam.exe) is modified or untrusted</value></data>
+  <data name="Steam.ClientBinary.TamperedDescription" xml:space="preserve"><value>The steam.exe executable in the Steam installation root does not carry a valid Valve signature and may have been modified or replaced.</value></data>
+  <data name="Steam.ClientBinary.TamperedEvidence" xml:space="preserve"><value>Signature status: {0}; Signer={1}; SHA-256={2}</value></data>
+  <data name="Steam.ClientBinary.MissingTitle" xml:space="preserve"><value>Steam main program (steam.exe) is missing</value></data>
+  <data name="Steam.ClientBinary.MissingDescription" xml:space="preserve"><value>An official Steam package manifest exists in this directory, but steam.exe is missing. Click "Repair Steam (Keep Games)" to restore it.</value></data>
+  <data name="Steam.ClientBinary.MissingEvidence" xml:space="preserve"><value>Expected official Steam executable at {0}, but the file does not exist.</value></data>
+  <data name="Steam.ClientBinary.FallbackGuidance" xml:space="preserve"><value>Use "Repair Steam (Keep Games)" or run official SteamSetup.exe over the Steam folder to restore a Valve-signed steam.exe.</value></data>
+  <data name="Steam.UiPackageParticipant.Title" xml:space="preserve"><value>Official Steam interface file was modified</value></data>
+  <data name="Steam.UiPackageParticipant.Description" xml:space="preserve"><value>This official Steam interface file was modified; select it to restore the clean official version in place without reinstalling Steam.</value></data>
+  <data name="Steam.UiPackageParticipant.Evidence" xml:space="preserve"><value>Relative path: {0}; current SHA-256 {1}.</value></data>
+  <data name="Steam.ProxyDll.QuarantineHandling" xml:space="preserve"><value>Automatically backs up this suspicious hijack file to quarantine and removes it from Steam.</value></data>
+  <data name="Ui.SteamRepair.OfficialButton" xml:space="preserve"><value>Repair Steam (Keep Games)</value></data>
+  <data name="Ui.SteamRepair.OfficialTip" xml:space="preserve"><value>Automatically downloads Valve's official installer to repair Steam without deleting any installed games.</value></data>
+  <data name="Ui.SteamRepair.LaunchSelfCheckButton" xml:space="preserve"><value>Open Steam to Restore Files</value></data>
+  <data name="Ui.SteamRepair.LaunchSelfCheckTip" xml:space="preserve"><value>Safely opens verified official Steam so it automatically restores the removed interface files.</value></data>
+  <data name="Ui.SteamRepair.OfficialTitle" xml:space="preserve"><value>Repair Steam (Keep Games)</value></data>
+  <data name="Ui.SteamRepair.OfficialConfirmBody" xml:space="preserve"><value>SteamSentinel will download SteamSetup.exe from Valve's official HTTPS site, verify its Valve signature, safely close Steam under {0}, and repair the client.
+
+All your games (steamapps) and saves will be preserved. Continue?</value></data>
+  <data name="Ui.SteamRepair.OfficialProgress" xml:space="preserve"><value>Preparing to download SteamSetup.exe and repair {0}...</value></data>
+  <data name="Ui.SteamRepair.OfficialCompleted" xml:space="preserve"><value>Steam repair completed (installer check: {0}). Rechecking Steam now.</value></data>
+  <data name="Ui.SteamRepair.OfficialFailed" xml:space="preserve"><value>Steam repair did not finish: {0}</value></data>
+  <data name="Ui.SteamRepair.NoSteamRoot" xml:space="preserve"><value>No local Steam installation folder was found for repair.</value></data>
+  <data name="Ui.SteamRepair.NoVerifiedSteamExe" xml:space="preserve"><value>No verified official steam.exe was found. Use "Repair Steam (Keep Games)" instead.</value></data>
+  <data name="Ui.SteamRepair.LaunchTitle" xml:space="preserve"><value>Open Steam to Restore Files</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.Direct" xml:space="preserve"><value>Verified Valve signature and opened Steam (PID {0}). Wait for it to restore files, then scan again.</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.DeElevated" xml:space="preserve"><value>Verified Valve signature and safely opened Steam with standard privileges (PID {0}). Wait for files to restore, then scan again.</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.RefusedElevated" xml:space="preserve"><value>Refused to launch steam.exe elevated because no standard desktop token was available. Please open Steam from your desktop. Details: {0}</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.RefusedSignature" xml:space="preserve"><value>Blocked opening steam.exe because it failed Valve signature verification. Use "Repair Steam (Keep Games)" instead. Details: {0}</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.Failed" xml:space="preserve"><value>Could not open Steam: {0}</value></data>
+  <data name="SteamConfig.PackageUnavailable" xml:space="preserve"><value>Could not obtain the official Steam file package locally or online. Check your connection or use "Repair Steam (Keep Games)".</value></data>
+  <data name="Ui.RemediationAvailability.SteamOfficialRepairAvailable" xml:space="preserve"><value>Steam needs official recovery; click "Repair Steam (Keep Games)" below without deleting any games.</value></data>
+  <data name="Ui.RemediationAvailability.SteamSelfCheckAvailable" xml:space="preserve"><value>Tampered UI files were removed. Click "Open Steam to Restore Files" below so Steam restores clean assets.</value></data>
   <data name="Steam.RecoveryGuide.Header" xml:space="preserve"><value>Steam client recovery guidance:</value></data>
-  <data name="Steam.RecoveryGuide.RestartValveSigned" xml:space="preserve"><value>1. All discovered steam.exe executables pass Valve Authenticode signature verification ({0}). Close any lingering background Steam processes and launch official Steam so its self-check can redownload missing UI assets.</value></data>
+  <data name="Steam.RecoveryGuide.RestartValveSigned" xml:space="preserve"><value>1. All discovered steam.exe files passed Valve Authenticode verification ({0}). Click "Open Steam to Restore Files" in SteamSentinel (or reopen official Steam manually) so Steam automatically restores missing UI assets.</value></data>
   <data name="Steam.RecoveryGuide.NoSteamRoot" xml:space="preserve"><value>1. No Steam installation root with steam.exe could be confirmed automatically; locate your official Steam folder before recovering.</value></data>
   <data name="Steam.RecoveryGuide.UntrustedSteamBinary" xml:space="preserve"><value>1. Warning: One or more steam.exe binaries failed Valve Authenticode verification or are missing ({0}). Do not launch unverified executables directly.</value></data>
-  <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. If Steam fails to open, shows a blank/broken UI, or has unverified binaries, download and run the official SteamSetup.exe installer over the existing Steam folder (your steamapps game library will stay intact), then rescan.</value></data>
-  <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>SteamSentinel never patches Steam binaries or executes external installers automatically; perform and verify the recovery steps above.</value></data>
+  <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. If Steam still fails to open or shows a blank/broken UI, click "Repair Steam (Keep Games)" in SteamSentinel (or run official SteamSetup.exe over the existing folder; your steamapps game library stays intact), then rescan.</value></data>
+  <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>This guidance check itself is read-only; in-place official package restore, verified SteamSetup.exe repair, and safe client launch only run after your explicit confirmation.</value></data>
+  <data name="Ui.RepairStage.Std.Step0" xml:space="preserve"><value>Prepare &amp; Close Steam</value></data>
+  <data name="Ui.RepairStage.Std.Step1" xml:space="preserve"><value>Clean &amp; Back Up</value></data>
+  <data name="Ui.RepairStage.Std.Step2" xml:space="preserve"><value>Restore Official Files</value></data>
+  <data name="Ui.RepairStage.Std.Step3" xml:space="preserve"><value>Verify Safety</value></data>
+  <data name="Ui.RepairStage.Std.Step0Title" xml:space="preserve"><value>Preparing &amp; closing Steam safely</value></data>
+  <data name="Ui.RepairStage.Std.Step0Hint" xml:space="preserve"><value>Checking repair list and closing running Steam processes</value></data>
+  <data name="Ui.RepairStage.Std.Step1Title" xml:space="preserve"><value>Cleaning &amp; backing up threats</value></data>
+  <data name="Ui.RepairStage.Std.Step1Hint" xml:space="preserve"><value>Moving suspicious items to quarantine (reversible)</value></data>
+  <data name="Ui.RepairStage.Std.Step2Title" xml:space="preserve"><value>Restoring official Steam files</value></data>
+  <data name="Ui.RepairStage.Std.Step2Hint" xml:space="preserve"><value>Backing up modified files and restoring official versions</value></data>
+  <data name="Ui.RepairStage.Std.Step3Title" xml:space="preserve"><value>Verifying client safety</value></data>
+  <data name="Ui.RepairStage.Std.Step3Hint" xml:space="preserve"><value>Rechecking original scope and Steam files</value></data>
+  <data name="Ui.RepairStage.Official.Step0" xml:space="preserve"><value>Download Package</value></data>
+  <data name="Ui.RepairStage.Official.Step1" xml:space="preserve"><value>Verify Valve ID</value></data>
+  <data name="Ui.RepairStage.Official.Step2" xml:space="preserve"><value>Repair Client</value></data>
+  <data name="Ui.RepairStage.Official.Step3" xml:space="preserve"><value>Verify Safety</value></data>
+  <data name="Ui.RepairStage.Official.Step0Title" xml:space="preserve"><value>Downloading official Steam installer</value></data>
+  <data name="Ui.RepairStage.Official.DownloadProgress" xml:space="preserve"><value>Downloaded {0:0.0} / {1:0.0} MB</value></data>
+  <data name="Ui.RepairStage.Official.DownloadUnknownTotal" xml:space="preserve"><value>Downloaded {0:0.0} MB</value></data>
+  <data name="Ui.RepairStage.Official.Step1Title" xml:space="preserve"><value>Verifying Valve signature &amp; timestamp</value></data>
+  <data name="Ui.RepairStage.Official.Step1Hint" xml:space="preserve"><value>Checking Valve Authenticode signature and timestamp</value></data>
+  <data name="Ui.RepairStage.Official.Step2CloseTitle" xml:space="preserve"><value>Closing running Steam safely</value></data>
+  <data name="Ui.RepairStage.Official.Step2CloseHint" xml:space="preserve"><value>Stopping running Steam processes before repair</value></data>
+  <data name="Ui.RepairStage.Official.Step2RunTitle" xml:space="preserve"><value>Repairing Steam client (keeping games)</value></data>
+  <data name="Ui.RepairStage.Official.Step2RunHint" xml:space="preserve"><value>Installing official client files; your steamapps games remain intact</value></data>
+  <data name="Ui.RepairStage.Official.Step3Title" xml:space="preserve"><value>Rechecking Steam status</value></data>
+  <data name="Ui.RepairStage.Official.Step3Hint" xml:space="preserve"><value>Repair completed; scanning again to confirm everything is clean</value></data>
+  <data name="Ui.BatchOutcome.SuccessTitle" xml:space="preserve"><value>✅ Fixed &amp; verified clean</value></data>
+  <data name="Ui.BatchOutcome.SuccessDetail" xml:space="preserve"><value>All selected issues were cleaned and verified. Full records are listed below.</value></data>
+  <data name="Ui.BatchOutcome.SuccessSteamSelfCheckDetail" xml:space="preserve"><value>Tampered UI files were removed. Click "Open Steam to Restore Files" on the right so Steam restores clean assets.</value></data>
+  <data name="Ui.BatchOutcome.WarningTitle" xml:space="preserve"><value>⚠️ Repair finished with items needing attention</value></data>
+  <data name="Ui.BatchOutcome.WarningDetail" xml:space="preserve"><value>Some items did not finish or still need attention after rescanning. Check details below.</value></data>
+  <data name="Ui.BatchOutcome.ViewDetails" xml:space="preserve"><value>View details</value></data>
+  <data name="Ui.BatchOutcome.SuccessModalBody" xml:space="preserve"><value>✅ All selected issues were fixed cleanly and Steam is ready to use. Detailed verification records are saved in the Results tab.</value></data>
   <data name="Ui.P2C.AggressiveBadge" xml:space="preserve"><value>Aggressive mode</value></data>
   <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>Show advanced diagnostic tabs</value></data>
   <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>Core tabs are shown by default; enable to inspect proxy, component, case, and container diagnostics.</value></data>
-  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>{0} actionable risk(s) found · review selection and click "Preview &amp; remediate"</value></data>
+  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>{0} fixable issue(s) found · review selection and click "Preview &amp; Fix"</value></data>
   <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>No known malware · {0} item(s) to review (ignore if your own proxy/accelerator)</value></data>
   <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>No known malware · some items not deeply checked (use Full scan for deeper coverage)</value></data>
   <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>No known fake red-alert or malware risks found in the selected scope</value></data>

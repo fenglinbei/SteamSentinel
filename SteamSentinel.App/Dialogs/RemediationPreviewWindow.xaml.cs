@@ -11,12 +11,13 @@ namespace SteamSentinel.App.Dialogs;
 public partial class RemediationPreviewWindow : Window
 {
     public RemediationPreviewWindow(RemediationPlan plan, IReadOnlyList<string>? notes = null,
-        RuleSet? rules = null, SteamLayout? layout = null, bool isPortableInstallation = false)
-        : this(plan, notes, rules, layout, null, isPortableInstallation) { }
+        RuleSet? rules = null, SteamLayout? layout = null, bool isPortableInstallation = false,
+        bool willAutoCloseSteam = false)
+        : this(plan, notes, rules, layout, null, isPortableInstallation, willAutoCloseSteam) { }
 
     private RemediationPreviewWindow(RemediationPlan plan, IReadOnlyList<string>? notes, RuleSet? rules,
         SteamLayout? layout, IEnumerable<(RemediationAction Action, int Batch, bool Explicit)>? entries,
-        bool isPortableInstallation = false)
+        bool isPortableInstallation = false, bool willAutoCloseSteam = false)
     {
         InitializeComponent();
         DialogLayout.ConstrainToWorkArea(this);
@@ -31,6 +32,9 @@ public partial class RemediationPreviewWindow : Window
         if (plan.Actions.Any(action => action.Type == RemediationActionType.RepairSteamConfiguration &&
             action.ConfigurationKind == SteamSentinel.Core.Inspection.SteamConfigurationRepair.UiFile))
             NoticeText += "\n" + DisplayText.Get("SteamConfig.UiFilePreviewNotice");
+        WillAutoCloseSteam = willAutoCloseSteam;
+        if (willAutoCloseSteam)
+            NoticeText += "\n" + DisplayText.Get("SteamConfig.AutoCloseSteamNotice").Trim();
         if (isPortableInstallation)
             NoticeText += "\n" + DisplayText.Get("Ui.RemediationPreviewWindow.PortableRiskNotice");
         ConfirmationText = DisplayText.Get(plan.ExplicitFileTargetsRequested ? "Scope.Ui.PreviewConfirm" : "Ui.Xaml.RemediationPreviewWindow.020");
@@ -50,7 +54,7 @@ public partial class RemediationPreviewWindow : Window
 
     public RemediationPlan Plan { get; }
     public RemediationPreviewWindow(RemediationBatchSession batch, RuleSet? rules = null, SteamLayout? layout = null,
-        bool isPortableInstallation = false) : this(new RemediationPlan
+        bool isPortableInstallation = false, bool willAutoCloseSteam = false) : this(new RemediationPlan
         {
             Actions = batch.Plans.SelectMany(p => p.Actions).ToList(),
             Mode = batch.Plans.Any(plan => plan.Mode == RemediationMode.Aggressive)
@@ -58,7 +62,7 @@ public partial class RemediationPreviewWindow : Window
             ExplicitFileTargetsRequested = batch.Plans.Any(plan => plan.ExplicitFileTargetsRequested)
         }, batch.NoteTexts.Select(note => note.Display).ToArray(), rules, layout,
         batch.Plans.SelectMany((plan, index) => plan.Actions.Select(action => (action, index + 1, plan.ExplicitFileTargetsRequested))),
-        isPortableInstallation)
+        isPortableInstallation, willAutoCloseSteam)
     {
         Summary = batch.Summary + DisplayText.Get("Ui.RemediationPreviewWindow.xaml.Constructor.03");
         OmittedTargets = batch.Targets.Where(t => t.MissingActions.Count > 0 || t.ActionIds.Count == 0).ToArray();
@@ -69,6 +73,7 @@ public partial class RemediationPreviewWindow : Window
     public string Summary { get; } = DisplayText.Get("Ui.RemediationPreviewWindow.xaml.Summary.01");
     public IReadOnlyList<RemediationTargetOutcome> OmittedTargets { get; } = [];
     public string PlanNotes { get; }
+    public bool WillAutoCloseSteam { get; }
     public string NoticeText { get; }
     public string ConfirmationText { get; }
     public string ScopeSummary { get; }
@@ -110,10 +115,12 @@ public partial class RemediationPreviewWindow : Window
     private static string ConfidenceLabel(RemediationAction action) => action.UserSelectedRisk
         ? DisplayText.Get("RemediationMode.RiskLabel") : action.Type switch
         {
-            RemediationActionType.RepairSteamConfiguration => DisplayText.Get(
-                action.ConfigurationKind == SteamSentinel.Core.Inspection.SteamConfigurationRepair.UiFile
-                    ? "SteamConfig.UiFileHandling"
-                    : "SteamConfig.Handling"),
+            RemediationActionType.RepairSteamConfiguration => DisplayText.Get(action.ConfigurationKind switch
+            {
+                SteamSentinel.Core.Inspection.SteamConfigurationRepair.PackageRestore => "SteamConfig.PackageRestorePreviewAction",
+                SteamSentinel.Core.Inspection.SteamConfigurationRepair.UiFile => "SteamConfig.UiFileHandling",
+                _ => "SteamConfig.Handling"
+            }),
             RemediationActionType.QuarantineFile or RemediationActionType.QuarantineDirectory =>
                 action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.01") : DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.02", (action.ConfidenceScore)),
             _ => action.IsKnownMalware ? DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.03") : action.RelatedFilePath is not null ? DisplayText.Format("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.04", (action.ConfidenceScore)) : DisplayText.Get("Ui.RemediationPreviewWindow.xaml.ConfidenceLabel.05")

@@ -63,6 +63,8 @@ public partial class MainWindow
         SelectionActionsBar.Margin = new Thickness(0, shortViewport ? 2 : 7, 0, 0);
         RemediationAvailabilityPanel.Margin = shortViewport ? new Thickness(0, 2, 0, 0) : new Thickness(0, 3, 0, 0);
         RemediationAvailabilityPanel.Padding = shortViewport ? new Thickness(6, 2, 6, 2) : new Thickness(8, 4, 8, 4);
+        if (SteamRecoveryActionsBar is not null)
+            SteamRecoveryActionsBar.Margin = new Thickness(0, shortViewport ? 2 : 4, 0, 0);
         // Collapse optional evidence on entering a short viewport, not on every
         // layout pass. The user may still open it without hiding the action bar.
         if (_compactLayout != compact)

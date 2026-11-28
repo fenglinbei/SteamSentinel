@@ -1,15 +1,108 @@
 using System.Text.Json;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Steam;
+using SteamSentinel.Core.Utilities;
 
 namespace SteamSentinel.Core.Scanning;
 
 public sealed partial class SteamSecurityScanner
 {
+    /// <summary>当 Steam 目录存在官方分包清单时，校验根目录 steam.exe 的 Valve 数字签名及完整性。</summary>
+    internal static async Task ScanSteamClientBinaryAsync(
+        string steamRoot,
+        SteamPackageCatalog? catalog,
+        ScanReport report,
+        CancellationToken token,
+        Func<string, SafeFileHandle?, SignatureResult>? verifyBinarySignature = null)
+    {
+        if (catalog is null || !ContentDiscovery.IsLocalSafePath(steamRoot))
+        {
+            return;
+        }
+
+        string steamExePath = Path.Combine(steamRoot, "steam.exe");
+        if (!ContentDiscovery.IsLocalSafePath(steamExePath))
+        {
+            ConfigurationScanIncomplete(report, steamExePath);
+            return;
+        }
+
+        if (!File.Exists(steamExePath))
+        {
+            report.Findings.Add(new Finding
+            {
+                RuleId = "STEAM-CLIENT-BINARY-MISSING",
+                Category = FindingCategory.Steam,
+                Severity = FindingSeverity.High,
+                Score = 85,
+                TitleText = MessageText.Create("Steam.ClientBinary.MissingTitle"),
+                DescriptionText = MessageText.Create("Steam.ClientBinary.MissingDescription"),
+                EvidenceText = MessageText.Create("Steam.ClientBinary.MissingEvidence", steamExePath),
+                HandlingDetailsText = MessageText.Create("Steam.ClientBinary.FallbackGuidance"),
+                Target = Path.GetFullPath(steamExePath),
+                IsKnownMalware = false,
+                CanRemediate = false,
+                SuggestedActions = [SuggestedActionKind.ReviewOnly]
+            });
+            return;
+        }
+
+        try
+        {
+            await using FileStream stream = RelatedArtifactReader.Open(steamExePath);
+            long length = stream.Length;
+            bool withinPackageLimit = length is > 0 and <= SteamConfigurationRepair.MaximumPackageRestoreBytes;
+            string sha256 = await Hashing.Sha256StreamAsync(
+                stream,
+                token,
+                bytes => report.Metrics.BytesHashed += bytes,
+                maximumBytes: SteamPackageArchive.MaximumLocalPackageBytes).ConfigureAwait(false);
+            string fullPath = Path.GetFullPath(steamExePath);
+            RelatedArtifactReader.ValidatePath(stream.SafeFileHandle, fullPath);
+
+            SignatureResult sig = verifyBinarySignature is not null
+                ? verifyBinarySignature(fullPath, stream.SafeFileHandle)
+                : AuthenticodeVerifier.VerifyOffline(fullPath, stream.SafeFileHandle);
+            bool trustedValve = sig.Status == SignatureStatus.Valid &&
+                (sig.IsValveSigner || AuthenticodeVerifier.IsTrustedValveSigner(sig.Status, sig.SignerSubject));
+            if (trustedValve)
+            {
+                return;
+            }
+
+            bool canPackageRestore = withinPackageLimit &&
+                catalog.IsKnownOfficialRelativePath("steam.exe") &&
+                catalog.OrderCandidatePackages("steam.exe").Count > 0;
+
+            report.Findings.Add(new Finding
+            {
+                RuleId = "STEAM-CLIENT-BINARY-TAMPERED",
+                Category = FindingCategory.Steam,
+                Severity = FindingSeverity.Critical,
+                Score = 95,
+                TitleText = MessageText.Create("Steam.ClientBinary.TamperedTitle"),
+                DescriptionText = MessageText.Create("Steam.ClientBinary.TamperedDescription"),
+                EvidenceText = MessageText.Create("Steam.ClientBinary.TamperedEvidence", sig.DetailText, sig.SignerSubject ?? "-", sha256),
+                HandlingDetailsText = MessageText.Create(canPackageRestore ? "SteamConfig.PackageRestoreDescription" : "Steam.ClientBinary.FallbackGuidance"),
+                Target = fullPath,
+                Sha256 = sha256,
+                TargetSha256 = canPackageRestore ? sha256 : null,
+                ConfigurationKind = canPackageRestore ? SteamConfigurationRepair.PackageRestore : null,
+                IsKnownMalware = false,
+                CanRemediate = canPackageRestore,
+                SuggestedActions = canPackageRestore ? [SuggestedActionKind.RepairSteamConfiguration] : [SuggestedActionKind.ReviewOnly]
+            });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidDataException)
+        {
+            ConfigurationScanIncomplete(report, steamExePath);
+        }
+    }
     internal static async Task ScanSteamConfigurationFileAsync(string path, string kind, ScanReport report, CancellationToken token,
         SteamLayout? layout = null)
     {

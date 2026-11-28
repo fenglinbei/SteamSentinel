@@ -87,7 +87,17 @@ public partial class MainWindow
         RemediationAvailabilityPanel.Padding = compact ? new Thickness(2, 2, 2, 0) : new Thickness(10, 5, 10, 5);
         RemediationAvailabilityPanel.BorderThickness = new Thickness(compact ? 0 : 1);
         RemediationAvailabilityTextBlock.Foreground = compact ? SubtleAvailabilityForeground : BlockedAvailabilityForeground;
-        RemediationAvailabilityTextBlock.Text = RemediationAvailabilityText(availability.State);
+        string availabilityText = RemediationAvailabilityText(availability.State);
+        if (availability.State is RemediationAvailabilityState.ReviewRequired
+            or RemediationAvailabilityState.NoActionableFindings
+            or RemediationAvailabilityState.RescanRequired)
+        {
+            if (ShouldShowOfficialSteamRepair())
+                availabilityText = DisplayText.Get("Ui.RemediationAvailability.SteamOfficialRepairAvailable");
+            else if (ShouldShowLaunchSteamSelfCheck())
+                availabilityText = DisplayText.Get("Ui.RemediationAvailability.SteamSelfCheckAvailable");
+        }
+        RemediationAvailabilityTextBlock.Text = availabilityText;
         string label = availability.Action switch
         {
             RemediationAvailabilityAction.CheckRecovery => DisplayText.Get("Ui.RemediationAvailability.CheckRecovery"),
@@ -100,6 +110,7 @@ public partial class MainWindow
         AutomationProperties.SetName(RemediationAvailabilityActionButton, label);
         RemediationAvailabilityActionButton.Visibility = availability.Action == RemediationAvailabilityAction.None ? Visibility.Collapsed : Visibility.Visible;
         RemediationAvailabilityActionButton.IsEnabled = !_busy;
+        UpdateSteamRecoveryActions();
     }
 
     private async void RemediationAvailabilityAction_Click(object sender, RoutedEventArgs e) =>

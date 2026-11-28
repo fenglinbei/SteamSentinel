@@ -1024,9 +1024,16 @@ internal static partial class Program
                 int.TryParse(args[3], out int dpiPercent) && dpiPercent is 100 or 125 or 150 or 175 or 200:
                 return RunV0117LayoutUi(args[1], args[2], dpiPercent);
             case "--ui-dispatcher-test" when args.Length == 1:
-                TestV016Dialog();
-                Console.WriteLine($"UI_DISPATCHER_PASS={_passed};FAIL={Failures.Count}");
-                return Failures.Count == 0 ? 0 : 1;
+                try
+                {
+                    TestV016Dialog();
+                    Console.WriteLine($"UI_DISPATCHER_PASS={_passed};FAIL={Failures.Count}");
+                    return Failures.Count == 0 ? 0 : 1;
+                }
+                finally
+                {
+                    UiFixtureApplication.ShutdownShared();
+                }
             case "--p2c-ui-tests" when args.Length == 1:
                 RunP2CUiSuite();
                 Console.WriteLine($"P2C_UI_PASS={_passed};FAIL={Failures.Count}");

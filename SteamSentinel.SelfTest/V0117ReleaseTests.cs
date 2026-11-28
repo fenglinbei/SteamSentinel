@@ -25,8 +25,8 @@ internal static partial class Program
         XDocument properties = XDocument.Load(Path.Combine(repository, "Directory.Build.props"));
         string version = properties.Descendants("VersionPrefix").Single().Value;
         string minimumTests = properties.Descendants("SteamSentinelMinimumSelfTests").Single().Value;
-        bool minimumTestsValid = int.TryParse(minimumTests, out int minimumTestCount) && minimumTestCount >= 3646;
-        Check("0.4.1 中央版本与机器测试基线唯一", version == "0.4.1" && minimumTestsValid &&
+        bool minimumTestsValid = int.TryParse(minimumTests, out int minimumTestCount) && minimumTestCount >= 3885;
+        Check("0.4.2 中央版本与机器测试基线唯一", version == "0.4.2" && minimumTestsValid &&
             properties.Descendants("AssemblyVersion").Single().Value == "$(VersionPrefix).0" &&
             properties.Descendants("InformationalVersion").Single().Value == "$(VersionPrefix)+$(SteamSentinelBuildId)");
 

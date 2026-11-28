@@ -211,8 +211,8 @@ public sealed partial class RelatedArtifactScanner
         if (SteamSecurityScanner.IsCurrentUserReport(input))
         {
             if (report.Findings.Any(finding =>
-                finding.ConfigurationKind == SteamConfigurationRepair.UiFile ||
-                finding.RuleId is "STEAM-UI-LOOPBACK-SCRIPT" or "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING"))
+                finding.ConfigurationKind is SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore ||
+                finding.RuleId is "STEAM-UI-LOOPBACK-SCRIPT" or "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING" or "STEAM-UI-CSS-SUPPRESSION" or "STEAM-CLIENT-BINARY-TAMPERED"))
             {
                 _installedFamilyScope = true;
                 familyLayout ??= layout ?? SteamLocator.Discover();
@@ -296,12 +296,12 @@ public sealed partial class RelatedArtifactScanner
             foreach (string steamRoot in familyLayout.SteamRoots)
                 await new SteamSecurityScanner(rules).ScanSteamUiAsync(steamRoot, scripts, token);
             foreach (Finding repair in scripts.Findings.Where(f =>
-                (f.ConfigurationKind == SteamConfigurationRepair.UiFile ||
-                 f.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING") &&
+                (f.ConfigurationKind is SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore ||
+                 f.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING" or "STEAM-UI-CSS-SUPPRESSION") &&
                 !_blockedPaths.Contains(Path.GetFullPath(f.Target))))
                 if (!report.Findings.Any(f =>
-                    (f.ConfigurationKind == SteamConfigurationRepair.UiFile ||
-                     f.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING") &&
+                    (f.ConfigurationKind is SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore ||
+                     f.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING" or "STEAM-UI-CSS-SUPPRESSION") &&
                     RelatedArtifactRelations.SamePath(f.Target, repair.Target)))
                     report.Findings.Add(repair);
             foreach (MessageText note in scripts.CoverageTexts) Note(report, note);
@@ -333,8 +333,8 @@ public sealed partial class RelatedArtifactScanner
                     Note(report, MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.19") + finding.Target);
             }
         report.Findings.RemoveAll(finding =>
-            (finding.ConfigurationKind == SteamConfigurationRepair.UiFile ||
-             finding.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING") &&
+            (finding.ConfigurationKind is SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore ||
+             finding.RuleId is "STEAM-UI-EXTERNAL-SCRIPT" or "STEAM-UI-SEMANTIC-TAMPERING" or "STEAM-UI-CSS-SUPPRESSION" or "STEAM-CLIENT-BINARY-TAMPERED") &&
             _blockedPaths.Contains(Path.GetFullPath(finding.Target)));
         report.AddScopeNote(MessageText.Create("Backend.Core.RelatedArtifactExpansion.ExpandCoreAsync.20"));
         return new(report.Findings.DistinctBy(f => f.Id).ToArray(), candidates.ToArray(), report.CoverageNotes.Distinct().ToArray())

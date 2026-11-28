@@ -313,6 +313,10 @@ internal static partial class Program
         new("RemediationModes", true, false, 10, (r, _) => TestRemediationModesAsync(r)),
         new("SteamConfigurationRepair", true, false, 10, (r, _) => TestSteamConfigurationRepairAsync(r)),
         new("P2BSteamRecovery", true, false, 10, (r, _) => TestP2BSteamRecoveryAsync(r)),
+        new("SteamPackageEngine", false, false, 10, (r, _) => TestSteamPackageEngineAsync(r)),
+        new("SteamInstallerAndProcess", false, false, 10, (r, _) => TestSteamInstallerAndProcessAsync(r)),
+        new("SteamFullRecoveryBroker", false, false, 15, (r, _) => TestSteamFullRecoveryBrokerAsync(r)),
+        new("SteamFullRecoveryUi", true, true, 15, (r, _) => TestSteamFullRecoveryUiAsync(r)),
         new("V032BrokerScope", true, false, 10, (r, _) => TestV032BrokerScopeAsync(r)),
         new("BrokerScopeDiagnostics", true, false, 10, (r, _) => TestBrokerScopeDiagnosticsAsync(r))
     ];
@@ -550,6 +554,7 @@ internal static partial class Program
         }
         finally
         {
+            UiFixtureApplication.ShutdownShared();
             _subSuiteAccumulators = null;
             CurrentSuiteAccumulator.Value = null;
         }

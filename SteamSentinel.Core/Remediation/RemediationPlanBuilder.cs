@@ -1,3 +1,6 @@
+using System.Net.Http;
+using Microsoft.Win32.SafeHandles;
+using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Reporting;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Scanning;
@@ -9,8 +12,36 @@ namespace SteamSentinel.Core.Remediation;
 public sealed class RemediationPlanBuilder(RuleSet rules)
 {
     private readonly Lazy<SteamLayout> _steamLayout = new(SteamLocator.Discover);
+    private readonly bool _allowPackageDownload = true;
+    private readonly HttpMessageHandler? _packageHttpMessageHandler;
+    private readonly Func<string, SafeFileHandle?, SignatureResult>? _verifyExecutableSignature;
 
     internal RemediationPlanBuilder(RuleSet rules, SteamLayout layout) : this(rules) => _steamLayout = new(() => layout);
+
+    /// <summary>供自测注入离线 CDN 开关、消息处理器与可执行验签桩。</summary>
+    internal RemediationPlanBuilder(
+        RuleSet rules,
+        bool allowPackageDownload,
+        HttpMessageHandler? packageHttpMessageHandler = null,
+        Func<string, SafeFileHandle?, SignatureResult>? verifyExecutableSignature = null) : this(rules)
+    {
+        _allowPackageDownload = allowPackageDownload;
+        _packageHttpMessageHandler = packageHttpMessageHandler;
+        _verifyExecutableSignature = verifyExecutableSignature;
+    }
+
+    /// <summary>供自测注入隔离布局、离线 CDN 开关与可执行验签桩。</summary>
+    internal RemediationPlanBuilder(
+        RuleSet rules,
+        SteamLayout layout,
+        bool allowPackageDownload,
+        HttpMessageHandler? packageHttpMessageHandler = null,
+        Func<string, SafeFileHandle?, SignatureResult>? verifyExecutableSignature = null) : this(rules, layout)
+    {
+        _allowPackageDownload = allowPackageDownload;
+        _packageHttpMessageHandler = packageHttpMessageHandler;
+        _verifyExecutableSignature = verifyExecutableSignature;
+    }
 
     public async Task<RemediationPlan> BuildAsync(
         IEnumerable<Finding> selectedFindings,
@@ -131,7 +162,8 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                     SuggestedActionKind.RemoveRelatedDefenderExclusion => BoundAction(finding, RemediationActionType.RemoveRelatedDefenderExclusion, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.RemoveRelatedDefenderExclusion.01")),
                     SuggestedActionKind.DisableRelatedFirewallRule => BoundAction(finding, RemediationActionType.DisableRelatedFirewallRule, MessageText.Create("Backend.Core.RemediationPlanBuilder.BuildAsync.DisableRelatedFirewallRule.01")),
                     SuggestedActionKind.QuarantineFile when File.Exists(finding.Target) => await CreateFileActionAsync(finding, cancellationToken, requestExplicitFileTargets),
-                    SuggestedActionKind.RepairSteamConfiguration => await SteamConfigurationRepairTarget.CaptureAsync(finding, _steamLayout.Value, cancellationToken),
+                    SuggestedActionKind.RepairSteamConfiguration => await SteamConfigurationRepairTarget.CaptureAsync(
+                        finding, _steamLayout.Value, _allowPackageDownload, _packageHttpMessageHandler, _verifyExecutableSignature, cancellationToken),
                     SuggestedActionKind.QuarantineDirectory when Directory.Exists(finding.Target) =>
                         await CreateDirectoryActionAsync(finding, cancellationToken),
                     SuggestedActionKind.RestoreSecurityControls => new RemediationAction
@@ -150,6 +182,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
                 if (deduplication.TryGetValue(key, out RemediationAction? previous))
                 {
                     if (!string.Equals(previous.ExpectedSha256, action.ExpectedSha256, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(previous.RepairedSha256, action.RepairedSha256, StringComparison.OrdinalIgnoreCase) ||
                         previous.ExpectedFileIdentity != action.ExpectedFileIdentity || previous.ExpectedParentIdentity != action.ExpectedParentIdentity ||
                         previous.ProcessStartedAtUtc != action.ProcessStartedAtUtc || previous.ExpectedValueData != action.ExpectedValueData ||
                         previous.ConfigurationSnapshot != action.ConfigurationSnapshot || previous.ConfigurationKind != action.ConfigurationKind ||
@@ -161,6 +194,7 @@ public sealed class RemediationPlanBuilder(RuleSet rules)
             }
 
             if (addAutomaticProgramBlock && finding.IsKnownMalware && !finding.SuggestedActions.Contains(SuggestedActionKind.StopHostProcess) &&
+                !finding.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration) &&
                 finding.Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(finding.Target))
             {
                 string hash = await VerifyTargetIdentityAsync(finding, cancellationToken, requestExplicitFileTargets);

@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using System.Net.Http;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Scanning;
@@ -15,6 +17,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
     private readonly SteamLayout? _steamLayout;
     private readonly string _residentDirectory = SteamAlertInstallation.ResidentDirectory;
     private readonly LiveAssociationProbeMode _liveProbeMode;
+    private readonly bool _allowPackageDownload = true;
+    private readonly HttpMessageHandler? _packageHttpMessageHandler;
+    private readonly Func<string, SafeFileHandle?, SignatureResult>? _verifyExecutableSignature;
 
     internal RemediationBatchPlanner(RuleSet rules, LiveAssociationProbeMode liveProbeMode) : this(rules) =>
         _liveProbeMode = liveProbeMode;
@@ -25,6 +30,33 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         _steamLayout = layout;
         _residentDirectory = residentDirectory;
         _liveProbeMode = liveProbeMode;
+    }
+
+    /// <summary>供主程序注入已知 Steam 布局、按需分包 CDN 开关与验签桩。</summary>
+    public RemediationBatchPlanner(
+        RuleSet rules,
+        SteamLayout? layout,
+        bool allowPackageDownload,
+        HttpMessageHandler? packageHttpMessageHandler = null,
+        Func<string, SafeFileHandle?, SignatureResult>? verifyExecutableSignature = null)
+        : this(rules, layout, allowPackageDownload, packageHttpMessageHandler, verifyExecutableSignature, LiveAssociationProbeMode.HostLive)
+    {
+    }
+
+    /// <summary>供内部与自测注入已知 Steam 布局、按需分包 CDN 开关、验签桩与关联探测模式。</summary>
+    internal RemediationBatchPlanner(
+        RuleSet rules,
+        SteamLayout? layout,
+        bool allowPackageDownload,
+        HttpMessageHandler? packageHttpMessageHandler,
+        Func<string, SafeFileHandle?, SignatureResult>? verifyExecutableSignature,
+        LiveAssociationProbeMode liveProbeMode) : this(rules)
+    {
+        _steamLayout = layout;
+        _liveProbeMode = liveProbeMode;
+        _allowPackageDownload = allowPackageDownload;
+        _packageHttpMessageHandler = packageHttpMessageHandler;
+        _verifyExecutableSignature = verifyExecutableSignature;
     }
 
     public const int MaximumSelectedFindings = 20000;
@@ -143,7 +175,9 @@ public sealed class RemediationBatchPlanner(RuleSet rules)
         // Live discovery may connect initial batches through a shared host/entry. Regroup ALL verified edges before packing actions.
         List<List<RemediationAction>> actionGroups = [];
         bool needDomains = blockDomains;
-        RemediationPlanBuilder planBuilder = _steamLayout is null ? new(rules) : new(rules, _steamLayout);
+        RemediationPlanBuilder planBuilder = _steamLayout is null
+            ? new(rules, _allowPackageDownload, _packageHttpMessageHandler, _verifyExecutableSignature)
+            : new(rules, _steamLayout, _allowPackageDownload, _packageHttpMessageHandler, _verifyExecutableSignature);
         foreach (Finding finding in verified.Where(f => !f.UserSelectedRisk && RemediationEvidencePolicy.IsReviewOnlyEvidence(f)))
             Record([finding], [RemediationEvidencePolicy.ReviewOnlyMessage(finding)], ReasonCodes.ActionsNotIncluded);
         // Source groups precede Steam configuration/UI repairs. Completed earlier batches are

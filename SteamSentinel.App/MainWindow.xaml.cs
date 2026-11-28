@@ -1,13 +1,17 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using SteamSentinel.App.Dialogs;
 using SteamSentinel.App.Localization;
 using SteamSentinel.App.Services;
 using SteamSentinel.App.ViewModels;
+using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
 using SteamSentinel.Core.Reporting;
@@ -44,6 +48,16 @@ public partial class MainWindow : Window
     private bool _casesTabRevealed;
     private bool _containerTabRevealed;
     private bool _pendingLanguageRefresh;
+    private SteamProcessController _steamProcessController = new();
+    private SteamOfficialInstallerService _steamInstallerService = new();
+    private bool _allowPackageDownload = true;
+    private HttpMessageHandler? _packageHttpMessageHandler;
+    private Func<string, SafeFileHandle?, SignatureResult>? _verifySteamExecutableSignature;
+    private bool _lastPreparationFailedSteamPackage;
+    private bool _steamUiFileRemovedInActiveBatch;
+    private bool _steamBatchFollowUpActive;
+    private bool _lastSteamExeUntrustedOnLaunch;
+    private readonly Dictionary<string, (DateTime LastWriteUtc, bool IsTrusted)> _steamExeSignatureCache = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Brush VerdictActionableBackground = FreezeBrush(0xFE, 0xF2, 0xF2);
     private static readonly Brush VerdictActionableBorder = FreezeBrush(0xFE, 0xCA, 0xCA);
@@ -228,6 +242,9 @@ public partial class MainWindow : Window
         SelectionActionsBar.Visibility = ResultTabs.SelectedIndex is 5 or 6 ? Visibility.Collapsed : Visibility.Visible;
         RefreshCurrentSelectionDetails();
         UpdateFindingActions();
+        UpdateSteamRecoveryActions();
+        UpdateBatchOutcomeBanner();
+        UpdateScanStageOverlayVisibility();
         UpdateCompactHeader();
     }
 
@@ -307,6 +324,11 @@ public partial class MainWindow : Window
         DisplayContainers(null);
         _lastFullSystemAndContentScanId = null;
         _reportNeedsRefresh = false;
+        _lastPreparationFailedSteamPackage = false;
+        _steamUiFileRemovedInActiveBatch = false;
+        _steamBatchFollowUpActive = false;
+        _lastSteamExeUntrustedOnLaunch = false;
+        _steamExeSignatureCache.Clear();
         HeaderStatusText.Text = DisplayText.Get("Ui.xaml.StartScanAsync.03");
         HeaderDetailText.Text = mode switch
         {
@@ -1096,6 +1118,8 @@ public partial class MainWindow : Window
         UpdateRemediationEligibility();
         ExportButton.IsEnabled = !busy && _lastReport is not null;
         UpdateFindingActions();
+        UpdateSteamRecoveryActions();
+        UpdateBatchOutcomeBanner();
         TrustProxyScanButton.IsEnabled = !busy && !_remediationClient.HasUnresolvedExecution;
         CaseRefreshButton.IsEnabled = !busy;
         CaseRecheckButton.IsEnabled = !busy && CaseListComboBox.Items.Count > 0;
@@ -1276,25 +1300,51 @@ public partial class MainWindow : Window
         finally { SetBusy(false); }
     }
 
-    private static bool IsSteamRunning()
-    {
-        foreach (Process process in Process.GetProcesses())
-        {
-            using (process)
-            {
-                try
-                {
-                    if (IsSteamClientProcessName(process.ProcessName)) return true;
-                }
-                catch { }
-            }
-        }
-        return false;
-    }
+    private bool IsSteamRunningForLayout(SteamLayout? layout = null) =>
+        _steamProcessController.IsAnyRunning(layout ?? _findingScopeLayout);
 
     internal static bool IsSteamClientProcessName(string processName) =>
         processName.Equals("steam", StringComparison.OrdinalIgnoreCase) ||
         processName.Equals("steamwebhelper", StringComparison.OrdinalIgnoreCase);
+
+    internal void SetSteamLayoutForTesting(SteamLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        _findingScopeLayout = layout;
+        _steamExeSignatureCache.Clear();
+        RefreshWorkshopScopeItems(preserveSelection: false);
+        UpdateSteamRecoveryActions();
+    }
+
+    internal void ConfigureSteamRecoveryServicesForTesting(
+        SteamProcessController? processController = null,
+        SteamOfficialInstallerService? installerService = null,
+        bool? allowPackageDownload = null,
+        HttpMessageHandler? packageHttpMessageHandler = null,
+        Func<string, SafeFileHandle?, SignatureResult>? verifySteamExecutableSignature = null)
+    {
+        if (processController is not null) _steamProcessController = processController;
+        if (installerService is not null) _steamInstallerService = installerService;
+        if (allowPackageDownload.HasValue) _allowPackageDownload = allowPackageDownload.Value;
+        _packageHttpMessageHandler = packageHttpMessageHandler;
+        _verifySteamExecutableSignature = verifySteamExecutableSignature;
+        _steamExeSignatureCache.Clear();
+        UpdateSteamRecoveryActions();
+    }
+
+    internal void ApplyScanReportForTesting(ScanReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        _lastReport = report;
+        _reportNeedsRefresh = false;
+        _lastPreparationFailedSteamPackage = false;
+        _steamUiFileRemovedInActiveBatch = false;
+        _steamBatchFollowUpActive = false;
+        _lastSteamExeUntrustedOnLaunch = false;
+        PopulateFindings(report);
+        UpdateSummary(report);
+        UpdateSteamRecoveryActions();
+    }
 }
 
 public sealed record WorkshopScopeItem(string AppId, string Label);

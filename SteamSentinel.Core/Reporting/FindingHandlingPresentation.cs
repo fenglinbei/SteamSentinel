@@ -79,7 +79,13 @@ public static class FindingHandlingPresentation
         bool boundContainer = finding.ContentPath?.Contains("!/", StringComparison.Ordinal) != true ||
             !string.IsNullOrWhiteSpace(finding.TargetSha256);
         if (RemediationEvidencePolicy.CanRemediate(finding) && boundContainer)
-            return new(FindingDisposition.Actionable, DisplayText.Get("FindingHandling.Get.01"), DisplayText.Get("FindingHandling.Get.02"), DisplayText.Get("FindingHandling.Get.03"), true);
+        {
+            string reasonKey = finding.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration) &&
+                               finding.ConfigurationKind == SteamSentinel.Core.Inspection.SteamConfigurationRepair.PackageRestore
+                ? "FindingHandling.SteamPackageRestore.Reason"
+                : "FindingHandling.Get.02";
+            return new(FindingDisposition.Actionable, DisplayText.Get("FindingHandling.Get.01"), DisplayText.Get(reasonKey), DisplayText.Get("FindingHandling.Get.03"), true);
+        }
         if (RemediationEvidencePolicy.CanRemediate(finding) && !boundContainer)
             return new(FindingDisposition.Blocked, DisplayText.Get("FindingHandling.Get.04"), DisplayText.Get("FindingHandling.Get.05"), DisplayText.Get("FindingHandling.Get.06"), false);
         if (finding.HandlingReason == FindingHandlingReason.UnsupportedAction)

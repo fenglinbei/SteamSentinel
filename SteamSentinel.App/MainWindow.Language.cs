@@ -42,6 +42,7 @@ public partial class MainWindow
         RefreshWorkshopScopeItems(preserveSelection: true);
         ApplyInstallationSecurityStatus();
         RefreshActivityLocalizedText();
+        RefreshSteamRecoveryButtonsLocalizedText();
 
         if (_busy)
         {
@@ -118,9 +119,11 @@ public partial class MainWindow
             BatchResultsTab.Header = DisplayText.Get("Ui.Xaml.MainWindow.049");
             BatchSummaryText.Text = DisplayText.Get("Ui.Xaml.MainWindow.050");
             BatchFollowUpText.Text = DisplayText.Get("Ui.Xaml.MainWindow.051");
+            UpdateBatchOutcomeBanner();
         }
 
         RefreshCaseRecordsLanguage();
+        UpdateSteamRecoveryActions();
     }
 
     private void RefreshWorkshopScopeItems(bool preserveSelection)

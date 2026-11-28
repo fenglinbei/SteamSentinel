@@ -2,6 +2,8 @@ using SteamSentinel.Core.Reporting;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using SteamSentinel.App.Services;
@@ -23,6 +25,23 @@ public partial class MainWindow
     private double _scanProgressMaxPercent;
     private double _scanStageStartPercent;
     private double _scanStageEndPercent = 100;
+    private bool _repairStageActive;
+    private string[] _repairStepLabels = [];
+    private int _repairStepIndex;
+    private double _repairStepPercent;
+    private ActiveRepairFlow _activeRepairFlow;
+
+    private static readonly Brush StepPendingBackground = FreezeBrush(0xF1, 0xF5, 0xF9);
+    private static readonly Brush StepPendingForeground = FreezeBrush(0x64, 0x74, 0x8B);
+    private static readonly Brush StepPendingBorder = FreezeBrush(0xE2, 0xE8, 0xF0);
+    private static readonly Brush StepActiveBackground = FreezeBrush(0xEF, 0xF6, 0xFF);
+    private static readonly Brush StepActiveForeground = FreezeBrush(0x1D, 0x4E, 0xD8);
+    private static readonly Brush StepActiveBorder = FreezeBrush(0xBF, 0xDB, 0xFE);
+    private static readonly Brush StepDoneBackground = FreezeBrush(0xEC, 0xFD, 0xF5);
+    private static readonly Brush StepDoneForeground = FreezeBrush(0x04, 0x78, 0x57);
+    private static readonly Brush StepDoneBorder = FreezeBrush(0xA7, 0xF3, 0xD0);
+
+    internal enum ActiveRepairFlow { None, StandardRemediation, OfficialInstaller }
 
     private static readonly DependencyProperty ScanStageAnimatedProgressProperty =
         DependencyProperty.Register(
@@ -121,6 +140,128 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>
+    /// 启动四步可视化修复进度舞台（显式激活，不影响常规 ShowActivity 的既有不确定进度契约）。
+    /// </summary>
+    internal void BeginRepairStage(IReadOnlyList<string> stepLabels) =>
+        BeginRepairStageInternal(ActiveRepairFlow.None, stepLabels);
+
+    private void BeginRepairStageInternal(ActiveRepairFlow flow, IReadOnlyList<string> stepLabels)
+    {
+        ArgumentNullException.ThrowIfNull(stepLabels);
+        Dispatcher.VerifyAccess();
+        if (_windowClosed) return;
+
+        _activeRepairFlow = flow;
+        _activityPhase = ActivityPhase.Applying;
+        ActivityPanel.Visibility = Visibility.Visible;
+        UpdateCompactHeader();
+        if (!_activityClock.IsRunning) _activityClock.Restart();
+        _activityTimer ??= new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
+            (_, _) => RefreshActivityElapsed(), Dispatcher);
+        if (!_activityTimer.IsEnabled) _activityTimer.Start();
+        RefreshActivityElapsed();
+
+        ActivitySpinner.Visibility = Visibility.Visible;
+        ActivityRotation.BeginAnimation(RotateTransform.AngleProperty, null);
+        if (SystemParameters.ClientAreaAnimation)
+        {
+            ActivityRotation.BeginAnimation(RotateTransform.AngleProperty,
+                new DoubleAnimation(0, 360, TimeSpan.FromSeconds(0.85)) { RepeatBehavior = RepeatBehavior.Forever });
+        }
+        ActivityProgressBar.Visibility = Visibility.Visible;
+        ScanProgressBar.IsIndeterminate = false;
+        ScanProgressBar.Value = 0;
+        ScanProgressBar.Visibility = Visibility.Collapsed;
+
+        _repairStepLabels = stepLabels.ToArray();
+        _repairStepIndex = 0;
+        _repairStepPercent = 5;
+        _repairStageActive = true;
+        RenderRepairStepperPills();
+        SetDeterminateActivityProgress(_repairStepPercent);
+        UpdateScanStageOverlayVisibility();
+    }
+
+    internal static string[] GetStandardRemediationStepLabels() =>
+    [
+        DisplayText.Get("Ui.RepairStage.Std.Step0"),
+        DisplayText.Get("Ui.RepairStage.Std.Step1"),
+        DisplayText.Get("Ui.RepairStage.Std.Step2"),
+        DisplayText.Get("Ui.RepairStage.Std.Step3")
+    ];
+
+    internal static string[] GetOfficialRepairStepLabels() =>
+    [
+        DisplayText.Get("Ui.RepairStage.Official.Step0"),
+        DisplayText.Get("Ui.RepairStage.Official.Step1"),
+        DisplayText.Get("Ui.RepairStage.Official.Step2"),
+        DisplayText.Get("Ui.RepairStage.Official.Step3")
+    ];
+
+    /// <summary>
+    /// 推进可视化修复舞台的当前步骤胶囊、主标题、当前条目及确定性百分比。
+    /// </summary>
+    internal void ReportRepairStep(int stepIndex, double percent, string stageTitle, string? currentItem = null, string? detailHint = null)
+    {
+        Dispatcher.VerifyAccess();
+        if (_windowClosed || !_repairStageActive) return;
+
+        int maxIndex = Math.Max(0, _repairStepLabels.Length - 1);
+        _repairStepIndex = _repairStepLabels.Length == 0 ? 0 : Math.Clamp(stepIndex, 0, maxIndex);
+        _repairStepPercent = Math.Clamp(percent, 1.0, 99.5);
+        RenderRepairStepperPills();
+
+        _hasCustomHint = !string.IsNullOrWhiteSpace(detailHint);
+        ActivityTitleText.Text = stageTitle;
+        if (!string.IsNullOrWhiteSpace(detailHint)) _activityHint = detailHint;
+        ActivityDetailText.Text = _activityHint;
+        UpdateActivityDetailVisibility();
+
+        ProgressStageText.Text = stageTitle;
+        ProgressItemText.Text = currentItem ?? string.Empty;
+
+        UpdateScanStageText(stageTitle, currentItem, detailHint ?? _activityHint);
+        SetDeterminateActivityProgress(_repairStepPercent);
+        UpdateScanStageOverlayVisibility();
+    }
+
+    private void RenderRepairStepperPills()
+    {
+        if (RepairStepperPanel is null) return;
+        RepairStepperPanel.Children.Clear();
+        for (int i = 0; i < _repairStepLabels.Length; i++)
+        {
+            bool isDone = i < _repairStepIndex;
+            bool isActive = i == _repairStepIndex;
+
+            Brush bg = isDone ? StepDoneBackground : isActive ? StepActiveBackground : StepPendingBackground;
+            Brush fg = isDone ? StepDoneForeground : isActive ? StepActiveForeground : StepPendingForeground;
+            Brush borderBrush = isDone ? StepDoneBorder : isActive ? StepActiveBorder : StepPendingBorder;
+
+            TextBlock text = new()
+            {
+                Text = isDone ? $"✓ {_repairStepLabels[i]}" : $"{i + 1}. {_repairStepLabels[i]}",
+                FontSize = 11.5,
+                FontWeight = isDone || isActive ? FontWeights.SemiBold : FontWeights.Normal,
+                Foreground = fg,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+
+            Border pill = new()
+            {
+                Background = bg,
+                BorderBrush = borderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(9, 4, 9, 4),
+                Margin = new Thickness(3, 0, 3, 0),
+                Child = text
+            };
+            RepairStepperPanel.Children.Add(pill);
+        }
+    }
+
     internal void ReportScanProgressPercent(ScanProgress progress)
     {
         Dispatcher.VerifyAccess();
@@ -138,7 +279,8 @@ public partial class MainWindow
     private void SetDeterminateActivityProgress(double targetValue)
     {
         ActivityProgressBar.IsIndeterminate = false;
-        if (SystemParameters.ClientAreaAnimation)
+        // 分步修复阶段同步刷新圆环、进度条与百分比，避免短耗时回调读取到动画过渡前的旧数值。
+        if (SystemParameters.ClientAreaAnimation && !_repairStageActive)
         {
             DoubleAnimation barAnim = new(targetValue, TimeSpan.FromMilliseconds(180))
             {
@@ -170,6 +312,16 @@ public partial class MainWindow
         _scanProgressMaxPercent = 0;
         _scanStageStartPercent = 0;
         _scanStageEndPercent = 100;
+        _repairStageActive = false;
+        _activeRepairFlow = ActiveRepairFlow.None;
+        _repairStepLabels = [];
+        _repairStepIndex = 0;
+        _repairStepPercent = 0;
+        if (RepairStepperPanel is not null)
+        {
+            RepairStepperPanel.Children.Clear();
+            RepairStepperPanel.Visibility = Visibility.Collapsed;
+        }
         ActivityProgressBar.BeginAnimation(System.Windows.Controls.Primitives.RangeBase.ValueProperty, null);
         ActivityProgressBar.Value = 0;
         BeginAnimation(ScanStageAnimatedProgressProperty, null);
@@ -194,11 +346,18 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>在语言热切换期间，如果顶部活动栏处于可见状态，按当前语言同步刷新阶段文案与计时器。</summary>
+    /// <summary>在语言热切换期间，如果顶部活动栏处于可见状态，按当前语言同步刷新阶段文案、步骤胶囊与计时器。</summary>
     internal void RefreshActivityLocalizedText()
     {
         if (ActivityPanel.Visibility != Visibility.Visible) return;
-        ActivityTitleText.Text = DefaultPhaseTitle(_activityPhase);
+        if (_repairStageActive && _activeRepairFlow != ActiveRepairFlow.None)
+        {
+            _repairStepLabels = _activeRepairFlow == ActiveRepairFlow.OfficialInstaller
+                ? GetOfficialRepairStepLabels()
+                : GetStandardRemediationStepLabels();
+            RenderRepairStepperPills();
+        }
+        ActivityTitleText.Text = _repairStageActive && _scanStageCustomTitle is not null ? _scanStageCustomTitle : DefaultPhaseTitle(_activityPhase);
         if (!_hasCustomHint) _activityHint = DefaultPhaseHint(_activityPhase);
         ActivityDetailText.Text = _activityHint;
         UpdateActivityDetailVisibility();
@@ -378,12 +537,23 @@ public partial class MainWindow
     internal void UpdateScanStageOverlayVisibility()
     {
         if (ScanStageOverlay is null || ActivityPanel is null || FindingsAreaHost is null) return;
-        bool visible = _activityPhase == ActivityPhase.Scanning
+        bool repairVisible = _repairStageActive
+            && ActivityPanel.Visibility == Visibility.Visible
+            && _activityPhase != ActivityPhase.Confirmation
+            && (ResultTabs is null || ResultTabs.SelectedIndex == 0)
+            && FindingsAreaHost.ActualHeight >= 175;
+        bool scanVisible = _activityPhase == ActivityPhase.Scanning
             && ActivityPanel.Visibility == Visibility.Visible
             && PriorityFindings.Count == 0
             && ReferenceFindings.Count == 0
             && (ResultTabs is null || ResultTabs.SelectedIndex == 0)
             && FindingsAreaHost.ActualHeight >= 175;
+        bool visible = repairVisible || scanVisible;
+
+        if (RepairStepperPanel is not null)
+            RepairStepperPanel.Visibility = repairVisible && FindingsAreaHost.ActualHeight >= 255
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
         if (ScanStageMetaPanel is not null)
             ScanStageMetaPanel.Visibility = FindingsAreaHost.ActualHeight >= 245 ? Visibility.Visible : Visibility.Collapsed;
@@ -454,11 +624,30 @@ public partial class MainWindow
         Func<ScanOptions, IProgress<ScanProgress>, CancellationToken, Task<ScanReport>>? runner = null)
     {
         Dispatcher.VerifyAccess();
-        ShowActivity(ActivityPhase.FollowUp);
+        if (_repairStageActive)
+        {
+            _activityPhase = ActivityPhase.FollowUp;
+            ReportRepairStep(3, Math.Max(_repairStepPercent, 88),
+                DisplayText.Get("Ui.RepairStage.Std.Step3Title"), null,
+                DisplayText.Get("Ui.RepairStage.Std.Step3Hint"));
+        }
+        else
+        {
+            ShowActivity(ActivityPhase.FollowUp);
+        }
         using DispatcherProgress<ScanProgress> progress = CreateUiProgress(p =>
         {
             ProgressStageText.Text = DisplayText.Get("Ui.Activity.RunPostRemediationCheckAsync.01") + p.DisplayStage;
             ProgressItemText.Text = p.DisplayCurrentItem;
+            if (_repairStageActive)
+            {
+                double ratio = p.Total is > 0 and long total
+                    ? Math.Clamp((double)p.Completed / total, 0.0, 1.0)
+                    : 0.5;
+                double mapped = Math.Max(_repairStepPercent, 88.0 + 10.0 * ratio);
+                ReportRepairStep(3, mapped, DisplayText.Get("Ui.RepairStage.Std.Step3Title"),
+                    p.DisplayCurrentItem, DisplayText.Get("Ui.RepairStage.Std.Step3Hint"));
+            }
         });
         ScanOptions options = new()
         {

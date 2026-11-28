@@ -2,6 +2,8 @@ using SteamSentinel.Core.Reporting;
 using System.Text.RegularExpressions;
 using System.Text;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using Microsoft.Win32.SafeHandles;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
@@ -12,6 +14,11 @@ namespace SteamSentinel.Core.Scanning;
 
 public sealed partial class SteamSecurityScanner(RuleSet rules)
 {
+    private readonly Func<string, SafeFileHandle?, SignatureResult>? _verifyBinarySignature;
+
+    internal SteamSecurityScanner(RuleSet rules, Func<string, SafeFileHandle?, SignatureResult>? verifyBinarySignature)
+        : this(rules) => _verifyBinarySignature = verifyBinarySignature;
+
     private const long MaximumScriptBytes = 32L * 1024 * 1024;
     private const long MaximumTotalScriptBytes = 256L * 1024 * 1024;
     private static readonly Regex ConstantReturnRegex = new(@"return\s*(?<expr>!!?\s*[01]|[01]|true|false)\s*(?:[;,}])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
@@ -20,6 +27,9 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
     private static readonly Regex DirectRouteValueRegex = new(@"^[""']?\s*[:=]\s*[""'](?<url>https?://[^""'<>\s]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static readonly Regex RouteVariableValueRegex = new(@"^[""']?\s*:\s*(?<var>[$A-Z_a-z][$\w]*)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static readonly Regex UrlVariableRegex = new(@"(?<![$\w])(?<var>[$A-Z_a-z][$\w]*)\s*=\s*[""'](?<url>https?://[^""'<>\s]+)[""']", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex CssSuppressionRegex = new("(?:\\.URLBar|#ReportItemBtn)[^{]{0,120}\\{[^}]{0,512}(?:display\\s*:\\s*none|visibility\\s*:\\s*hidden)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking, TimeSpan.FromMilliseconds(150));
+
+    internal static bool HasCssSuppression(string text) => CssSuppressionRegex.IsMatch(text);
 
     public async Task ScanAsync(
         SteamLayout layout,
@@ -55,10 +65,12 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         foreach (string steamRoot in layout.SteamRoots)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await ScanSensitiveRootFilesAsync(steamRoot, report, cancellationToken);
+            SteamPackageCatalog.TryLoadForSteamRoot(steamRoot, out SteamPackageCatalog? catalog);
+            await ScanSteamUiAsync(steamRoot, report, cancellationToken, catalog);
+            await ScanSteamClientBinaryAsync(steamRoot, catalog, report, cancellationToken, _verifyBinarySignature);
+            await ScanSensitiveRootFilesAsync(steamRoot, catalog, report, cancellationToken);
             await ScanSteamConfigurationFileAsync(Path.Combine(steamRoot, ".cef-enable-remote-debugging"),
                 SteamConfigurationRepair.Marker, report, cancellationToken);
-            await ScanSteamUiAsync(steamRoot, report, cancellationToken);
 
             string millennium = Path.Combine(steamRoot, "millennium");
             if (Directory.Exists(millennium))
@@ -89,7 +101,11 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         "dbghelp.dll"
     ];
 
-    private async Task ScanSensitiveRootFilesAsync(string steamRoot, ScanReport report, CancellationToken cancellationToken)
+    private async Task ScanSensitiveRootFilesAsync(
+        string steamRoot,
+        SteamPackageCatalog? catalog,
+        ScanReport report,
+        CancellationToken cancellationToken)
     {
         string cfgPath = Path.Combine(steamRoot, "steam.cfg");
         if (File.Exists(cfgPath))
@@ -125,6 +141,10 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         }
 
         bool millenniumPresent = Directory.Exists(Path.Combine(steamRoot, "millennium"));
+        bool hasMaliciousSteamFeatures = report.Findings.Any(f =>
+            f.Severity >= FindingSeverity.High &&
+            f.Category == FindingCategory.Steam &&
+            ContentDiscovery.IsWithin(f.Target, steamRoot));
         string[] candidateDlls = rules.SteamInjectionNames
             .Concat(ExtendedInjectionDllNames)
             .Where(name => !name.Equals("steam.cfg", StringComparison.OrdinalIgnoreCase) &&
@@ -145,7 +165,8 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 string forwarderSha256 = await Hashing.Sha256FileAsync(forwarderPath, cancellationToken,
                     bytes => report.Metrics.BytesHashed += bytes, maximumBytes: forwarderInfo.Length);
                 HashRule? forwarderKnown = FindKnownHash(forwarderSha256);
-                SignatureResult forwarderSignature = AuthenticodeVerifier.Verify(forwarderPath);
+                bool forwarderMalware = forwarderKnown?.Malware == true;
+                bool forwarderOfficial = !forwarderMalware && await IsOfficialInstalledMatchAsync(steamRoot, forwarderPath, catalog, cancellationToken);
                 handled.Add(forwarderPath);
 
                 string versionPath = Path.Combine(directory, "version.dll");
@@ -163,26 +184,35 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                         handled.Add(versionPath);
                 }
 
-                bool forwarderMalware = forwarderKnown?.Malware == true;
-                report.Findings.Add(new Finding
+                if (!forwarderOfficial)
                 {
-                    RuleId = forwarderKnown?.Id ?? "STEAM-DLL-VERSION-FORWARDER",
-                    Category = FindingCategory.Steam,
-                    Severity = forwarderMalware ? FindingSeverity.Critical : FindingSeverity.High,
-                    Score = forwarderMalware ? 100 : 90,
-                    TitleText = MessageText.Create("Steam.DllForwarder.Title"),
-                    DescriptionText = MessageText.Create("Steam.DllForwarder.Description"),
-                    Target = forwarderPath,
-                    EvidenceText = hasVersionDll
-                        ? MessageText.Create("Steam.DllForwarder.EvidencePair", forwarderSignature.DetailText, forwarderSha256, versionSha256 ?? string.Empty)
-                        : MessageText.Create("Steam.DllForwarder.EvidenceSingle", forwarderSignature.DetailText, forwarderSha256),
-                    Sha256 = forwarderSha256,
-                    IsKnownMalware = forwarderMalware,
-                    CanRemediate = forwarderMalware,
-                    SuggestedActions = forwarderMalware
-                        ? [SuggestedActionKind.QuarantineFile]
-                        : [SuggestedActionKind.ReviewOnly]
-                });
+                    SignatureResult forwarderSignature = VerifyRootFileSignature(forwarderPath);
+                    bool forwarderTrusted = IsTrustedOfficialBinarySignature(forwarderSignature);
+                    bool canRemediateForwarder = forwarderMalware || !forwarderTrusted;
+                    report.Findings.Add(new Finding
+                    {
+                        RuleId = forwarderKnown?.Id ?? "STEAM-DLL-VERSION-FORWARDER",
+                        Category = FindingCategory.Steam,
+                        Severity = forwarderMalware ? FindingSeverity.Critical : FindingSeverity.High,
+                        Score = forwarderMalware ? 100 : 90,
+                        TitleText = MessageText.Create("Steam.DllForwarder.Title"),
+                        DescriptionText = MessageText.Create("Steam.DllForwarder.Description"),
+                        Target = forwarderPath,
+                        EvidenceText = hasVersionDll
+                            ? MessageText.Create("Steam.DllForwarder.EvidencePair", forwarderSignature.DetailText, forwarderSha256, versionSha256 ?? string.Empty)
+                            : MessageText.Create("Steam.DllForwarder.EvidenceSingle", forwarderSignature.DetailText, forwarderSha256),
+                        HandlingDetailsText = !forwarderMalware && canRemediateForwarder
+                            ? MessageText.Create("Steam.ProxyDll.QuarantineHandling")
+                            : (MessageText)"",
+                        Sha256 = forwarderSha256,
+                        TargetSha256 = canRemediateForwarder ? forwarderSha256 : null,
+                        IsKnownMalware = forwarderMalware,
+                        CanRemediate = canRemediateForwarder,
+                        SuggestedActions = canRemediateForwarder
+                            ? [SuggestedActionKind.QuarantineFile]
+                            : [SuggestedActionKind.ReviewOnly]
+                    });
+                }
             }
 
             foreach (string name in candidateDlls)
@@ -195,9 +225,16 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 string sha256 = await Hashing.Sha256FileAsync(path, cancellationToken,
                     bytes => report.Metrics.BytesHashed += bytes, maximumBytes: info.Length);
                 HashRule? known = FindKnownHash(sha256);
-                SignatureResult signature = AuthenticodeVerifier.Verify(path);
-
                 bool knownMalware = known?.Malware == true;
+                if (!knownMalware && await IsOfficialInstalledMatchAsync(steamRoot, path, catalog, cancellationToken))
+                    continue;
+
+                SignatureResult signature = VerifyRootFileSignature(path);
+                bool trustedValve = signature.Status == SignatureStatus.Valid &&
+                    (signature.IsValveSigner || AuthenticodeVerifier.IsTrustedValveSigner(signature.Status, signature.SignerSubject));
+                bool trustedMicrosoft = signature.Status == SignatureStatus.Valid &&
+                    IsTrustedMicrosoftSigner(signature.Status, signature.SignerSubject);
+                bool trustedSigner = trustedValve || trustedMicrosoft;
                 bool acknowledgedMod = millenniumPresent &&
                     name.Equals("wsock32.dll", StringComparison.OrdinalIgnoreCase) &&
                     signature.Status is SignatureStatus.Valid or SignatureStatus.Unsigned;
@@ -209,12 +246,12 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                     severity = FindingSeverity.Critical;
                     score = 100;
                 }
-                else if (signature.IsValveSigner)
+                else if (trustedSigner)
                 {
                     severity = FindingSeverity.Low;
                     score = 15;
                 }
-                else if (signature.Status is SignatureStatus.Invalid or SignatureStatus.HashMismatch || cefLocation)
+                else if (signature.Status is SignatureStatus.Invalid or SignatureStatus.HashMismatch or SignatureStatus.Untrusted || cefLocation)
                 {
                     severity = FindingSeverity.High;
                     score = 85;
@@ -229,6 +266,11 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                     severity = FindingSeverity.High;
                     score = 75;
                 }
+
+                bool coOccurs = hasMaliciousSteamFeatures || File.Exists(Path.Combine(directory, "versionOrg.dll"));
+                bool canRemediateProxy = knownMalware ||
+                    (!acknowledgedMod && !trustedSigner && severity >= FindingSeverity.High &&
+                     (signature.Status != SignatureStatus.Valid || coOccurs));
 
                 MessageText titleText = knownMalware
                     ? MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.08")
@@ -248,12 +290,16 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                     Score = score,
                     TitleText = titleText,
                     DescriptionText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.10"),
+                    HandlingDetailsText = !knownMalware && canRemediateProxy
+                        ? MessageText.Create("Steam.ProxyDll.QuarantineHandling")
+                        : (MessageText)"",
                     Target = path,
                     EvidenceText = evidenceText,
                     Sha256 = sha256,
+                    TargetSha256 = canRemediateProxy ? sha256 : null,
                     IsKnownMalware = knownMalware,
-                    CanRemediate = knownMalware,
-                    SuggestedActions = knownMalware
+                    CanRemediate = canRemediateProxy,
+                    SuggestedActions = canRemediateProxy
                         ? [SuggestedActionKind.QuarantineFile]
                         : [SuggestedActionKind.ReviewOnly]
                 });
@@ -261,12 +307,23 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         }
     }
 
-    internal async Task ScanSteamUiAsync(string steamRoot, ScanReport report, CancellationToken cancellationToken)
+    internal Task ScanSteamUiAsync(string steamRoot, ScanReport report, CancellationToken cancellationToken)
+    {
+        SteamPackageCatalog.TryLoadForSteamRoot(steamRoot, out SteamPackageCatalog? catalog);
+        return ScanSteamUiAsync(steamRoot, report, cancellationToken, catalog);
+    }
+
+    internal async Task ScanSteamUiAsync(
+        string steamRoot,
+        ScanReport report,
+        CancellationToken cancellationToken,
+        SteamPackageCatalog? catalog)
     {
         long totalBytes = 0;
         int checkedFiles = 0;
         int skippedFiles = 0;
         VPetSteamUiInspector family = new(rules.KnownDomains);
+        Dictionary<string, (string FullPath, string Sha256, long Length, uint Crc32)> observedSnapshots = new(StringComparer.OrdinalIgnoreCase);
         foreach (string root in new[] { Path.Combine(steamRoot, "steamui"), Path.Combine(steamRoot, "clientui"), Path.Combine(steamRoot, "resource") })
         {
             string[] files;
@@ -308,10 +365,10 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                     continue;
                 }
 
-                string text, sha256; long capturedLength;
+                string text, sha256; long capturedLength; uint crc32;
                 try
                 {
-                    (text, sha256, capturedLength) = await ReadSteamUiSnapshotAsync(path,
+                    (text, sha256, capturedLength, crc32) = await ReadSteamUiSnapshotAsync(path,
                         Math.Min(MaximumScriptBytes, MaximumTotalScriptBytes - totalBytes), cancellationToken);
                     report.Metrics.BytesHashed += capturedLength;
                 }
@@ -322,24 +379,58 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 }
                 totalBytes += capturedLength;
                 checkedFiles++;
-                family.Observe(Path.GetRelativePath(steamRoot, path), sha256, text);
+                string relativePath = Path.GetRelativePath(steamRoot, path);
+                string normalizedRel = relativePath.Replace('\\', '/');
+                observedSnapshots[normalizedRel] = (Path.GetFullPath(path), sha256, capturedLength, crc32);
+                family.Observe(relativePath, sha256, text);
 
+                bool isKnownOfficialDeviating = IsOfficialDeviating(catalog, normalizedRel, capturedLength, crc32);
                 HashRule? known = FindKnownHash(sha256);
+                bool isCss = Path.GetExtension(path).Equals(".css", StringComparison.OrdinalIgnoreCase);
+                if (isCss && HasCssSuppression(text) &&
+                    (path.Equals(Path.Combine(steamRoot, "resource", "webkit.css"), StringComparison.OrdinalIgnoreCase) || isKnownOfficialDeviating))
+                {
+                    report.Findings.Add(new Finding
+                    {
+                        RuleId = "STEAM-UI-CSS-SUPPRESSION",
+                        Category = FindingCategory.Steam,
+                        Severity = FindingSeverity.High,
+                        Score = 85,
+                        TitleText = MessageText.Create("Steam.UiCssSuppression.Title"),
+                        DescriptionText = MessageText.Create("Steam.UiCssSuppression.Description"),
+                        EvidenceText = MessageText.Create("Steam.UiCssSuppression.Evidence", sha256),
+                        HandlingDetailsText = isKnownOfficialDeviating
+                            ? MessageText.Create("SteamConfig.PackageRestoreDescription")
+                            : (MessageText)"",
+                        Sha256 = sha256,
+                        TargetSha256 = isKnownOfficialDeviating ? sha256 : null,
+                        ConfigurationKind = isKnownOfficialDeviating ? SteamConfigurationRepair.PackageRestore : null,
+                        Target = path,
+                        IsKnownMalware = false,
+                        CanRemediate = isKnownOfficialDeviating,
+                        SuggestedActions = isKnownOfficialDeviating
+                            ? [SuggestedActionKind.RepairSteamConfiguration]
+                            : [SuggestedActionKind.ReviewOnly]
+                    });
+                }
+
                 bool isScript = Path.GetExtension(path).Equals(".js", StringComparison.OrdinalIgnoreCase);
                 LoopbackScriptReference? loopback = isScript ? SteamUiLoopbackInspector.Find(text) : null;
-                if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback));
+                if (loopback is not null) report.Findings.Add(CreateLoopbackFinding(steamRoot, path, sha256, loopback, isKnownOfficialDeviating));
                 LoopbackScriptReference? external = isScript ? SteamUiLoopbackInspector.FindExternal(text) : null;
-                if (external is not null) report.Findings.Add(CreateExternalScriptFinding(path, sha256, external));
+                if (external is not null) report.Findings.Add(CreateExternalScriptFinding(path, sha256, external, isKnownOfficialDeviating));
                 List<MessageText> signals = isScript ? AnalyzeSteamUiMessages(text) : [];
                 if (known?.Malware != true && signals.Count == 0) continue;
 
-                bool highConfidence = known?.Malware == true || signals.Count >= 2;
                 bool isMalwareFile = known?.Malware == true;
-                // 本机回环脚本加载器可能属于本地 UI 扩展或对 Steam 核心 chunk 的小幅注入；
-                // 非已知恶意文件且命中回环加载器时保留仅复核，避免直接移除核心 chunk，改由恢复指引引导官方客户端修复。
-                bool isRemediableUiFile = !isMalwareFile && highConfidence && isScript && loopback is null &&
+                bool highConfidence = isMalwareFile || signals.Count >= 2;
+                bool canPackageRestore = !isMalwareFile && isKnownOfficialDeviating && IsSupportedPackageRestoreUiPath(steamRoot, path);
+                // 无官方分包清单时沿用原有高置信与非回环门禁，避免误删可能被局部修改的核心 chunk；
+                // 存在官方分包清单且命中官方路径时直接开放原位 PackageRestore 覆盖还原。
+                bool isRemediableUiFile = !isMalwareFile && !canPackageRestore && highConfidence && isScript && loopback is null &&
                     (ContentDiscovery.IsWithin(path, Path.Combine(steamRoot, "steamui")) ||
                      ContentDiscovery.IsWithin(path, Path.Combine(steamRoot, "clientui")));
+                bool canRemediate = isMalwareFile || canPackageRestore || isRemediableUiFile;
                 report.Findings.Add(new Finding
                 {
                     RuleId = known?.Id ?? "STEAM-UI-SEMANTIC-TAMPERING",
@@ -350,15 +441,17 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                     DescriptionText = MessageText.List(signals.Count == 0 ? [known!.LabelText] : signals),
                     Target = path,
                     EvidenceText = MessageText.Create("Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.05", (sha256), (System.FormattableString.Invariant($"{capturedLength:N0}"))),
-                    HandlingDetailsText = isRemediableUiFile ? MessageText.Create("SteamConfig.UiFileHandling") : (MessageText)"",
+                    HandlingDetailsText = canPackageRestore
+                        ? MessageText.Create("SteamConfig.PackageRestoreDescription")
+                        : isRemediableUiFile ? MessageText.Create("SteamConfig.UiFileHandling") : (MessageText)"",
                     Sha256 = sha256,
-                    TargetSha256 = isRemediableUiFile || isMalwareFile ? sha256 : null,
-                    ConfigurationKind = isRemediableUiFile ? SteamConfigurationRepair.UiFile : null,
+                    TargetSha256 = canRemediate ? sha256 : null,
+                    ConfigurationKind = canPackageRestore ? SteamConfigurationRepair.PackageRestore : isRemediableUiFile ? SteamConfigurationRepair.UiFile : null,
                     IsKnownMalware = isMalwareFile,
-                    CanRemediate = isMalwareFile || isRemediableUiFile,
+                    CanRemediate = canRemediate,
                     SuggestedActions = isMalwareFile
                         ? [SuggestedActionKind.QuarantineFile, SuggestedActionKind.BlockKnownDomains]
-                        : isRemediableUiFile ? [SuggestedActionKind.RepairSteamConfiguration] : [SuggestedActionKind.ReviewOnly]
+                        : canPackageRestore || isRemediableUiFile ? [SuggestedActionKind.RepairSteamConfiguration] : [SuggestedActionKind.ReviewOnly]
                 });
             }
         }
@@ -385,6 +478,43 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
                 CanRemediate = false,
                 SuggestedActions = [SuggestedActionKind.ReviewOnly]
             });
+
+            if (catalog is null) continue;
+            foreach (SteamUiEvidenceFile participant in match.Evidence.Files)
+            {
+                if (!SteamPackageCatalog.TryNormalizeRelativePath(participant.RelativePath, out string relPath) ||
+                    !observedSnapshots.TryGetValue(relPath, out var snapshot) ||
+                    !IsOfficialDeviating(catalog, relPath, snapshot.Length, snapshot.Crc32) ||
+                    !IsSupportedPackageRestoreUiPath(steamRoot, snapshot.FullPath))
+                    continue;
+
+                bool alreadyRemediable = report.Findings.Any(f =>
+                    f.CanRemediate &&
+                    (f.ConfigurationKind is SteamConfigurationRepair.PackageRestore or SteamConfigurationRepair.UiFile ||
+                     f.SuggestedActions.Contains(SuggestedActionKind.QuarantineFile)) &&
+                    RelatedArtifactRelations.SamePath(f.Target, snapshot.FullPath));
+                if (alreadyRemediable) continue;
+
+                bool isCssParticipant = relPath.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
+                report.Findings.Add(new Finding
+                {
+                    RuleId = isCssParticipant ? "STEAM-UI-CSS-SUPPRESSION" : "STEAM-UI-SEMANTIC-TAMPERING",
+                    Category = FindingCategory.Steam,
+                    Severity = FindingSeverity.High,
+                    Score = 85,
+                    TitleText = MessageText.Create(isCssParticipant ? "Steam.UiCssSuppression.Title" : "Steam.UiPackageParticipant.Title"),
+                    DescriptionText = MessageText.Create(isCssParticipant ? "Steam.UiCssSuppression.Description" : "Steam.UiPackageParticipant.Description"),
+                    EvidenceText = MessageText.Create("Steam.UiPackageParticipant.Evidence", relPath, snapshot.Sha256),
+                    HandlingDetailsText = MessageText.Create("SteamConfig.PackageRestoreDescription"),
+                    Sha256 = snapshot.Sha256,
+                    TargetSha256 = snapshot.Sha256,
+                    ConfigurationKind = SteamConfigurationRepair.PackageRestore,
+                    Target = snapshot.FullPath,
+                    IsKnownMalware = false,
+                    CanRemediate = true,
+                    SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
+                });
+            }
         }
         if (family.Incomplete)
         {
@@ -394,7 +524,86 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
         if (skippedFiles > 0) report.Coverage = ScanCoverage.Partial;
     }
 
-    private static async Task<(string Text, string Hash, long Length)> ReadSteamUiSnapshotAsync(string path, long maximumBytes, CancellationToken token)
+    private SignatureResult VerifyRootFileSignature(string path) =>
+        _verifyBinarySignature is not null
+            ? _verifyBinarySignature(path, null)
+            : AuthenticodeVerifier.VerifyOffline(path);
+
+    private static bool IsTrustedOfficialBinarySignature(SignatureResult signature) =>
+        signature.Status == SignatureStatus.Valid &&
+        (signature.IsValveSigner ||
+         AuthenticodeVerifier.IsTrustedValveSigner(signature.Status, signature.SignerSubject) ||
+         IsTrustedMicrosoftSigner(signature.Status, signature.SignerSubject));
+
+    private static bool IsTrustedMicrosoftSigner(SignatureStatus status, string? subject)
+    {
+        if (status != SignatureStatus.Valid || string.IsNullOrWhiteSpace(subject)) return false;
+        try
+        {
+            X500DistinguishedName name = new(subject);
+            bool found = false;
+            foreach (X500RelativeDistinguishedName attribute in name.EnumerateRelativeDistinguishedNames())
+            {
+                if (attribute.HasMultipleElements) return false;
+                string? oid = attribute.GetSingleElementType().Value;
+                if (oid is not ("2.5.4.3" or "2.5.4.10")) continue;
+                string? value = attribute.GetSingleElementValue();
+                if (!string.Equals(value, "Microsoft Corporation", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(value, "Microsoft Windows", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                found = true;
+            }
+            return found;
+        }
+        catch (Exception ex) when (ex is CryptographicException or ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsOfficialDeviating(SteamPackageCatalog? catalog, string normalizedRel, long length, uint crc32) =>
+        catalog is not null &&
+        catalog.TryGetInstalledEntry(normalizedRel, out SteamInstalledFileEntry? entry) &&
+        !entry.IsDirectory &&
+        (length != entry.Size || crc32 != entry.Crc32);
+
+    private static bool IsSupportedPackageRestoreUiPath(string steamRoot, string fullPath) =>
+        ContentDiscovery.IsWithin(fullPath, Path.Combine(steamRoot, "steamui")) ||
+        ContentDiscovery.IsWithin(fullPath, Path.Combine(steamRoot, "clientui")) ||
+        Path.GetFullPath(fullPath).Equals(Path.GetFullPath(Path.Combine(steamRoot, "resource", "webkit.css")), StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<bool> IsOfficialInstalledMatchAsync(
+        string steamRoot,
+        string path,
+        SteamPackageCatalog? catalog,
+        CancellationToken token)
+    {
+        if (catalog is null || !catalog.HasVerifiedInstalledIndex) return false;
+        string rel = Path.GetRelativePath(steamRoot, path);
+        if (!catalog.TryGetInstalledEntry(rel, out SteamInstalledFileEntry? entry) || entry.IsDirectory)
+            return false;
+        try
+        {
+            await using FileStream stream = RelatedArtifactReader.Open(path);
+            if (stream.Length != entry.Size || stream.Length > SteamPackageArchive.MaximumExtractedFileBytes)
+                return false;
+            uint crc = 0xFFFFFFFFu;
+            byte[] buffer = new byte[64 * 1024];
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer, token).ConfigureAwait(false);
+                if (read == 0) break;
+                crc = SteamPackageArchive.UpdateCrc32(crc, buffer.AsSpan(0, read));
+            }
+            return (crc ^ 0xFFFFFFFFu) == entry.Crc32;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    private static async Task<(string Text, string Hash, long Length, uint Crc32)> ReadSteamUiSnapshotAsync(string path, long maximumBytes, CancellationToken token)
     {
         await using FileStream stream = RelatedArtifactReader.Open(path);
         if (stream.Length > maximumBytes || stream.Length > int.MaxValue) throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadSteamUiSnapshotAsync.01"), sourceText => new IOException(sourceText));
@@ -405,8 +614,9 @@ public sealed partial class SteamSecurityScanner(RuleSet rules)
             if (stream.ReadByte() != -1) throw MessageExceptions.Create(MessageText.Create("Backend.Core.SteamSecurityScanner.ReadSteamUiSnapshotAsync.02"), sourceText => new IOException(sourceText));
             string text = new UTF8Encoding(false, true).GetString(bytes);
             string hash = Convert.ToHexString(SHA256.HashData(bytes));
+            uint crc32 = SteamPackageArchive.ComputeCrc32(bytes);
             RelatedArtifactReader.ValidatePath(stream.SafeFileHandle, Path.GetFullPath(path));
-            return (text, hash, bytes.Length);
+            return (text, hash, bytes.Length, crc32);
         }
         finally { Array.Clear(bytes); }
     }

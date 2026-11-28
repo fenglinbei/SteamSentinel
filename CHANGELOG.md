@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.2 Steam 全链路安全自动恢复（三层体系） — 自签名预发布 - 2026-11-27
+
+- **Tier 1 官方分包清单与离线/按需 CDN 校验引擎（`SteamPackageCatalog` / `SteamPackageArchive`）**：
+  - 严格解析 `steam_client_win64.manifest` / `win32` / `publicbeta` 节点清单，并完成 `.installed` 文件自带 `SHA1` 尾标自校验；
+  - 支持从 `.zip` 与 Steam `.zip.vz`（`VZ` 头 + LZMA + CRC32 + `vz` 尾）流式提取单个官方原始文件并校验 SHA-256；当本机缺失对应分包且准备期允许补拉（`allowPackageDownload: true`）时，仅针对目标分包通过 HTTPS 从官方 CDN 按需下载并验签；提取后的 `.js`/`.html`/`.css` 须零 UI 篡改信号，`.exe`/`.dll` 须通过离线 Valve Authenticode 签名校验。
+- **Tier 2 无缝退场、原位覆盖还原与回滚保护（`SteamProcessController` / Broker / UI）**：
+  - 移除界面执行处置前对运行中 Steam 的硬阻塞弹窗；当目标涉及 Steam 配置/UI/程序时，在预览确认窗自动提示将在确认后安全退出相关 Steam 进程；
+  - `SteamProcessController` 严格限定仅关停属于当前修复目标 `SteamLayout` 目录且经 `steam.exe` 验签关联的子树进程（支持优雅退出与受限强杀兜底），绝不误伤无关实例或当前进程自身；
+  - Broker 原位还原（`PackageRestore`）先完成备份至隔离区并绑定档案 SHA-256 身份，回滚支持安全还原且保留失败自恢复状态；若断网无法获取官方分包，优雅保留既有 `UiFile` 隔离并提示转为 Tier 3 官方兜底。
+- **Tier 3 Valve 官方安装器兜底与安全降权自检拉起（`SteamOfficialInstallerService`）**：
+  - 结果操作栏按需呈现「一键修复 Steam（保留游戏）」与「打开 Steam 自动补全」入口（默认折叠，严格保持 `784x460` 最小窗口及中英文热切换下 `ResultButtons` 与文字零遮挡、零截断）；
+  - 官方安装器兜底仅接受 Valve 官方 HTTPS CDN 源，全程持有独占读锁校验 `Valve Corp.` Authenticode 签名及内嵌时间戳证书，退场 Steam 后执行静默覆盖安装（保留用户 `steamapps` 游戏库）并自动复扫刷新；
+  - 自检拉起在管理员高权限状态下优先通过交互式 Shell 令牌降权以普通权限启动已验签正版 `steam.exe`，找不到可用普通令牌时明确拒绝高权限拉起；
+  - 新增四步可视化修复进度舞台（`RepairStepperPanel`）、`SteamOfficialInstallerService` 安装包字节级与阶段细粒度进度上报、`BatchOutcomeBanner` 处置结果汇总横幅与全链路大白话双语文案重构。
+  - 新增 `SteamPackageEngine`、`SteamInstallerAndProcess`、`SteamFullRecoveryBroker` 与 `SteamFullRecoveryUi` 回归套件，自检门禁基线更新至 **4005** 项。
+
 ## 0.4.1 扫描精准降噪与列表展示优化 — 自签名预发布 - 2026-11-27
 
 - **精准降噪减少无效“需要复核”**：

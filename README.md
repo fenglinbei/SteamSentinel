@@ -2,7 +2,7 @@
 
 <img src="SteamSentinel.App/Assets/App.png" width="96" height="96" alt="SteamSentinel 应用图标" />
 
-SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。当前源码版本为 **0.4.1 预发布版**，规则版本为 `2026.11.17.1`。本轮在 0.4.0 极简顶栏、居中扫描动效、语言真热切换与三层智能分层基础上，进一步完成精准降噪（免除合法离线签名 PE 误触静态词共现、将无敏感项 `steam.cfg` 与大压缩包兄弟缺口下的良性成员自动收进「信息与参考」）并加宽列表「严重度」「分类」列消除文字截断。
+SteamSentinel 是面向 Windows 的本地优先扫描、辨别、隔离与 Steam 恢复工具，针对已观察到的 Steam / Wallpaper Engine / VPet“假红信”诈骗链及相近落地方式。当前源码版本为 **0.4.2 预发布版**，规则版本为 `2026.11.17.1`。本轮在 0.4.1 精准降噪与列表优化基础上，新增 Steam 全链路三层安全恢复体系：支持确认后自动安全退场目标 Steam 进程、结合本地或按需单分包 CDN 核验执行正版 Steam UI/程序原位覆盖还原（`PackageRestore`）、提供带 `Valve Corp.` 签名及时间戳校验的 `SteamSetup.exe` 官方安装器保留游戏库兜底入口，以及安全降权拉起正版 `steam.exe` 触发自检补齐。
 
 界面固定按高置信与安全边界判定哪些项可直接勾选清理，其余高风险但不能一键自动删除的线索留在主表（无勾选框）供人工核对或进一步检查，原始规则、分数与证据保留在导出报告及“详细信息”（默认折叠、按需点击展开）。详见 [CHANGELOG](CHANGELOG.md)。
 

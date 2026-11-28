@@ -88,7 +88,10 @@ legacy_keys = {"Backend.Core.ContentScanner.Containers.ScanContainerFileAsync.04
                "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.04",
                "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.05",
                "Backend.Core.SteamSecurityScanner.ScanSensitiveRootFilesAsync.07",
-               "Backend.Core.FileOccupancy.Describe.01"}
+               "Backend.Core.FileOccupancy.Describe.01",
+               "Remediation.ExecuteSelectedRemediationAsync.04",
+               "Remediation.ExecuteSelectedRemediationAsync.05",
+               "Remediation.ExecuteSelectedRemediationAsync.11"}
 unused = [key for key in catalogs["PresentationMessages"] if not key.startswith(dynamic_prefixes)
           and key not in legacy_keys and '"' + key + '"' not in all_source and key not in references]
 if unused:

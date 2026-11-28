@@ -17,11 +17,19 @@ public static class RemediationEvidencePolicy
         "STEAM-UI-LOOPBACK-SCRIPT" or "MANAGED-MOD-DOWNLOAD-LAUNCH" or "MANAGED-STEAM-CEF-HOST" or "MANAGED-STEAM-CEF-CORE";
 
     public static bool IsReviewOnlyEvidence(Finding finding) =>
-        IsBehaviorObservation(finding.RuleId) || finding.RuleId is "HEUR-STEAM-DEPLOYMENT-CHAIN" or "HEUR-SCRIPT-TOKEN-COOCCURRENCE" or
+        (IsBehaviorObservation(finding.RuleId) && !IsPackageRestoreSteamUiRepair(finding)) ||
+        finding.RuleId is "HEUR-STEAM-DEPLOYMENT-CHAIN" or "HEUR-SCRIPT-TOKEN-COOCCURRENCE" or
             "SHORTCUT-EXECUTION-CHAIN" or "HISTORY-CLICKFIX" or "STEAMALERT-UPDATE-HANDOFF-CANDIDATE" ||
         (finding.RuleId == "INSTALLER-STRUCTURE" &&
             (finding.Severity >= FindingSeverity.Medium || string.Equals(finding.ReasonCode, ReviewOnlyReasonCode, StringComparison.Ordinal))) ||
         string.Equals(finding.ReasonCode, ReviewOnlyReasonCode, StringComparison.Ordinal);
+
+    private static bool IsPackageRestoreSteamUiRepair(Finding finding) =>
+        finding.RuleId == "STEAM-UI-LOOPBACK-SCRIPT" &&
+        finding.ConfigurationKind == Inspection.SteamConfigurationRepair.PackageRestore &&
+        !finding.IsKnownMalware &&
+        finding.SuggestedActions.Count == 1 &&
+        finding.SuggestedActions[0] == SuggestedActionKind.RepairSteamConfiguration;
 
     public static bool CanRemediate(Finding finding) => finding.CanRemediate && !IsReviewOnlyEvidence(finding);
 

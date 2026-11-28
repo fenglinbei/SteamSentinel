@@ -19,10 +19,19 @@ public static class SteamConfigurationRepair
     public const string ShortcutReviewRule = "STEAM-SHORTCUT-DEBUG-UNVERIFIED";
     public const string UiFile = "SteamUiFile";
     public const int MaximumUiFileBytes = 32 * 1024 * 1024;
+    /// <summary>基于官方分包清单原位恢复被篡改的 Steam 客户端或界面文件。</summary>
+    public const string PackageRestore = "SteamPackageRestore";
+    /// <summary>官方分包原位恢复支持的最大单文件字节上限（64 MiB）。</summary>
+    public const int MaximumPackageRestoreBytes = 64 * 1024 * 1024;
     public const string DebugArgument = "-cef-enable-debugging";
     public const string DebugPortArgument = "--remote-debugging-port";
 
-    public static int MaximumBytesFor(string? kind) => kind == UiFile ? MaximumUiFileBytes : MaximumBytes;
+    public static int MaximumBytesFor(string? kind) => kind switch
+    {
+        UiFile => MaximumUiFileBytes,
+        PackageRestore => MaximumPackageRestoreBytes,
+        _ => MaximumBytes
+    };
     public static bool IsRemovedOnRepair(string? kind) => kind is Marker or UiFile;
     private static readonly Guid UsersFilesRoot = new("59031a47-3f72-44a7-89c5-5595fe6b30ee");
     private static readonly Guid UsersFilesKnownFolder = new("f3ce0f7c-4901-4acc-8648-d5d44b04ef8f");

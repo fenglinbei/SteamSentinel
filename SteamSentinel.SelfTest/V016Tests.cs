@@ -220,33 +220,24 @@ internal static partial class Program
     private static void TestV016Dialog()
     {
         bool passed = false;
-        Exception? failure = null;
-        Thread thread = new(() =>
+        UiFixtureApplication.RunOnStaApplication(app =>
         {
-            try
-            {
-                SteamSentinel.App.App app = UiFixtureApplication.Create();
-                ArchivePasswordRequest request = new("ui", "inert.zip", new string('A', 64), "ZIP", 1, null, "inert",
-                    ArchivePasswordReuseScope.Session, ArchivePasswordPromptKind.CachedPasswordFailed);
-                PasswordDialog dialog = new(request);
-                passed = ((RadioButton)dialog.FindName("SessionRadio")).IsChecked == true &&
-                    ((RadioButton)dialog.FindName("ArchiveTreeRadio")).IsChecked == false && dialog.PromptTitle == "本次暂存的密码未能解开这一层";
-                dialog.Close();
-                TestV017Window();
-                TestV018Window();
-                TestV0115Window();
-                TestV0117Layout();
-                TestV030UiPresentation(null);
-                TestFindingPriorityUi();
-                TestV030LanguageControls(null);
-                Check("UI 夹具没有安排或加载真实产品窗口", app.StartupUri is null &&
-                    app.Windows.OfType<MainWindow>().All(window => !window.IsLoaded));
-                app.Shutdown();
-            }
-            catch (Exception ex) { failure = ex; }
+            ArchivePasswordRequest request = new("ui", "inert.zip", new string('A', 64), "ZIP", 1, null, "inert",
+                ArchivePasswordReuseScope.Session, ArchivePasswordPromptKind.CachedPasswordFailed);
+            PasswordDialog dialog = new(request);
+            passed = ((RadioButton)dialog.FindName("SessionRadio")).IsChecked == true &&
+                ((RadioButton)dialog.FindName("ArchiveTreeRadio")).IsChecked == false && dialog.PromptTitle == "本次暂存的密码未能解开这一层";
+            dialog.Close();
+            TestV017Window();
+            TestV018Window();
+            TestV0115Window();
+            TestV0117Layout();
+            TestV030UiPresentation(null);
+            TestFindingPriorityUi();
+            TestV030LanguageControls(null);
+            Check("UI 夹具没有安排或加载真实产品窗口", app.StartupUri is null &&
+                app.Windows.OfType<MainWindow>().All(window => !window.IsLoaded));
         });
-        thread.SetApartmentState(ApartmentState.STA); thread.Start(); thread.Join();
-        if (failure is not null) throw failure;
         Check("新密码窗口沿用作用域并展示对应失败标题", passed);
     }
 

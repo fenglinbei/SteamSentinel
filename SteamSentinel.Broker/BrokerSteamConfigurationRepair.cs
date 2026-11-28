@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using SteamSentinel.Core.Inspection;
 using SteamSentinel.Core.Models;
 using SteamSentinel.Core.Remediation;
@@ -38,11 +39,44 @@ internal sealed partial class BrokerEngine
         }
         else if (snapshot.SteamExecutable is not null || snapshot.OriginalValue is not null || snapshot.RepairedValue is not null || snapshot.RegistryValueKind is not null)
             throw ConfigDenied("SteamConfig.InvalidTarget");
+        if (snapshot.Kind == SteamConfigurationRepair.PackageRestore)
+        {
+            if (action.RelatedFilePath is not null || action.RelatedFileSha256 is not null)
+                throw ConfigDenied("SteamConfig.InvalidTarget");
+            ValidatePackageRestoreSnapshot(snapshot, action.Target, layout);
+        }
+        else if (HasAnyPackageSnapshotField(snapshot))
+        {
+            throw ConfigDenied("SteamConfig.InvalidTarget");
+        }
         if (snapshot.Kind == SteamConfigurationRepair.Shortcut &&
             (snapshot.OriginalValue is not null || snapshot.RepairedValue is not null || snapshot.RegistryValueKind is not null) ||
-            (snapshot.Kind is SteamConfigurationRepair.Cfg or SteamConfigurationRepair.UiFile && snapshot.SteamExecutable is not null) ||
+            (snapshot.Kind is SteamConfigurationRepair.Cfg or SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore && snapshot.SteamExecutable is not null) ||
             SteamConfigurationRepair.IsRemovedOnRepair(snapshot.Kind) && action.RepairedSha256 is not null)
             throw ConfigDenied("SteamConfig.InvalidTarget");
+    }
+
+    private static bool HasAnyPackageSnapshotField(SteamConfigurationSnapshot snapshot) =>
+        snapshot.PackageName is not null ||
+        snapshot.PackageRelativePath is not null ||
+        snapshot.PackageArchiveFile is not null ||
+        snapshot.PackageArchiveSha256 is not null ||
+        snapshot.PackageIsVz;
+
+    private static void ValidatePackageRestoreSnapshot(SteamConfigurationSnapshot snapshot, string target, SteamLayout layout)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.PackageName) ||
+            string.IsNullOrWhiteSpace(snapshot.PackageRelativePath) ||
+            string.IsNullOrWhiteSpace(snapshot.PackageArchiveFile) ||
+            !Validation.IsHexSha256(snapshot.PackageArchiveSha256) ||
+            !SteamPackageCatalog.TryNormalizeRelativePath(snapshot.PackageRelativePath, out string normalizedRelative) ||
+            !string.Equals(normalizedRelative, snapshot.PackageRelativePath, StringComparison.OrdinalIgnoreCase) ||
+            !SteamPackageCatalog.IsSafePackageFileName(snapshot.PackageArchiveFile) ||
+            !SteamConfigurationRepairTarget.TryResolvePackageRestoreRoot(target, layout, out _, out string targetRelative) ||
+            !string.Equals(targetRelative, normalizedRelative, StringComparison.OrdinalIgnoreCase))
+        {
+            throw ConfigDenied("SteamConfig.InvalidTarget");
+        }
     }
 
     private static void ValidateSteamRunSnapshot(SteamConfigurationSnapshot snapshot, string? hive, string? view,
@@ -55,19 +89,23 @@ internal sealed partial class BrokerEngine
             throw ConfigDenied("SteamConfig.InvalidTarget");
     }
 
-    private static void RequireSteamConfigurationClosed()
+    private async Task EnsureSteamClosedForConfigurationAsync(CancellationToken token)
     {
-        foreach (string name in new[] { "steam", "steamwebhelper" })
+        try
         {
-            Process[] processes = Process.GetProcessesByName(name);
-            try { if (processes.Length != 0) throw ConfigDenied("SteamConfig.CloseSteam"); }
-            finally { foreach (Process process in processes) process.Dispose(); }
+            _ = await _steamProcessController
+                .EnsureClosedAsync(_steamLayout, cancellationToken: token)
+                .ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw MessageExceptions.Create(MessageText.Create("SteamConfig.CloseSteam"), text => new InvalidOperationException(text, ex));
         }
     }
 
     private async Task<MessageText> RepairSteamConfigurationAsync(RemediationAction action, CancellationToken token)
     {
-        RequireSteamConfigurationClosed();
+        await EnsureSteamClosedForConfigurationAsync(token).ConfigureAwait(false);
         ValidateSteamConfigurationAction(action, _steamLayout);
         if (action.RelatedFilePath is not null && !(await SteamConfigurationRepairTarget.CaptureExecutableHashAsync(action.RelatedFilePath, token))
             .Equals(action.RelatedFileSha256, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied();
@@ -81,13 +119,111 @@ internal sealed partial class BrokerEngine
         else
         {
             string itemRoot = Path.Combine(_incidentRoot, "items", action.ActionId.ToString("N"));
-            MachineStateSecurity.PreparePayloadDirectory(itemRoot);
+            PreparePayloadDirectory(itemRoot);
             string destination = Path.Combine(itemRoot, SafeName(Path.GetFileName(action.Target)) + ".original");
             if (SteamConfigurationRepair.IsRemovedOnRepair(action.ConfigurationKind))
-                await QuarantineSteamMarkerAsync(action, _steamLayout, destination, Persist, MachineStateSecurity.ProtectPayloadFile, token);
-            else await RepairSteamConfigurationFileAsync(action, _steamLayout, destination, Persist, MachineStateSecurity.ProtectPayloadFile, token);
+                await QuarantineSteamMarkerAsync(action, _steamLayout, destination, Persist, ProtectPayloadFile, token);
+            else if (action.ConfigurationKind == SteamConfigurationRepair.PackageRestore)
+                await RepairSteamPackageRestoreFileAsync(action, _steamLayout, destination, Persist, ProtectPayloadFile, token, _verifySteamPackageExecutable);
+            else
+                await RepairSteamConfigurationFileAsync(action, _steamLayout, destination, Persist, ProtectPayloadFile, token);
         }
         return MessageText.Create("SteamConfig.Repaired");
+    }
+
+    /// <summary>
+    /// Broker 独立重新读取本地官方分包清单并校验与解压官方文件（零信任客户端传参），随后在独占句柄上备份原件并完成不等长原位写入。
+    /// </summary>
+    internal static async Task<QuarantineRecord> RepairSteamPackageRestoreFileAsync(
+        RemediationAction action,
+        SteamLayout layout,
+        string destination,
+        Func<QuarantineRecord, CancellationToken, Task> persist,
+        Action<string> protect,
+        CancellationToken token,
+        Func<string, SafeFileHandle?, SignatureResult>? verifyExecutableSignature = null,
+        Func<SecureFileLease, byte[], Task>? writeForTest = null)
+    {
+        ValidateSteamConfigurationAction(action, layout);
+        if (action.ConfigurationKind != SteamConfigurationRepair.PackageRestore)
+            throw ConfigDenied("SteamConfig.InvalidTarget");
+
+        SteamConfigurationSnapshot snapshot = SteamConfigurationRepairTarget.ReadSnapshot(action.ConfigurationSnapshot);
+        if (!SteamConfigurationRepairTarget.TryResolvePackageRestoreRoot(action.Target, layout, out string steamRoot, out string normalizedRel) ||
+            !SteamPackageCatalog.TryLoadForSteamRoot(steamRoot, out SteamPackageCatalog? catalog) ||
+            (catalog.HasVerifiedInstalledIndex && !catalog.IsKnownOfficialRelativePath(normalizedRel)))
+            throw ConfigDenied("SteamConfig.InvalidTarget");
+
+        if (!catalog.TryGetPackage(snapshot.PackageName!, out SteamPackageEntry? packageEntry))
+            throw ConfigDenied("SteamConfig.RepairFailed");
+
+        string archiveFileName;
+        string expectedArchiveSha256;
+        if (snapshot.PackageIsVz)
+        {
+            if (string.IsNullOrEmpty(packageEntry.ZipVzFile) ||
+                string.IsNullOrEmpty(packageEntry.Sha256Vz) ||
+                !string.Equals(packageEntry.ZipVzFile, snapshot.PackageArchiveFile, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(packageEntry.Sha256Vz, snapshot.PackageArchiveSha256, StringComparison.OrdinalIgnoreCase))
+                throw ConfigDenied("SteamConfig.InvalidTarget");
+            archiveFileName = packageEntry.ZipVzFile;
+            expectedArchiveSha256 = packageEntry.Sha256Vz;
+        }
+        else
+        {
+            if (!string.Equals(packageEntry.ZipFile, snapshot.PackageArchiveFile, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(packageEntry.Sha256, snapshot.PackageArchiveSha256, StringComparison.OrdinalIgnoreCase))
+                throw ConfigDenied("SteamConfig.InvalidTarget");
+            archiveFileName = packageEntry.ZipFile;
+            expectedArchiveSha256 = packageEntry.Sha256;
+        }
+
+        string archivePath = Path.Combine(catalog.PackageDirectory, archiveFileName);
+        if (!ContentDiscovery.IsLocalSafePath(archivePath) || !File.Exists(archivePath))
+            throw ConfigDenied("SteamConfig.RepairFailed");
+
+        SteamPackageExtractResult? extracted = snapshot.PackageIsVz
+            ? await SteamPackageArchive.ExtractFromVzFileAsync(archivePath, packageEntry, normalizedRel, expectedArchiveSha256, downloaded: false, token).ConfigureAwait(false)
+            : await SteamPackageArchive.ExtractFromZipFileAsync(archivePath, packageEntry, normalizedRel, expectedArchiveSha256, downloaded: false, token).ConfigureAwait(false);
+        if (extracted is null)
+            throw ConfigDenied("SteamConfig.RepairFailed");
+
+        string verifiedExtractedSha256 = SteamConfigurationRepair.Hash(extracted.Content);
+        if (!verifiedExtractedSha256.Equals(extracted.Sha256, StringComparison.OrdinalIgnoreCase) ||
+            !verifiedExtractedSha256.Equals(action.RepairedSha256, StringComparison.OrdinalIgnoreCase) ||
+            verifiedExtractedSha256.Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw ConfigDenied("SteamConfig.RepairFailed");
+
+        string verificationRoot = Path.GetDirectoryName(destination)
+            ?? throw ConfigDenied("SteamConfig.RepairFailed");
+        await SteamConfigurationRepairTarget.VerifyExtractedOfficialContentAsync(
+            normalizedRel,
+            extracted.Content,
+            verificationRoot,
+            verifyExecutableSignature,
+            token).ConfigureAwait(false);
+
+        using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(action.Target, action.ExpectedParentIdentity);
+        await using SecureFileLease source = SecureFileLease.OpenForUpdate(action.Target);
+        RequireConfigurationIdentity(source, action.Target, action.ExpectedFileIdentity!);
+        BrokerFileMetadata metadata = BrokerFileMetadata.CaptureLocked(source.Handle);
+        byte[] original = await source.ReadBytesAsync(SteamConfigurationRepair.MaximumPackageRestoreBytes, token, allowEmpty: true);
+        if (!SteamConfigurationRepair.Hash(original).Equals(action.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw ConfigDenied();
+
+        return await CommitLockedFileRepairAsync(
+            action,
+            source,
+            parent,
+            metadata,
+            destination,
+            original,
+            extracted.Content,
+            useTruncateWrite: true,
+            persist,
+            protect,
+            writeForTest,
+            token).ConfigureAwait(false);
     }
 
     internal static async Task<QuarantineRecord> RepairSteamConfigurationFileAsync(RemediationAction action, SteamLayout layout,
@@ -105,6 +241,36 @@ internal sealed partial class BrokerEngine
             !SteamConfigurationRepairTarget.TryRepair(action.ConfigurationKind!, original, layout, out byte[] repaired, out string? executable) ||
             repaired.Length != original.Length || !SteamConfigurationRepair.Hash(repaired).Equals(action.RepairedSha256, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(executable, action.RelatedFilePath, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied();
+
+        return await CommitLockedFileRepairAsync(
+            action,
+            source,
+            parent,
+            metadata,
+            destination,
+            original,
+            repaired,
+            useTruncateWrite: false,
+            persist,
+            protect,
+            writeForTest,
+            token).ConfigureAwait(false);
+    }
+
+    private static async Task<QuarantineRecord> CommitLockedFileRepairAsync(
+        RemediationAction action,
+        SecureFileLease source,
+        BrokerDirectoryLease parent,
+        BrokerFileMetadata metadata,
+        string destination,
+        byte[] original,
+        byte[] repaired,
+        bool useTruncateWrite,
+        Func<QuarantineRecord, CancellationToken, Task> persist,
+        Action<string> protect,
+        Func<SecureFileLease, byte[], Task>? writeForTest,
+        CancellationToken token)
+    {
         QuarantineRecord record = CreateConfigurationFileRecord(action, source, parent, metadata, destination);
         await persist(record, token);
         await source.CopyToAsync(destination, record.Sha256!, token);
@@ -116,8 +282,10 @@ internal sealed partial class BrokerEngine
         await persist(record, token);
         try
         {
-            if (writeForTest is null) await source.WriteSameLengthAsync(repaired, CancellationToken.None);
-            else await writeForTest(source, repaired);
+            if (writeForTest is null)
+                await WriteConfigurationBytesAsync(source, repaired, useTruncateWrite, CancellationToken.None);
+            else
+                await writeForTest(source, repaired);
             if (!(await source.ComputeSha256Async(CancellationToken.None)).Equals(record.RepairedSha256, StringComparison.OrdinalIgnoreCase))
                 throw ConfigDenied("SteamConfig.RepairFailed");
             metadata.ApplyTimesAndAttributes(source.Handle);
@@ -128,9 +296,10 @@ internal sealed partial class BrokerEngine
             record.MutationConfirmed = false;
             try
             {
-                await source.WriteSameLengthAsync(original, CancellationToken.None);
+                await WriteConfigurationBytesAsync(source, original, useTruncateWrite, CancellationToken.None);
                 metadata.ApplyTimesAndAttributes(source.Handle);
-                if (!(await source.ComputeSha256Async(CancellationToken.None)).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied("SteamConfig.RepairFailed");
+                if (!(await source.ComputeSha256Async(CancellationToken.None)).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw ConfigDenied("SteamConfig.RepairFailed");
             }
             catch (Exception recovery)
             { throw MessageExceptions.Create(MessageText.Create("SteamConfig.RepairFailed"), text => new IOException(text, new AggregateException(failure, recovery))); }
@@ -140,6 +309,9 @@ internal sealed partial class BrokerEngine
         await persist(record, CancellationToken.None);
         return record;
     }
+
+    private static Task WriteConfigurationBytesAsync(SecureFileLease lease, byte[] content, bool useTruncateWrite, CancellationToken token) =>
+        useTruncateWrite ? lease.WriteExactBytesWithTruncateAsync(content, token) : lease.WriteSameLengthAsync(content, token);
 
     private static QuarantineRecord CreateConfigurationFileRecord(RemediationAction action, SecureFileLease source,
         BrokerDirectoryLease parent, BrokerFileMetadata metadata, string destination) => new()
@@ -279,9 +451,19 @@ internal sealed partial class BrokerEngine
             (!SteamConfigurationRepair.IsSteamExecutable(snapshot.SteamExecutable, layout) ||
             !string.Equals(record.RelatedFilePath, snapshot.SteamExecutable, StringComparison.OrdinalIgnoreCase) || !Validation.IsHexSha256(record.RelatedFileSha256)))
             throw ConfigDenied("SteamConfig.InvalidTarget");
+        if (snapshot.Kind == SteamConfigurationRepair.PackageRestore)
+        {
+            if (record.RelatedFilePath is not null || record.RelatedFileSha256 is not null)
+                throw ConfigDenied("SteamConfig.InvalidTarget");
+            ValidatePackageRestoreSnapshot(snapshot, record.OriginalTarget, layout);
+        }
+        else if (HasAnyPackageSnapshotField(snapshot))
+        {
+            throw ConfigDenied("SteamConfig.InvalidTarget");
+        }
         if (snapshot.Kind != SteamConfigurationRepair.Run &&
             (snapshot.OriginalValue is not null || snapshot.RepairedValue is not null || snapshot.RegistryValueKind is not null) ||
-            snapshot.Kind is SteamConfigurationRepair.Cfg or SteamConfigurationRepair.Marker or SteamConfigurationRepair.UiFile && snapshot.SteamExecutable is not null ||
+            snapshot.Kind is SteamConfigurationRepair.Cfg or SteamConfigurationRepair.Marker or SteamConfigurationRepair.UiFile or SteamConfigurationRepair.PackageRestore && snapshot.SteamExecutable is not null ||
             SteamConfigurationRepair.IsRemovedOnRepair(snapshot.Kind) && record.RepairedSha256 is not null)
             throw ConfigDenied("SteamConfig.InvalidTarget");
     }
@@ -303,7 +485,9 @@ internal sealed partial class BrokerEngine
         BrokerFileMetadata.EnsureOnlyDefaultStream(backup.Handle);
         byte[] original = backup.Length == 0 ? [] : await backup.ReadBytesAsync(maximumBytes, token);
         if (!SteamConfigurationRepair.Hash(original).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied("SteamConfig.BackupFailed");
-        if (SteamConfigurationRepair.IsRemovedOnRepair(record.ConfigurationKind)) return (original, []);
+        if (SteamConfigurationRepair.IsRemovedOnRepair(record.ConfigurationKind) ||
+            record.ConfigurationKind == SteamConfigurationRepair.PackageRestore)
+            return (original, []);
         if (!SteamConfigurationRepairTarget.TryRepair(record.ConfigurationKind!, original, layout, out byte[] repaired, out string? executable) ||
             !SteamConfigurationRepair.Hash(repaired).Equals(record.RepairedSha256, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(executable, record.RelatedFilePath, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied("SteamConfig.BackupFailed");
@@ -313,7 +497,7 @@ internal sealed partial class BrokerEngine
     private async Task RestoreSteamConfigurationAsync(QuarantineRecord record, CancellationToken token,
         Func<QuarantineRecord, CancellationToken, Task>? persistBeforeWrite = null)
     {
-        RequireSteamConfigurationClosed();
+        await EnsureSteamClosedForConfigurationAsync(token).ConfigureAwait(false);
         ValidateSteamConfigurationRecord(record, _steamLayout);
         if (record.ConfigurationKind == SteamConfigurationRepair.Run)
             RestoreSteamRunValue(record, _steamLayout);
@@ -336,7 +520,9 @@ internal sealed partial class BrokerEngine
     {
         ValidateSteamConfigurationRecord(record, layout);
         if (!record.FileMutationAttempted) return;
-        if (record.ConfigurationKind is not (SteamConfigurationRepair.Cfg or SteamConfigurationRepair.Shortcut)) throw ConfigDenied("SteamConfig.InvalidTarget");
+        bool isPackageRestore = record.ConfigurationKind == SteamConfigurationRepair.PackageRestore;
+        if (record.ConfigurationKind is not (SteamConfigurationRepair.Cfg or SteamConfigurationRepair.Shortcut or SteamConfigurationRepair.PackageRestore))
+            throw ConfigDenied("SteamConfig.InvalidTarget");
         using BrokerDirectoryLease parent = BrokerDirectoryLease.OpenParent(record.OriginalTarget, record.OriginalParentIdentity);
         (byte[] original, byte[] repaired) = await ReadVerifiedSteamConfigurationBackupAsync(record, layout, token);
         await using SecureFileLease target = SecureFileLease.OpenForUpdate(record.OriginalTarget);
@@ -345,11 +531,18 @@ internal sealed partial class BrokerEngine
         BrokerFileMetadata currentMetadata = BrokerFileMetadata.CaptureLocked(target.Handle);
         if (currentMetadata.SecurityDescriptor != metadata.SecurityDescriptor || currentMetadata.Attributes != metadata.Attributes ||
             currentMetadata.CreationTimeUtc != metadata.CreationTimeUtc) throw ConfigDenied("SteamConfig.RestoreChanged");
-        byte[] current = await target.ReadBytesAsync(SteamConfigurationRepair.MaximumBytes, token);
+        int maximumBytes = SteamConfigurationRepair.MaximumBytesFor(record.ConfigurationKind);
+        byte[] current = await target.ReadBytesAsync(maximumBytes, token, allowEmpty: !record.MutationConfirmed || isPackageRestore);
         string hash = SteamConfigurationRepair.Hash(current);
         bool unchanged = hash.Equals(record.Sha256, StringComparison.OrdinalIgnoreCase);
         bool repairedImage = hash.Equals(record.RepairedSha256, StringComparison.OrdinalIgnoreCase);
-        if (!unchanged && !repairedImage &&
+        if (isPackageRestore)
+        {
+            // 原位恢复回滚前核验当前文件仍为我们写入的官方版本（或尚未改动），禁止覆盖后续新版文件。
+            if (!unchanged && !repairedImage)
+                throw ConfigDenied("SteamConfig.RestoreChanged");
+        }
+        else if (!unchanged && !repairedImage &&
             (record.MutationConfirmed && !record.FileRollbackAttempted || !IsInterruptedScriptImage(current, original, repaired)))
             throw ConfigDenied("SteamConfig.RestoreChanged");
         token.ThrowIfCancellationRequested();
@@ -359,11 +552,17 @@ internal sealed partial class BrokerEngine
             if (persistBeforeWrite is not null) await persistBeforeWrite(record, token);
             try
             {
-                if (writeForTest is null) await target.WriteSameLengthAsync(original, CancellationToken.None);
-                else await writeForTest(target, original);
+                if (writeForTest is null)
+                    await WriteConfigurationBytesAsync(target, original, isPackageRestore, CancellationToken.None);
+                else
+                    await writeForTest(target, original);
                 if (!(await target.ComputeSha256Async(CancellationToken.None)).Equals(record.Sha256, StringComparison.OrdinalIgnoreCase)) throw ConfigDenied("SteamConfig.RepairFailed");
             }
-            catch { await target.WriteSameLengthAsync(current, CancellationToken.None); throw; }
+            catch
+            {
+                await WriteConfigurationBytesAsync(target, current, isPackageRestore, CancellationToken.None);
+                throw;
+            }
         }
         metadata.ApplyTimesAndAttributes(target.Handle);
     }

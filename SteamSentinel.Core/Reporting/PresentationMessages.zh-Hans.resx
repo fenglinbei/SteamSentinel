@@ -484,15 +484,15 @@ remediation-case.json 如存在，包含处置前会话与跨启动/登录复验
     <comment>Display-only key. Initial migration: DisplayText.cs:0. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.01" xml:space="preserve">
-    <value>可选择处理</value>
+    <value>可直接修复</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:23. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.02" xml:space="preserve">
-    <value>已有可核验的处理目标，仍需确认预览。</value>
+    <value>勾选后点右下角「预览并修复」，将自动备份并清理。</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:23. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.03" xml:space="preserve">
-    <value>核对目标后选择处理。</value>
+    <value>勾选后点右下角「预览并修复」。</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:23. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.04" xml:space="preserve">
@@ -540,8 +540,11 @@ remediation-case.json 如存在，包含处置前会话与跨启动/登录复验
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:34. Keep this key stable.</comment>
   </data>
   <data name="FindingHandling.Get.15" xml:space="preserve">
-    <value>尚无足够依据执行处置，需要进一步核对。</value>
+    <value>未确认为病毒，普通软件或游戏 Mod 常见，一般无需处理。</value>
     <comment>Display-only key. Initial migration: SteamSentinel.Core/Reporting/FindingHandlingPresentation.cs:35. Keep this key stable.</comment>
+  </data>
+  <data name="FindingHandling.SteamPackageRestore.Reason" xml:space="preserve">
+    <value>自动备份被改文件，并直接恢复为 Steam 官方原版。</value>
   </data>
   <data name="FindingHandling.Get.16" xml:space="preserve">
     <value>确认是否为自用代理，或点击「检查代理与证书」查看详情。</value>
@@ -3356,7 +3359,7 @@ DER SHA-256：{3}
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Confirmation.01" xml:space="preserve">
-    <value>请核对处置方案</value>
+    <value>请核对修复清单</value>
     <comment>Display only: SteamSentinel.App/MainWindow.Activity.cs</comment>
   </data>
   <data name="Ui.Activity.ShowActivity.Applying.01" xml:space="preserve">
@@ -4358,7 +4361,7 @@ DER SHA-256：{3}
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.092" xml:space="preserve">
-    <value>预览并处置</value>
+    <value>预览并修复</value>
     <comment>Display only: MainWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.MainWindow.093" xml:space="preserve">
@@ -4614,7 +4617,7 @@ DER SHA-256：{3}
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.002" xml:space="preserve">
-    <value>核对处置清单</value>
+    <value>确认修复清单</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.003" xml:space="preserve">
@@ -4698,7 +4701,7 @@ DER SHA-256：{3}
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Xaml.RemediationPreviewWindow.022" xml:space="preserve">
-    <value>执行处置</value>
+    <value>开始修复</value>
     <comment>Display only: Dialogs/RemediationPreviewWindow.xaml</comment>
   </data>
   <data name="Ui.Language.Automatic" xml:space="preserve">
@@ -5913,7 +5916,7 @@ DER SHA-256：{3}
     <value>属性/文件关联为静态声明；证书或 PAC 未在表中出现，不能排除程序运行后设置。</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.01" xml:space="preserve">
-    <value>发现需复核的脚本相关字符串</value>
+    <value>包含常见脚本字样（普通软件常见）</value>
   </data>
   <data name="Backend.Core.ContentScanner.ScanStringsStreamAsync.02" xml:space="preserve">
     <value>内容位置：{0}</value>
@@ -6039,7 +6042,7 @@ DER SHA-256：{3}
     <value>命中已确认被篡改的 Steam 前端文件</value>
   </data>
   <data name="Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.04" xml:space="preserve">
-    <value>Steam 前端出现假红信语义篡改</value>
+    <value>Steam 界面文件被假红信篡改</value>
   </data>
   <data name="Backend.Core.SteamSecurityScanner.ScanSteamUiAsync.05" xml:space="preserve">
     <value>SHA-256={0}；同一只读锁定快照大小={1:N0}</value>
@@ -11649,7 +11652,8 @@ DER SHA-256：{3}
     <value>字面匹配</value>
   </data>
   <data name="Remediation.ScriptTokenEvidenceReviewOnly" xml:space="preserve">
-    <value>这些词语或静态声明不足以授权处置（规则：{0}）。请重新扫描并人工复核；原报告保留不变。</value>
+    <value>仅包含常见脚本字样，浏览器或正常软件也会出现，无需处理。
+诊断规则：{0}</value>
   </data>
   <data name="Ui.RemediationAvailability.RestartRequired" xml:space="preserve">
     <value>程序遇到了问题，请重新打开后再处理。现有记录仍可查看。</value>
@@ -11673,7 +11677,7 @@ DER SHA-256：{3}
     <value>历史存在一次结果未知的处置记录（当前无待处理风险）。</value>
   </data>
   <data name="Ui.RemediationAvailability.Ready" xml:space="preserve">
-    <value>勾选需处理项后点击右侧「预览并处置」。</value>
+    <value>勾选要修复的项目后，点击右下角「预览并修复」。</value>
   </data>
   <data name="Ui.RemediationAvailability.CheckRecovery" xml:space="preserve">
     <value>检查并继续</value>
@@ -11998,35 +12002,108 @@ DER SHA-256：{3}
   <data name="Ui.Cases.AcknowledgeUnknown.ErrorSummary" xml:space="preserve"><value>因上次管理员执行未返回回执，已由用户手动确认归档为结果未知。</value></data>
   <data name="Ui.Cases.AcknowledgeUnknown.Done" xml:space="preserve"><value>已将该未决记录归档为结果未知并解除限制，建议复核相关目标状态。</value></data>
   <data name="Rules.Package.LoadFallbackNotice" xml:space="preserve"><value>本地扩展规则包未能通过签名、版本或有效期核验，本次已安全回退至内置规则；请重新导入官方签名规则包。</value></data>
-  <data name="Steam.DllForwarder.Title" xml:space="preserve"><value>Steam 敏感目录存在 versionOrg.dll 转发结构</value></data>
+  <data name="Steam.DllForwarder.Title" xml:space="preserve"><value>Steam 目录存在可疑劫持文件（versionOrg.dll）</value></data>
   <data name="Steam.DllForwarder.Description" xml:space="preserve"><value>在 Steam 客户端敏感目录检测到正常安装不应包含的 versionOrg.dll，常见于侧载代理劫持结构，请核验其来源与同目录 DLL 签名。</value></data>
   <data name="Steam.DllForwarder.EvidencePair" xml:space="preserve"><value>同时存在 versionOrg.dll 与 version.dll；签名={0}；versionOrg SHA-256={1}；version SHA-256={2}</value></data>
   <data name="Steam.DllForwarder.EvidenceSingle" xml:space="preserve"><value>单独发现 versionOrg.dll；签名={0}；SHA-256={1}</value></data>
   <data name="Steam.ProxyDll.SeverityTitle.Valve" xml:space="preserve"><value>Steam 目录存在 Valve 签名的同名代理位置 DLL</value></data>
   <data name="Steam.ProxyDll.EvidenceWithSigner" xml:space="preserve"><value>{0}；签名者={1}；SHA-256={2}</value></data>
-  <data name="Steam.UiExternalScript.Title" xml:space="preserve"><value>Steam 前端脚本注入了非官方外部域名脚本</value></data>
+  <data name="Steam.UiExternalScript.Title" xml:space="preserve"><value>Steam 界面被植入外部恶意脚本</value></data>
   <data name="Steam.UiExternalScript.Description" xml:space="preserve"><value>该脚本动态创建 script 元素并插入非 Valve 官方域名来源。建议立即核查 Steam 客户端完整性与已安装插件。</value></data>
   <data name="Steam.UiExternalScript.Evidence" xml:space="preserve"><value>外部脚本地址 {0}。文件 SHA-256 为 {1}。</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.09" xml:space="preserve"><value>发现劫持 Steam 调试开关与前端文件的组合特征</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.10" xml:space="preserve"><value>同时包含 CEF 远程调试/禁更开关、Steam UI 目标关键字及文件写入/执行特征。</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.11" xml:space="preserve"><value>发现工坊目录下载并执行持久化释放链特征</value></data>
   <data name="Backend.Core.ContentHeuristics.Match.12" xml:space="preserve"><value>位于工坊目录内且同时包含网络下载、执行启动与自启动持久化特征。</value></data>
-  <data name="SteamConfig.UiFileDescription" xml:space="preserve"><value>先备份该被篡改或包含外部注入的 Steam UI 文件，再将其从 Steam 目录移除，并支持从受信事件回滚还原。</value></data>
-  <data name="SteamConfig.UiFileHandling" xml:space="preserve"><value>请先完全退出 Steam，确认后备份并移除该被篡改的 UI 文件，随后启动官方 Steam 自检或运行 SteamSetup.exe 覆盖修复。</value></data>
-  <data name="SteamConfig.UiFilePreviewNotice" xml:space="preserve"><value>被移除的 Steam UI 文件会先备份进隔离区后再删除。完成后请重启官方 Steam 让客户端自动补回官方界面文件，或使用 SteamSetup.exe 覆盖修复。</value></data>
+  <data name="SteamConfig.UiFileDescription" xml:space="preserve"><value>自动备份并移除该被篡改的 Steam 界面文件，随时可在「隔离区」撤回。</value></data>
+  <data name="SteamConfig.UiFileHandling" xml:space="preserve"><value>安全退出运行中的 Steam 并备份清理该恶意界面文件，之后打开正版 Steam 即可自动补全。</value></data>
+  <data name="SteamConfig.UiFilePreviewNotice" xml:space="preserve"><value>被移除的 Steam 界面文件会先备份进隔离区后再删除。完成后点击「打开 Steam 自动补全」或「一键修复 Steam（保留游戏）」即可恢复官方界面。</value></data>
   <data name="SteamConfig.RepairedIdentity" xml:space="preserve"><value>预期修复后 SHA-256 为 {0}</value></data>
-  <data name="SteamConfig.UiFileFollowUp" xml:space="preserve"><value> 仍有被篡改或外部注入的 Steam UI 脚本，请移除后重启官方 Steam 自检或运行 SteamSetup.exe 覆盖修复。</value></data>
+  <data name="SteamConfig.UiFileFollowUp" xml:space="preserve"><value> 仍有被篡改的 Steam 界面文件，请清理后点击「打开 Steam 自动补全」或「一键修复 Steam（保留游戏）」。</value></data>
   <data name="SteamConfig.LoopbackFollowUpReview" xml:space="preserve"><value> 另有 Steam 脚本加载本机服务，需继续复核。</value></data>
+  <data name="SteamConfig.PackageRestoreDescription" xml:space="preserve"><value>自动备份被修改的文件到隔离区，安全退出运行中的 Steam，并恢复为 Steam 官方原版文件（支持随时撤回）。</value></data>
+  <data name="SteamConfig.PackageRestorePreviewAction" xml:space="preserve"><value>恢复为官方原版（自动备份）</value></data>
+  <data name="SteamConfig.AutoCloseSteamNotice" xml:space="preserve"><value> 开始修复前会自动安全关闭运行中的 Steam，避免文件被占用导致修复失败。</value></data>
+  <data name="Steam.UiCssSuppression.Title" xml:space="preserve"><value>Steam 界面样式被修改（隐藏安全警告）</value></data>
+  <data name="Steam.UiCssSuppression.Description" xml:space="preserve"><value>该 Steam 界面样式表包含可疑的隐藏规则，可能用于屏蔽红色封禁警告条或账号风险提示元素。</value></data>
+  <data name="Steam.UiCssSuppression.Evidence" xml:space="preserve"><value>命中告警元素隐藏样式特征，文件 SHA-256 为 {0}。</value></data>
+  <data name="Steam.ClientBinary.TamperedTitle" xml:space="preserve"><value>Steam 主程序（steam.exe）被篡改或异常</value></data>
+  <data name="Steam.ClientBinary.TamperedDescription" xml:space="preserve"><value>Steam 根目录下的 steam.exe 未能通过 Valve 官方 Authenticode 签名核验，可能已被篡改或替换。</value></data>
+  <data name="Steam.ClientBinary.TamperedEvidence" xml:space="preserve"><value>签名校验状态：{0}；签名者={1}；SHA-256={2}</value></data>
+  <data name="Steam.ClientBinary.MissingTitle" xml:space="preserve"><value>Steam 主程序（steam.exe）丢失</value></data>
+  <data name="Steam.ClientBinary.MissingDescription" xml:space="preserve"><value>检测到当前目录存在官方 Steam 清单但缺少主程序 steam.exe，请使用「一键修复 Steam（保留游戏）」恢复客户端。</value></data>
+  <data name="Steam.ClientBinary.MissingEvidence" xml:space="preserve"><value>未在预期位置找到官方主程序：{0}。</value></data>
+  <data name="Steam.ClientBinary.FallbackGuidance" xml:space="preserve"><value>当前缺少可直接还原的本地分包，请使用「一键修复 Steam（保留游戏）」或运行官方 SteamSetup.exe 覆盖恢复正版主程序。</value></data>
+  <data name="Steam.UiPackageParticipant.Title" xml:space="preserve"><value>Steam 界面文件已被异常修改</value></data>
+  <data name="Steam.UiPackageParticipant.Description" xml:space="preserve"><value>该 Steam 界面文件与官方原版不一致，勾选后可直接一键恢复为官方原版，无需重装 Steam。</value></data>
+  <data name="Steam.UiPackageParticipant.Evidence" xml:space="preserve"><value>相对路径：{0}；当前文件 SHA-256 为 {1}。</value></data>
+  <data name="Steam.ProxyDll.QuarantineHandling" xml:space="preserve"><value>自动将该可疑劫持文件备份到隔离区并从 Steam 目录清理。</value></data>
+  <data name="Ui.SteamRepair.OfficialButton" xml:space="preserve"><value>一键修复 Steam（保留游戏）</value></data>
+  <data name="Ui.SteamRepair.OfficialTip" xml:space="preserve"><value>自动从 Valve 官网下载正版安装包修复 Steam，不会删除任何已下载游戏。</value></data>
+  <data name="Ui.SteamRepair.LaunchSelfCheckButton" xml:space="preserve"><value>打开 Steam 自动补全</value></data>
+  <data name="Ui.SteamRepair.LaunchSelfCheckTip" xml:space="preserve"><value>校验通过后安全打开正版 Steam，让客户端自动补全刚才清理的界面文件。</value></data>
+  <data name="Ui.SteamRepair.OfficialTitle" xml:space="preserve"><value>一键修复 Steam（保留游戏）</value></data>
+  <data name="Ui.SteamRepair.OfficialConfirmBody" xml:space="preserve"><value>即将从 Valve 官网（HTTPS）下载官方安装程序 SteamSetup.exe，核验正版签名后自动关闭 {0} 下的 Steam 并修复客户端。
+
+您的所有游戏（steamapps）和存档都会完整保留，确定要开始吗？</value></data>
+  <data name="Ui.SteamRepair.OfficialProgress" xml:space="preserve"><value>正在下载正版 SteamSetup.exe 并修复 {0}...</value></data>
+  <data name="Ui.SteamRepair.OfficialCompleted" xml:space="preserve"><value>已完成 Steam 修复（安装包校验前缀：{0}），正在复扫确认状态。</value></data>
+  <data name="Ui.SteamRepair.OfficialFailed" xml:space="preserve"><value>Steam 修复未完成：{0}</value></data>
+  <data name="Ui.SteamRepair.NoSteamRoot" xml:space="preserve"><value>未找到本地 Steam 安装目录，请确认 Steam 已安装后再试。</value></data>
+  <data name="Ui.SteamRepair.NoVerifiedSteamExe" xml:space="preserve"><value>未找到正版签名完整的 steam.exe，请改用「一键修复 Steam（保留游戏）」。</value></data>
+  <data name="Ui.SteamRepair.LaunchTitle" xml:space="preserve"><value>打开 Steam 自动补全</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.Direct" xml:space="preserve"><value>已确认正版签名并打开 Steam（进程 {0}），等待补全文件后可再次扫描确认。</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.DeElevated" xml:space="preserve"><value>已确认正版签名并以标准权限安全打开 Steam（进程 {0}），等待补全文件后可再次扫描确认。</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.RefusedElevated" xml:space="preserve"><value>当前程序以管理员权限运行且无法降回普通桌面，已拒绝直接拉起 Steam；请从桌面手工打开 Steam。说明：{0}</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.RefusedSignature" xml:space="preserve"><value>本地 steam.exe 未通过官方签名核验，已阻止直接打开；请改用「一键修复 Steam（保留游戏）」。说明：{0}</value></data>
+  <data name="Ui.SteamRepair.LaunchResult.Failed" xml:space="preserve"><value>打开 Steam 失败：{0}</value></data>
+  <data name="SteamConfig.PackageUnavailable" xml:space="preserve"><value>暂时无法获取官方原版分包来单独替换；请检查网络或直接点「一键修复 Steam（保留游戏）」。</value></data>
+  <data name="Ui.RemediationAvailability.SteamOfficialRepairAvailable" xml:space="preserve"><value>Steam 文件存在异常，可直接点击下方「一键修复 Steam（保留游戏）」，不会删除游戏。</value></data>
+  <data name="Ui.RemediationAvailability.SteamSelfCheckAvailable" xml:space="preserve"><value>问题界面文件已清理，可点击下方「打开 Steam 自动补全」让客户端恢复官方界面。</value></data>
   <data name="Steam.RecoveryGuide.Header" xml:space="preserve"><value>Steam 客户端安全恢复指引：</value></data>
-  <data name="Steam.RecoveryGuide.RestartValveSigned" xml:space="preserve"><value>1. 已发现的 steam.exe 均通过 Valve Authenticode 官方签名校验（共 {0} 个）。彻底退出残留进程后启动官方 Steam，客户端自检通常会自动补回缺失的官方 UI 文件。</value></data>
+  <data name="Steam.RecoveryGuide.RestartValveSigned" xml:space="preserve"><value>1. 已确认本地 steam.exe 通过 Valve Authenticode 官方签名校验（共 {0} 个）。可点击主界面「打开 Steam 自动补全」（或退出残留 Steam 后手动打开），客户端会自动补齐缺失的界面文件。</value></data>
   <data name="Steam.RecoveryGuide.NoSteamRoot" xml:space="preserve"><value>1. 未自动发现包含 steam.exe 的有效 Steam 安装目录，请先确认官方 Steam 所在路径。</value></data>
   <data name="Steam.RecoveryGuide.UntrustedSteamBinary" xml:space="preserve"><value>1. 警告：检测到至少一个 steam.exe 未通过 Valve 官方数字签名校验或文件缺失（{0}），请勿直接启动未通过校验的可执行文件。</value></data>
-  <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. 若 Steam 仍无法正常打开、界面空白/报错，或主程序签名异常，请前往 Steam 官网下载官方 SteamSetup.exe 覆盖安装到原目录（不会删除 steamapps 游戏库），完成后再用 SteamSentinel 复扫确认。</value></data>
-  <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>本工具不会自动修改 Steam 二进制或运行外部安装器，请按上述步骤安全恢复后复扫。</value></data>
+  <data name="Steam.RecoveryGuide.OfficialInstaller" xml:space="preserve"><value>2. 如果 Steam 仍打不开、页面空白或主程序异常，可点击主界面「一键修复 Steam（保留游戏）」（或从官网下载运行 SteamSetup.exe 覆盖安装，所有 steamapps 游戏都会完整保留），完成后再扫一次确认即可。</value></data>
+  <data name="Steam.RecoveryGuide.GeneralNote" xml:space="preserve"><value>本恢复指引自身仅执行只读签名核验；仅在您明确确认后，工具才会执行官方分包原位还原、校验签名后的 SteamSetup.exe 覆盖修复或安全打开正版 Steam。</value></data>
+  <data name="Ui.RepairStage.Std.Step0" xml:space="preserve"><value>准备与退出 Steam</value></data>
+  <data name="Ui.RepairStage.Std.Step1" xml:space="preserve"><value>清理并备份风险</value></data>
+  <data name="Ui.RepairStage.Std.Step2" xml:space="preserve"><value>恢复官方文件</value></data>
+  <data name="Ui.RepairStage.Std.Step3" xml:space="preserve"><value>复查确认安全</value></data>
+  <data name="Ui.RepairStage.Std.Step0Title" xml:space="preserve"><value>正在准备并安全退出 Steam</value></data>
+  <data name="Ui.RepairStage.Std.Step0Hint" xml:space="preserve"><value>正在核对修复清单并退出占用的 Steam 进程</value></data>
+  <data name="Ui.RepairStage.Std.Step1Title" xml:space="preserve"><value>正在清理并备份风险文件</value></data>
+  <data name="Ui.RepairStage.Std.Step1Hint" xml:space="preserve"><value>正在将风险文件备份至隔离区（随时可撤回）</value></data>
+  <data name="Ui.RepairStage.Std.Step2Title" xml:space="preserve"><value>正在恢复官方 Steam 文件</value></data>
+  <data name="Ui.RepairStage.Std.Step2Hint" xml:space="preserve"><value>正在备份原文件并还原为 Valve 官方原版</value></data>
+  <data name="Ui.RepairStage.Std.Step3Title" xml:space="preserve"><value>正在复查确认客户端安全</value></data>
+  <data name="Ui.RepairStage.Std.Step3Hint" xml:space="preserve"><value>正在复扫原范围与 Steam 文件以确认清理彻底</value></data>
+  <data name="Ui.RepairStage.Official.Step0" xml:space="preserve"><value>下载官方修复包</value></data>
+  <data name="Ui.RepairStage.Official.Step1" xml:space="preserve"><value>验证 Valve 官方身份</value></data>
+  <data name="Ui.RepairStage.Official.Step2" xml:space="preserve"><value>覆盖修复客户端</value></data>
+  <data name="Ui.RepairStage.Official.Step3" xml:space="preserve"><value>复扫确认安全</value></data>
+  <data name="Ui.RepairStage.Official.Step0Title" xml:space="preserve"><value>正在下载官方 Steam 修复包</value></data>
+  <data name="Ui.RepairStage.Official.DownloadProgress" xml:space="preserve"><value>已下载 {0:0.0} / {1:0.0} MB</value></data>
+  <data name="Ui.RepairStage.Official.DownloadUnknownTotal" xml:space="preserve"><value>已下载 {0:0.0} MB</value></data>
+  <data name="Ui.RepairStage.Official.Step1Title" xml:space="preserve"><value>正在验证 Valve 官方签名与证书</value></data>
+  <data name="Ui.RepairStage.Official.Step1Hint" xml:space="preserve"><value>正在核对官方数字签名，确保安装包安全未被篡改</value></data>
+  <data name="Ui.RepairStage.Official.Step2CloseTitle" xml:space="preserve"><value>正在安全退出运行中的 Steam</value></data>
+  <data name="Ui.RepairStage.Official.Step2CloseHint" xml:space="preserve"><value>正在关闭占用的 Steam 进程以准备覆盖修复</value></data>
+  <data name="Ui.RepairStage.Official.Step2RunTitle" xml:space="preserve"><value>正在修复 Steam 客户端（保留游戏）</value></data>
+  <data name="Ui.RepairStage.Official.Step2RunHint" xml:space="preserve"><value>正在安装正版文件，steamapps 下的游戏与存档不会受影响</value></data>
+  <data name="Ui.RepairStage.Official.Step3Title" xml:space="preserve"><value>正在复扫确认 Steam 状态</value></data>
+  <data name="Ui.RepairStage.Official.Step3Hint" xml:space="preserve"><value>修复已完成，正在重新检查确保无残留异常</value></data>
+  <data name="Ui.BatchOutcome.SuccessTitle" xml:space="preserve"><value>✅ 已全部修复并核验安全</value></data>
+  <data name="Ui.BatchOutcome.SuccessDetail" xml:space="preserve"><value>所有选中的问题均已清理并完成复查，详细记录已保存在下方列表。</value></data>
+  <data name="Ui.BatchOutcome.SuccessSteamSelfCheckDetail" xml:space="preserve"><value>已清理假红信界面文件；点击右侧「打开 Steam 自动补全」即可让客户端自动补齐文件。</value></data>
+  <data name="Ui.BatchOutcome.WarningTitle" xml:space="preserve"><value>⚠️ 修复已执行，仍有待关注项</value></data>
+  <data name="Ui.BatchOutcome.WarningDetail" xml:space="preserve"><value>部分项目未完全完成或复扫仍有残留提示，请查看下方状态或点击右侧按钮处理。</value></data>
+  <data name="Ui.BatchOutcome.ViewDetails" xml:space="preserve"><value>查看详细记录</value></data>
+  <data name="Ui.BatchOutcome.SuccessModalBody" xml:space="preserve"><value>✅ 已成功修复所有问题，Steam 客户端已恢复正常，可以直接打开 Steam 使用！详细核验记录已保存在「处置结果」页中。</value></data>
   <data name="Ui.P2C.AggressiveBadge" xml:space="preserve"><value>激进模式</value></data>
   <data name="Ui.P2C.ShowAdvancedTabs" xml:space="preserve"><value>显示高级诊断页签</value></data>
   <data name="Ui.P2C.ShowAdvancedTabsTip" xml:space="preserve"><value>默认仅展示核心结果页；排障时可展开代理、组件、病例与容器诊断页。</value></data>
-  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>发现 {0} 项可处置风险 · 核对勾选项后点击「预览并处置」</value></data>
+  <data name="Ui.P2C.Verdict.Actionable" xml:space="preserve"><value>发现 {0} 项可直接修复的问题 · 核对勾选项后点击「预览并修复」</value></data>
   <data name="Ui.P2C.Verdict.Review" xml:space="preserve"><value>未发现已知病毒 · {0} 项配置或线索待确认（自用加速器/代理可忽略）</value></data>
   <data name="Ui.P2C.Verdict.Incomplete" xml:space="preserve"><value>暂未发现已知病毒 · 部分范围按策略未深度检查（深度排查请点「完整扫描」）</value></data>
   <data name="Ui.P2C.Verdict.Clean" xml:space="preserve"><value>未发现已知假红信或恶意风险 · 所选范围正常</value></data>

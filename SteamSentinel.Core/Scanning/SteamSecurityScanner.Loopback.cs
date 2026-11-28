@@ -20,46 +20,62 @@ public sealed partial class SteamSecurityScanner
     // Imported reports retain their historical observations but cannot create this proof.
     private static readonly ConditionalWeakTable<Finding, string> ScannedSteamRoots = new();
 
-    private static Finding CreateLoopbackFinding(string steamRoot, string path, string sha256, LoopbackScriptReference script)
+    private static Finding CreateLoopbackFinding(
+        string steamRoot,
+        string path,
+        string sha256,
+        LoopbackScriptReference script,
+        bool isKnownOfficialDeviating = false)
     {
+        bool packageRestore = isKnownOfficialDeviating;
         Finding finding = new()
         {
             RuleId = LoopbackRuleId,
             ReasonCode = script.MatchesSteamAlertEndpoint ? FamilyEndpointReason : "SteamUiLoopbackScript",
             Category = FindingCategory.Steam,
-            Severity = script.MatchesSteamAlertEndpoint ? FindingSeverity.Medium : FindingSeverity.Low,
-            Score = script.MatchesSteamAlertEndpoint ? 55 : 25,
+            Severity = packageRestore
+                ? (script.MatchesSteamAlertEndpoint ? FindingSeverity.High : FindingSeverity.Medium)
+                : (script.MatchesSteamAlertEndpoint ? FindingSeverity.Medium : FindingSeverity.Low),
+            Score = packageRestore
+                ? (script.MatchesSteamAlertEndpoint ? 85 : 65)
+                : (script.MatchesSteamAlertEndpoint ? 55 : 25),
             TitleText = MessageText.Create("Pawnshop.Ui.Title"),
             DescriptionText = MessageText.Create("Pawnshop.Ui.Observation"),
             EvidenceText = MessageText.Create("Pawnshop.Ui.Evidence", script.Endpoint, sha256),
-            HandlingDetailsText = MessageText.Create("Pawnshop.Ui.Review"),
+            HandlingDetailsText = MessageText.Create(packageRestore ? "SteamConfig.PackageRestoreDescription" : "Pawnshop.Ui.Review"),
             Sha256 = sha256,
+            TargetSha256 = packageRestore ? sha256 : null,
+            ConfigurationKind = packageRestore ? SteamConfigurationRepair.PackageRestore : null,
             Target = path,
-            CanRemediate = false,
-            SuggestedActions = [SuggestedActionKind.ReviewOnly]
+            CanRemediate = packageRestore,
+            SuggestedActions = packageRestore ? [SuggestedActionKind.RepairSteamConfiguration] : [SuggestedActionKind.ReviewOnly]
         };
         if (script.MatchesSteamAlertEndpoint) ScannedSteamRoots.Add(finding, steamRoot);
         return finding;
     }
 
-    private static Finding CreateExternalScriptFinding(string path, string sha256, LoopbackScriptReference external) => new()
-    {
-        RuleId = "STEAM-UI-EXTERNAL-SCRIPT",
-        ReasonCode = "SteamUiExternalScript",
-        Category = FindingCategory.Steam,
-        Severity = FindingSeverity.High,
-        Score = 85,
-        TitleText = MessageText.Create("Steam.UiExternalScript.Title"),
-        DescriptionText = MessageText.Create("Steam.UiExternalScript.Description"),
-        EvidenceText = MessageText.Create("Steam.UiExternalScript.Evidence", external.Endpoint, sha256),
-        HandlingDetailsText = MessageText.Create("SteamConfig.UiFileHandling"),
-        Sha256 = sha256,
-        TargetSha256 = sha256,
-        ConfigurationKind = SteamConfigurationRepair.UiFile,
-        Target = path,
-        CanRemediate = true,
-        SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
-    };
+    private static Finding CreateExternalScriptFinding(
+        string path,
+        string sha256,
+        LoopbackScriptReference external,
+        bool isKnownOfficialDeviating = false) => new()
+        {
+            RuleId = "STEAM-UI-EXTERNAL-SCRIPT",
+            ReasonCode = "SteamUiExternalScript",
+            Category = FindingCategory.Steam,
+            Severity = FindingSeverity.High,
+            Score = 85,
+            TitleText = MessageText.Create("Steam.UiExternalScript.Title"),
+            DescriptionText = MessageText.Create("Steam.UiExternalScript.Description"),
+            EvidenceText = MessageText.Create("Steam.UiExternalScript.Evidence", external.Endpoint, sha256),
+            HandlingDetailsText = MessageText.Create(isKnownOfficialDeviating ? "SteamConfig.PackageRestoreDescription" : "SteamConfig.UiFileHandling"),
+            Sha256 = sha256,
+            TargetSha256 = sha256,
+            ConfigurationKind = isKnownOfficialDeviating ? SteamConfigurationRepair.PackageRestore : SteamConfigurationRepair.UiFile,
+            Target = path,
+            CanRemediate = true,
+            SuggestedActions = [SuggestedActionKind.RepairSteamConfiguration]
+        };
 
     internal static bool IsCurrentUserReport(ScanReport report) =>
         string.Equals(report.MachineName, Environment.MachineName, StringComparison.OrdinalIgnoreCase) &&
@@ -109,6 +125,9 @@ public sealed partial class SteamSecurityScanner
             if (!checks.TryGetValue(identity, out bool current))
                 checks[identity] = current = VerifyCurrentHash(original.Target, original.Sha256!, MaximumScriptBytes, ref remaining);
             if (!current) continue;
+            bool preservePackageRestore = original.ConfigurationKind == SteamConfigurationRepair.PackageRestore &&
+                original.CanRemediate &&
+                original.SuggestedActions.Contains(SuggestedActionKind.RepairSteamConfiguration);
             report.Findings[index] = new Finding
             {
                 Id = original.Id,
@@ -121,11 +140,15 @@ public sealed partial class SteamSecurityScanner
                 TitleText = original.TitleText,
                 DescriptionText = MessageText.Create("Pawnshop.Ui.Correlated", resident),
                 EvidenceText = original.EvidenceText,
-                HandlingDetailsText = MessageText.Create("Pawnshop.Ui.Repair"),
+                HandlingDetailsText = preservePackageRestore
+                    ? original.HandlingDetailsText
+                    : MessageText.Create("Pawnshop.Ui.Repair"),
                 Sha256 = original.Sha256,
+                TargetSha256 = preservePackageRestore ? original.TargetSha256 : null,
+                ConfigurationKind = preservePackageRestore ? SteamConfigurationRepair.PackageRestore : null,
                 Target = original.Target,
-                CanRemediate = false,
-                SuggestedActions = [SuggestedActionKind.ReviewOnly]
+                CanRemediate = preservePackageRestore,
+                SuggestedActions = preservePackageRestore ? [SuggestedActionKind.RepairSteamConfiguration] : [SuggestedActionKind.ReviewOnly]
             };
         }
     }
