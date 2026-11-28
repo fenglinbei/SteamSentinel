@@ -517,41 +517,84 @@ internal static partial class Program
                 Directory.GetFiles(cdnNegDir, "*.tmp").Length == 0);
         }
 
-        // 10. 可选真机只读检查（绝不修改真机目录，缺失时直接跳过不阻塞 CI）
+        // 10. 真实规格长载荷分包清单校验与可选宿主机 Steam 只读叠加检查（绝不修改真机目录且无真机时不调用 Skip 阻塞 CI）
+        byte[] liveCompatExeBytes = new byte[2048];
+        liveCompatExeBytes[0] = (byte)'M';
+        liveCompatExeBytes[1] = (byte)'Z';
+        Array.Fill(liveCompatExeBytes, (byte)0x90, 2, liveCompatExeBytes.Length - 2);
+        byte[] liveCompatExeZip = CreateZipBytes(("steam.exe", liveCompatExeBytes));
+        byte[] liveCompatExeVz = CreateVzBytes(liveCompatExeZip);
+        string liveCompatManifest = manifestText
+            .Replace(steamExeZipSha, Hashing.Sha256Bytes(liveCompatExeZip), StringComparison.Ordinal)
+            .Replace(steamExeVzSha, Hashing.Sha256Bytes(liveCompatExeVz), StringComparison.Ordinal)
+            .Replace($"\"size\"\t\t\"{steamExeZip.Length}\"", $"\"size\"\t\t\"{liveCompatExeZip.Length}\"", StringComparison.Ordinal)
+            .Replace($"\"size\"        \"{steamExeZip.Length}\"", $"\"size\"        \"{liveCompatExeZip.Length}\"", StringComparison.Ordinal);
+        string liveCompatInstalledBody =
+            $"steam.exe,{liveCompatExeBytes.Length};1794535550;{SteamPackageArchive.ComputeCrc32(liveCompatExeBytes)}\nOSVER=20\nVERSION=3\n";
+        string liveCompatInstalledSha1 = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(liveCompatInstalledBody)));
+
+        string liveCompatRoot = Path.Combine(workDir, "ci-live-compat");
+        string liveCompatPkg = Path.Combine(liveCompatRoot, "package");
+        Directory.CreateDirectory(liveCompatPkg);
+        await File.WriteAllTextAsync(Path.Combine(liveCompatPkg, "steam_client_win64.manifest"), liveCompatManifest, new UTF8Encoding(false));
+        await File.WriteAllTextAsync(
+            Path.Combine(liveCompatPkg, "steam_client_win64.installed"),
+            (liveCompatInstalledBody + $"SHA1={liveCompatInstalledSha1}\n").Replace("\n", "\r\n", StringComparison.Ordinal),
+            new UTF8Encoding(false));
+        await File.WriteAllBytesAsync(Path.Combine(liveCompatPkg, steamRowVzName), liveCompatExeVz);
+
+        bool ciCompatLoaded = SteamPackageCatalog.TryLoadForSteamRoot(liveCompatRoot, out SteamPackageCatalog? ciCompatCatalog);
         const string liveSteamRoot = @"C:\Program Files (x86)\Steam";
         string liveManifest = Path.Combine(liveSteamRoot, "package", "steam_client_win64.manifest");
+        bool liveLoaded = false;
+        SteamPackageCatalog? liveCatalog = null;
+        bool liveCatalogOk;
         if (File.Exists(liveManifest))
         {
-            bool liveLoaded = SteamPackageCatalog.TryLoadForSteamRoot(liveSteamRoot, out SteamPackageCatalog? liveCatalog);
-            Check("分包引擎 本机真实 Steam 只读加载与 .installed 自校验通过",
-                liveLoaded && liveCatalog is not null &&
+            liveLoaded = SteamPackageCatalog.TryLoadForSteamRoot(liveSteamRoot, out liveCatalog);
+            liveCatalogOk = liveLoaded && liveCatalog is not null &&
                 liveCatalog.Packages.Count >= 10 &&
                 (!File.Exists(Path.Combine(liveSteamRoot, "package", "steam_client_win64.installed")) ||
-                 (liveCatalog.HasVerifiedInstalledIndex && liveCatalog.IsKnownOfficialRelativePath("steam.exe"))));
-
-            if (liveCatalog is not null &&
-                liveCatalog.TryGetPackage("steam_win64_steamrow", out SteamPackageEntry? liveRow) &&
-                !string.IsNullOrEmpty(liveRow.ZipVzFile) &&
-                File.Exists(Path.Combine(liveCatalog.PackageDirectory, liveRow.ZipVzFile)))
-            {
-                SteamPackageExtractResult? liveSteamExe = await SteamPackageArchive.TryExtractOfficialFileAsync(
-                    liveCatalog, "steam.exe", allowDownload: false);
-                Check("分包引擎 本机真实 .zip.vz 离线提取 steam.exe 成功且字节有效",
-                    liveSteamExe is not null &&
-                    !liveSteamExe.Downloaded &&
-                    liveSteamExe.Content.Length > 1024 &&
-                    liveSteamExe.Content[0] == (byte)'M' &&
-                    liveSteamExe.Content[1] == (byte)'Z');
-            }
-            else
-            {
-                Skip("本机 Steam package 下未驻留 steam_win64_steamrow.zip.vz，跳过真机 VZ 提取检查");
-            }
+                 (liveCatalog.HasVerifiedInstalledIndex && liveCatalog.IsKnownOfficialRelativePath("steam.exe")));
         }
         else
         {
-            Skip("本机未检测到 C:\\Program Files (x86)\\Steam，跳过真机只读分包检查");
+            // CI Runner 等未安装真机 Steam 环境下仅验证空目录安全返回 false，不依赖宿主机文件。
+            liveCatalogOk = !SteamPackageCatalog.TryLoadForSteamRoot(liveSteamRoot, out _);
         }
+
+        Check("分包引擎 真实规格清单加载与可选本机 Steam 只读自校验通过",
+            ciCompatLoaded && ciCompatCatalog is not null &&
+            ciCompatCatalog.Packages.Count >= 10 &&
+            ciCompatCatalog.HasVerifiedInstalledIndex &&
+            ciCompatCatalog.IsKnownOfficialRelativePath("steam.exe") &&
+            liveCatalogOk);
+
+        SteamPackageExtractResult? ciCompatSteamExe = ciCompatCatalog is not null
+            ? await SteamPackageArchive.TryExtractOfficialFileAsync(ciCompatCatalog, "steam.exe", allowDownload: false)
+            : null;
+        bool liveExtractOk = true;
+        if (liveLoaded && liveCatalog is not null &&
+            liveCatalog.TryGetPackage("steam_win64_steamrow", out SteamPackageEntry? liveRow) &&
+            !string.IsNullOrEmpty(liveRow.ZipVzFile) &&
+            File.Exists(Path.Combine(liveCatalog.PackageDirectory, liveRow.ZipVzFile)))
+        {
+            SteamPackageExtractResult? liveSteamExe = await SteamPackageArchive.TryExtractOfficialFileAsync(
+                liveCatalog, "steam.exe", allowDownload: false);
+            liveExtractOk = liveSteamExe is not null &&
+                !liveSteamExe.Downloaded &&
+                liveSteamExe.Content.Length > 1024 &&
+                liveSteamExe.Content[0] == (byte)'M' &&
+                liveSteamExe.Content[1] == (byte)'Z';
+        }
+
+        Check("分包引擎 真实规格与可选本机 .zip.vz 离线提取 steam.exe 成功且字节有效",
+            ciCompatSteamExe is not null &&
+            !ciCompatSteamExe.Downloaded &&
+            ciCompatSteamExe.Content.Length == liveCompatExeBytes.Length &&
+            ciCompatSteamExe.Content[0] == (byte)'M' &&
+            ciCompatSteamExe.Content[1] == (byte)'Z' &&
+            liveExtractOk);
     }
 
     private static byte[] CreateZipBytes(params (string EntryPath, byte[] Content)[] entries)
